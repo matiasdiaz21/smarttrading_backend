@@ -55,8 +55,8 @@ DB_PORT=3306
 DB_USER=tu-usuario
 DB_PASSWORD=tu-password
 DB_NAME=smarttrading
-JWT_SECRET=tu-secret-jwt-muy-seguro-minimo-32-caracteres
-ENCRYPTION_KEY=tu-clave-encriptacion-exactamente-32-caracteres
+JWT_SECRET=B0p1QMX8aBzrX6WPSWXT9ZkPFGE7iIUKGf2Lk7DNpsNt74OiuuXAULfb1+cE/uNdjVZizG/7nlXPxCfQfkqKFQ==
+ENCRYPTION_KEY=ed2a65c02b15c8c90745ea92c50a9803841dcf6a36c9142d58a455913e1b7f81
 BITGET_API_BASE_URL=https://api.bitget.com
 NODE_ENV=production
 ```
@@ -81,11 +81,27 @@ FRONTEND_URL=https://tu-frontend.vercel.app
 
 ### 6. Verificar el Despliegue
 
-1. Visita la URL de tu backend
+1. Visita la URL de tu backend: `https://tu-backend.vercel.app/`
+   - Debería mostrar información del API
 2. Prueba el endpoint de health check: `https://tu-backend.vercel.app/api/health`
-3. Deberías ver: `{"status":"ok","timestamp":"..."}`
+   - Deberías ver: `{"status":"ok","timestamp":"..."}`
 
-### 7. Actualizar Variables de Entorno con URLs Reales
+### 7. Ver Logs en Vercel
+
+**IMPORTANTE:** Los logs solo aparecen cuando la función serverless se ejecuta.
+
+Para ver los logs:
+1. Ve a **Vercel Dashboard** > Tu proyecto
+2. Haz clic en **Deployments**
+3. Selecciona el deployment más reciente
+4. Haz clic en **Functions** (en la parte superior)
+5. Haz clic en `api/index.ts`
+6. **Haz un request** a cualquier endpoint (ej: `/api/health` o `/`) para activar la función
+7. Los logs aparecerán en tiempo real
+
+**Nota:** Si no ves logs, es porque la función no se ha ejecutado aún. Haz un request primero.
+
+### 8. Actualizar Variables de Entorno con URLs Reales
 
 Después del primer despliegue:
 
@@ -94,14 +110,14 @@ Después del primer despliegue:
 3. Actualiza `FRONTEND_URL` con la URL real de tu frontend
 4. Ve a **Deployments** y haz clic en **"Redeploy"** en el último deployment
 
-### 8. Configurar Base de Datos
+### 9. Configurar Base de Datos
 
 1. Crea una base de datos MySQL (puedes usar PlanetScale, Railway, o cualquier proveedor)
 2. Ejecuta el script `database/schema.sql` para crear las tablas
 3. Actualiza las variables de entorno `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` con tus credenciales
 4. Haz **Redeploy** para aplicar los cambios
 
-### 9. Crear Usuario Admin
+### 10. Crear Usuario Admin
 
 Después de configurar la base de datos, crea un usuario admin:
 
@@ -117,7 +133,7 @@ VALUES ('admin@smarttrading.com', '$2a$10$...', 'admin');
 
 O usa el script: `database/create_admin_user.sql`
 
-### 10. Configuración Post-Despliegue
+### 11. Configuración Post-Despliegue
 
 Una vez desplegado:
 
@@ -164,17 +180,25 @@ Una vez desplegado:
 - Verifica que las variables estén configuradas para **Production**, **Preview** y **Development**
 - Haz clic en **Redeploy** después de agregar nuevas variables
 
-### Error: "This request has been automatically failed because it uses a deprecated version"
-
-- Este error es del workflow de GitHub Actions, ya está corregido usando `actions/upload-artifact@v4`
-- Si persiste, verifica que el workflow esté actualizado en el repositorio
-
 ### El endpoint no responde o devuelve 404
 
 - Verifica que el archivo `api/index.ts` esté correctamente configurado
 - Revisa los logs en Vercel Dashboard > Deployments > [tu deployment] > Functions
-- Asegúrate de que la ruta en `vercel.json` esté correcta: `/api/(.*)` → `/api`
+- Asegúrate de que la ruta en `vercel.json` esté correcta: `/(.*)` → `/api`
 - Prueba primero el endpoint `/api/health` que no requiere autenticación
+- **Importante:** Si accedes a la raíz `/`, debería mostrar información del API. Si ves 404, verifica que la ruta catch-all esté en `vercel.json`
+
+### No aparecen logs en Vercel
+
+**Solución:**
+- **Los logs solo aparecen cuando la función serverless se ejecuta**
+- Haz un request a cualquier endpoint (ej: `/api/health` o `/`) para activar la función
+- Ve a **Deployments** > [tu deployment] > **Functions** > `api/index.ts` para ver los logs
+- Si aún no aparecen logs después de hacer un request:
+  - Verifica que el handler esté exportando correctamente la función
+  - Asegúrate de que el logging esté en el handler de Vercel
+  - Verifica que el deployment se haya completado correctamente
+  - Intenta hacer un nuevo deployment
 
 ### Error de compilación TypeScript en Vercel
 
@@ -193,13 +217,15 @@ Una vez desplegado:
 
 Después del despliegue, verifica estos endpoints:
 
+- ✅ `GET /` - Debe mostrar información del API
 - ✅ `GET /api/health` - Debe responder `{"status":"ok"}`
-- ✅ `POST /api/auth/login` - Debe funcionar con credenciales válidas
 - ✅ `GET /api/public/stats` - Debe devolver estadísticas públicas
+- ✅ `POST /api/auth/login` - Debe funcionar con credenciales válidas
 
 ## Notas Importantes
 
 - Las credenciales de NOWPayments se configuran desde el panel de administración, no desde variables de entorno
 - El sistema usa funciones serverless de Vercel, por lo que cada request es independiente
 - Los logs están disponibles en Vercel Dashboard > Deployments > [tu deployment] > Functions
-
+- **Para ver logs:** Haz un request a cualquier endpoint y luego revisa Functions > `api/index.ts`
+- Si la raíz muestra 404, verifica que `vercel.json` tenga la ruta catch-all: `"src": "/(.*)", "dest": "/api"`
