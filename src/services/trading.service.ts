@@ -105,6 +105,9 @@ export class TradingService {
 
       console.log(`[TradeService] 📏 Tamaño solicitado: ${requestedSize}, Tamaño calculado: ${calculatedSize}`);
       
+      // Convertir side de LONG/SHORT a buy/sell para Bitget
+      const bitgetSide: 'buy' | 'sell' = alert.side === 'LONG' || alert.side === 'buy' ? 'buy' : 'sell';
+      
       const orderData = {
         symbol: symbol,
         productType: productType,
@@ -112,7 +115,7 @@ export class TradingService {
         marginCoin: alert.marginCoin || 'USDT',
         size: calculatedSize,
         price: entryPrice ? entryPrice.toString() : undefined,
-        side: alert.side,
+        side: bitgetSide,
         tradeSide: alert.tradeSide || 'open',
         orderType: alert.orderType || 'market',
         force: alert.force || (alert.orderType === 'limit' ? 'gtc' : undefined),
@@ -131,12 +134,15 @@ export class TradingService {
       console.log(`[TradeService] ✅ Orden ejecutada en Bitget. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
 
       // Registrar trade en base de datos con toda la información
+      // Convertir side a buy/sell para la base de datos
+      const dbSide: 'buy' | 'sell' = alert.side === 'LONG' || alert.side === 'buy' ? 'buy' : 'sell';
+      
       const tradeId = await TradeModel.create(
         userId,
         strategyId,
         result.orderId,
         alert.symbol,
-        alert.side,
+        dbSide,
         alert.orderType || 'market',
         orderData.size,
         entryPrice ? entryPrice.toString() : null,

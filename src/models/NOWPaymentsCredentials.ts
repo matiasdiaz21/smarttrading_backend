@@ -46,7 +46,7 @@ export class NOWPaymentsCredentialsModel {
       'SELECT * FROM nowpayments_credentials ORDER BY created_at DESC'
     ) as any[];
 
-    return rows.map((row) => ({
+    return rows.map((row: any) => ({
       id: row.id,
       email: row.email ? decrypt(row.email) : null,
       password: row.password ? decrypt(row.password) : null,

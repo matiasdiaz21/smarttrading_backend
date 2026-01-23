@@ -194,7 +194,9 @@ export class UserController {
         paymentDetails = await nowpayments.getPaymentStatus(pendingSubscription.payment_id);
         // Asegurarse de que expiration_estimate_date esté presente (usar el de la BD si no viene de la API)
         if (!paymentDetails.expiration_estimate_date && pendingSubscription.expiration_estimate_date) {
-          paymentDetails.expiration_estimate_date = pendingSubscription.expiration_estimate_date;
+          paymentDetails.expiration_estimate_date = pendingSubscription.expiration_estimate_date instanceof Date 
+            ? pendingSubscription.expiration_estimate_date.toISOString() 
+            : pendingSubscription.expiration_estimate_date;
         }
       } catch (error) {
         console.error('Error al obtener detalles del payment:', error);
