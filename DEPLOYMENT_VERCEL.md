@@ -135,26 +135,51 @@ Una vez desplegado:
 
 ## Solución de Problemas
 
-### Error: "Module not found"
+### Error: "Module not found" o "Cannot find module '../src/...'"
 
+**Solución:**
+- Vercel necesita acceso a los archivos en `src/`. Asegúrate de que `vercel.json` incluya la configuración de `functions` con `includeFiles`
 - Verifica que todas las dependencias estén en `package.json`
 - Asegúrate de que `npm install` se ejecute correctamente
+- Si el error persiste, verifica que el archivo `api/index.ts` esté en la raíz del proyecto
 
 ### Error: "Database connection failed"
 
 - Verifica las variables de entorno de la base de datos
-- Asegúrate de que la base de datos permita conexiones desde la IP de Vercel
+- Asegúrate de que la base de datos permita conexiones desde cualquier IP (0.0.0.0/0) o desde las IPs de Vercel
 - Verifica que el puerto 3306 esté abierto
+- Si usas PlanetScale, asegúrate de usar la URL de conexión correcta
 
-### Error: "JWT_SECRET is not defined"
+### Error: "JWT_SECRET is not defined" o "ENCRYPTION_KEY is not defined"
 
 - Asegúrate de haber configurado todas las variables de entorno
 - Verifica que las variables estén configuradas para **Production**, **Preview** y **Development**
+- Haz clic en **Redeploy** después de agregar nuevas variables
 
-### El endpoint no responde
+### Error: "This request has been automatically failed because it uses a deprecated version"
+
+- Este error es del workflow de GitHub Actions, ya está corregido usando `actions/upload-artifact@v4`
+- Si persiste, verifica que el workflow esté actualizado en el repositorio
+
+### El endpoint no responde o devuelve 404
 
 - Verifica que el archivo `api/index.ts` esté correctamente configurado
 - Revisa los logs en Vercel Dashboard > Deployments > [tu deployment] > Functions
+- Asegúrate de que la ruta en `vercel.json` esté correcta: `/api/(.*)` → `/api`
+- Prueba primero el endpoint `/api/health` que no requiere autenticación
+
+### Error de compilación TypeScript en Vercel
+
+- Vercel compila TypeScript automáticamente, pero si hay errores:
+  - Verifica que `tsconfig.json` esté correctamente configurado
+  - Asegúrate de que todas las importaciones sean correctas
+  - Revisa los logs de build en Vercel Dashboard
+
+### Error: "Function exceeded maximum duration"
+
+- Las funciones serverless de Vercel tienen un límite de tiempo (10 segundos en el plan gratuito)
+- Si tus operaciones son muy lentas, considera optimizar las consultas a la base de datos
+- Verifica que las conexiones a la base de datos se cierren correctamente
 
 ## Verificación Final
 
