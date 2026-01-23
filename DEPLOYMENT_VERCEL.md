@@ -138,10 +138,18 @@ Una vez desplegado:
 ### Error: "Module not found" o "Cannot find module '../src/...'"
 
 **Solución:**
-- Vercel necesita acceso a los archivos en `src/`. Asegúrate de que `vercel.json` incluya la configuración de `functions` con `includeFiles`
+- Vercel con `@vercel/node` debería incluir automáticamente los archivos necesarios basándose en las importaciones
 - Verifica que todas las dependencias estén en `package.json`
 - Asegúrate de que `npm install` se ejecute correctamente
 - Si el error persiste, verifica que el archivo `api/index.ts` esté en la raíz del proyecto
+- Asegúrate de que `vercel.json` solo use `builds` o `functions`, no ambos (actualmente usamos solo `builds`)
+
+### Error: "The `functions` property cannot be used in conjunction with the `builds` property"
+
+**Solución:**
+- Elimina la propiedad `functions` de `vercel.json` si estás usando `builds`
+- O elimina `builds` si prefieres usar solo `functions` (configuración moderna)
+- Actualmente el proyecto usa solo `builds` con `@vercel/node`
 
 ### Error: "Database connection failed"
 
