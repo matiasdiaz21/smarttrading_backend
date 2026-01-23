@@ -5,15 +5,30 @@ export function verifyHMAC(
   signature: string,
   secret: string
 ): boolean {
-  const expectedSignature = crypto
-    .createHmac('sha256', secret)
-    .update(payload)
-    .digest('hex');
-  
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSignature)
-  );
+  try {
+    // Si la firma está vacía, no es válida
+    if (!signature || !secret) {
+      return false;
+    }
+
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(payload)
+      .digest('hex');
+    
+    // Si las longitudes no coinciden, no es válida
+    if (signature.length !== expectedSignature.length) {
+      return false;
+    }
+    
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+  } catch (error) {
+    console.error('Error verifying HMAC:', error);
+    return false;
+  }
 }
 
 export function generateHMAC(payload: string, secret: string): string {

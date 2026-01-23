@@ -29,7 +29,9 @@ cp .env.example .env
    - Configuración de base de datos MySQL
    - JWT_SECRET (genera uno seguro)
    - ENCRYPTION_KEY (32 caracteres)
-   - Credenciales de NOWPayments
+   - BITGET_API_BASE_URL (opcional, por defecto: https://api.bitget.com)
+
+**Nota:** Las credenciales de NOWPayments se configuran desde el panel de administración después de crear el usuario admin, no desde variables de entorno.
 
 5. Crea la base de datos y ejecuta el schema:
 ```bash
@@ -71,9 +73,11 @@ npm run dev
 
 1. Configura los repositorios en GitHub
 2. Conecta los repositorios a Vercel
-3. Configura las variables de entorno en Vercel
+3. Configura las variables de entorno en Vercel (ver DEPLOYMENT.md)
 4. Configura GitHub Actions secrets
-5. Crea estrategias desde el panel de admin
-6. Configura webhooks de TradingView
-7. Configura webhook de NOWPayments
+5. Crea estrategias desde el panel de admin (`/admin/strategies`)
+6. Configura credenciales de NOWPayments desde el panel de admin (`/admin/nowpayments-credentials`)
+7. Configura credenciales de Bitget para cada usuario desde `/credentials`
+8. Configura webhooks de TradingView (ver DEPLOYMENT.md)
+9. Los usuarios deben suscribirse a estrategias desde `/strategies` y activar la copia de trades
 

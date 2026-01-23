@@ -4,11 +4,12 @@
   "description": "Backend API para SaaS de Copy Trading en Bitget",
   "main": "api/index.js",
   "scripts": {
-    "dev": "tsx watch api/index.ts",
+    "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node api/index.js",
     "lint": "eslint . --ext .ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test:nowpayments": "tsx scripts/test-nowpayments.ts"
   },
   "keywords": ["bitget", "trading", "api", "serverless"],
   "author": "",
@@ -19,7 +20,6 @@
     "mysql2": "^3.6.5",
     "jsonwebtoken": "^9.0.2",
     "bcryptjs": "^2.4.3",
-    "crypto": "^1.0.1",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",
     "cors": "^2.8.5",

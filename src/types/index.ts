@@ -1,5 +1,6 @@
 export interface User {
   id: number;
+  uuid: string | null;
   email: string;
   password_hash: string;
   role: 'admin' | 'user';
@@ -49,6 +50,12 @@ export interface Trade {
   price: string | null;
   status: 'pending' | 'filled' | 'cancelled' | 'failed';
   executed_at: Date;
+  trade_id?: number | string | null;
+  entry_price?: number | null;
+  stop_loss?: number | null;
+  take_profit?: number | null;
+  breakeven?: number | null;
+  alert_type?: string | null;
 }
 
 export interface WebhookLog {
@@ -63,12 +70,38 @@ export interface WebhookLog {
 export interface Subscription {
   id: number;
   user_id: number;
+  payment_plan_id: number | null;
   payment_id: string;
+  order_id: string | null;
+  payment_status: string | null;
+  pay_address: string | null;
+  pay_amount: number | null;
+  pay_currency: string | null;
+  purchase_id: string | null;
+  amount_received: number | null;
+  network: string | null;
+  expiration_estimate_date: Date | null;
+  nowpayments_created_at: Date | null;
+  nowpayments_updated_at: Date | null;
   status: 'pending' | 'confirmed' | 'expired' | 'cancelled';
   amount: number;
   currency: string;
   expires_at: Date | null;
   created_at: Date;
+}
+
+export interface PaymentPlan {
+  id: number;
+  title: string;
+  description: string | null;
+  amount: number;
+  currency: string;
+  pay_currency: string | null;
+  duration_days: number;
+  features: string | null;
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface JWTPayload {
@@ -79,13 +112,20 @@ export interface JWTPayload {
 
 export interface TradingViewAlert {
   symbol: string;
-  side: 'buy' | 'sell';
+  side: 'buy' | 'sell' | 'LONG' | 'SHORT';
   orderType: 'limit' | 'market';
   size?: string;
   price?: string;
   productType?: string;
   marginMode?: string;
   marginCoin?: string;
+  alertType?: 'ENTRY' | 'BREAKEVEN' | 'STOP_LOSS' | 'TAKE_PROFIT';
+  entryPrice?: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  breakeven?: number;
+  trade_id?: number | string;
+  strategy?: string;
+  timeframe?: string;
   [key: string]: any;
 }
-

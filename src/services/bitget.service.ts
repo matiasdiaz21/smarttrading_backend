@@ -128,6 +128,69 @@ export class BitgetService {
     }
   }
 
+  // Obtener información del contrato (minTradeNum, sizeMultiplier, etc.)
+  async getContractInfo(
+    symbol: string,
+    productType: string = 'USDT-FUTURES'
+  ): Promise<{
+    minTradeNum: string;
+    sizeMultiplier: string;
+    minTradeUSDT: string;
+    volumePlace: string;
+    pricePlace: string;
+  }> {
+    try {
+      const response = await axios.get(
+        `${this.apiBaseUrl}/api/v2/mix/market/contracts`,
+        {
+          params: {
+            symbol,
+            productType: productType.toLowerCase(),
+          },
+        }
+      );
+
+      if (response.data.code === '00000' && response.data.data && response.data.data.length > 0) {
+        const contract = response.data.data[0];
+        return {
+          minTradeNum: contract.minTradeNum || '0.01',
+          sizeMultiplier: contract.sizeMultiplier || '0.01',
+          minTradeUSDT: contract.minTradeUSDT || '5',
+          volumePlace: contract.volumePlace || '2',
+          pricePlace: contract.pricePlace || '1',
+        };
+      } else {
+        throw new Error('Failed to get contract info');
+      }
+    } catch (error: any) {
+      throw new Error(
+        `Failed to get contract info: ${error.response?.data?.msg || error.message}`
+      );
+    }
+  }
+
+  // Calcular el tamaño correcto de la orden basándose en los requisitos del contrato
+  calculateOrderSize(
+    requestedSize: string | number,
+    minTradeNum: string,
+    sizeMultiplier: string
+  ): string {
+    const requested = parseFloat(requestedSize.toString());
+    const minTrade = parseFloat(minTradeNum);
+    const multiplier = parseFloat(sizeMultiplier);
+
+    // Si el tamaño solicitado es menor al mínimo, usar el mínimo
+    let size = Math.max(requested, minTrade);
+
+    // Asegurar que el tamaño sea múltiplo de sizeMultiplier
+    // Redondear hacia arriba al múltiplo más cercano
+    size = Math.ceil(size / multiplier) * multiplier;
+
+    // Redondear a los decimales apropiados (usar volumePlace si está disponible)
+    // Por ahora, usar hasta 8 decimales para evitar problemas de precisión
+    return size.toFixed(8).replace(/\.?0+$/, '');
+  }
+
   async placeOrder(
     credentials: BitgetCredentials,
     orderData: {
@@ -191,6 +254,118 @@ export class BitgetService {
     const endpoint = `/api/v2/mix/order/detail?orderId=${orderId}&symbol=${symbol}&productType=${productType}`;
     
     return await this.makeRequest('GET', endpoint, credentials);
+  }
+
+  // Modificar stop loss de una posición usando place-pos-tpsl
+  // Este endpoint permite establecer o modificar stop loss y take profit para una posición existente
+  async modifyPositionStopLoss(
+    credentials: BitgetCredentials,
+    symbol: string,
+    stopLossPrice: number,
+    productType: string = 'USDT-FUTURES',
+    marginCoin: string = 'USDT',
+    takeProfitPrice?: number
+  ): Promise<any> {
+    try {
+      // Obtener la posición para determinar holdSide y tamaño
+      const positions = await this.getPositions(credentials, symbol, productType);
+      if (!positions || positions.length === 0) {
+        throw new Error('No se encontró posición abierta para el símbolo');
+      }
+
+      const position = positions[0];
+      const holdSide = position.holdSide || (parseFloat(position.size) > 0 ? 'long' : 'short');
+
+      // Usar el endpoint place-pos-tpsl para establecer/modificar stop loss
+      const endpoint = '/api/v2/mix/order/place-pos-tpsl';
+      const payload: any = {
+        marginCoin,
+        productType: productType.toLowerCase(), // Bitget requiere lowercase
+        symbol,
+        holdSide,
+        stopLossTriggerPrice: stopLossPrice.toString(),
+        stopLossTriggerType: 'fill_price', // Usar fill_price para activación precisa
+        stopLossExecutePrice: stopLossPrice.toString(), // Precio de ejecución igual al trigger
+      };
+
+      // Si hay take profit, incluirlo también
+      if (takeProfitPrice) {
+        payload.stopSurplusTriggerPrice = takeProfitPrice.toString();
+        payload.stopSurplusTriggerType = 'fill_price';
+        payload.stopSurplusExecutePrice = takeProfitPrice.toString();
+      }
+
+      return await this.makeRequest('POST', endpoint, credentials, payload);
+    } catch (error: any) {
+      throw new Error(`Error al modificar stop loss: ${error.message}`);
+    }
+  }
+
+  // Obtener posiciones abiertas
+  async getPositions(
+    credentials: BitgetCredentials,
+    symbol?: string,
+    productType: string = 'USDT-FUTURES'
+  ): Promise<any> {
+    let endpoint = `/api/v2/mix/position/all-position?productType=${productType}`;
+    if (symbol) {
+      endpoint += `&symbol=${symbol}`;
+    }
+    
+    return await this.makeRequest('GET', endpoint, credentials);
+  }
+
+  // Validar conexión con Bitget usando las credenciales
+  async validateConnection(credentials: BitgetCredentials): Promise<{ valid: boolean; message: string }> {
+    try {
+      // Intentar obtener información de la cuenta de futuros como prueba de conexión
+      const endpoint = '/api/v2/mix/account/accounts';
+      const params = 'productType=USDT-FUTURES';
+      
+      const timestamp = Date.now().toString();
+      const requestPath = `${endpoint}?${params}`;
+      const bodyString = '';
+      
+      const signature = this.generateSignature(
+        timestamp,
+        'GET',
+        requestPath,
+        bodyString,
+        credentials.apiSecret
+      );
+
+      const headers: any = {
+        'ACCESS-KEY': credentials.apiKey,
+        'ACCESS-SIGN': signature,
+        'ACCESS-TIMESTAMP': timestamp,
+        'ACCESS-PASSPHRASE': credentials.passphrase,
+        'Content-Type': 'application/json',
+        'locale': 'en-US',
+      };
+
+      const response = await axios({
+        method: 'GET',
+        url: `${this.apiBaseUrl}${requestPath}`,
+        headers,
+      });
+
+      if (response.data.code === '00000') {
+        return {
+          valid: true,
+          message: 'Conexión exitosa. Las credenciales son válidas.',
+        };
+      } else {
+        return {
+          valid: false,
+          message: `Error de Bitget: ${response.data.msg || 'Credenciales inválidas'}`,
+        };
+      }
+    } catch (error: any) {
+      return {
+        valid: false,
+        message: `Error al validar conexión: ${error.response?.data?.msg || error.message}`,
+      };
+    }
   }
 
   // Helper para obtener credenciales desencriptadas

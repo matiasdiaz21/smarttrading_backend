@@ -3,7 +3,7 @@ import { WebhookLog } from '../types';
 
 export class WebhookLogModel {
   static async create(
-    strategyId: number,
+    strategyId: number | null,
     payload: string,
     signature: string | null,
     status: 'success' | 'failed' | 'invalid'
@@ -17,7 +17,7 @@ export class WebhookLogModel {
 
   static async findAll(limit = 100): Promise<WebhookLog[]> {
     const [rows] = await pool.execute(
-      'SELECT * FROM webhook_logs ORDER BY processed_at DESC LIMIT ?',
+      'SELECT * FROM webhook_logs ORDER BY processed_at DESC, id DESC LIMIT ?',
       [limit]
     );
     return rows as WebhookLog[];
@@ -25,7 +25,7 @@ export class WebhookLogModel {
 
   static async findByStrategyId(strategyId: number, limit = 50): Promise<WebhookLog[]> {
     const [rows] = await pool.execute(
-      'SELECT * FROM webhook_logs WHERE strategy_id = ? ORDER BY processed_at DESC LIMIT ?',
+      'SELECT * FROM webhook_logs WHERE strategy_id = ? ORDER BY processed_at DESC, id DESC LIMIT ?',
       [strategyId, limit]
     );
     return rows as WebhookLog[];

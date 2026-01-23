@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import { User } from '../types';
+import { randomUUID } from 'crypto';
 
 export class UserModel {
   static async findByEmail(email: string): Promise<User | null> {
@@ -18,6 +19,27 @@ export class UserModel {
     );
     const users = rows as User[];
     return users[0] || null;
+  }
+
+  static async getOrCreateUuid(userId: number): Promise<string> {
+    const user = await this.findById(userId);
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    // Si el usuario ya tiene UUID, retornarlo
+    if (user.uuid) {
+      return user.uuid;
+    }
+
+    // Generar nuevo UUID y guardarlo
+    const uuid = randomUUID();
+    await pool.execute(
+      'UPDATE users SET uuid = ? WHERE id = ?',
+      [uuid, userId]
+    );
+
+    return uuid;
   }
 
   static async create(
@@ -44,7 +66,7 @@ export class UserModel {
   }
 
   static async getAll(): Promise<User[]> {
-    const [rows] = await pool.execute('SELECT id, email, role, subscription_status, subscription_expires_at, created_at FROM users');
+    const [rows] = await pool.execute('SELECT id, uuid, email, role, subscription_status, subscription_expires_at, created_at FROM users');
     return rows as User[];
   }
 }

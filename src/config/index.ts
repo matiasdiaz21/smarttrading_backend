@@ -14,14 +14,9 @@ export const config = {
   bitget: {
     apiBaseUrl: process.env.BITGET_API_BASE_URL || 'https://api.bitget.com',
   },
-  nowpayments: {
-    apiKey: process.env.NOWPAYMENTS_API_KEY || '',
-    apiUrl: process.env.NOWPAYMENTS_API_URL || 'https://api.nowpayments.io/v1',
-    webhookSecret: process.env.NOWPAYMENTS_WEBHOOK_SECRET || '',
-  },
   app: {
     nodeEnv: process.env.NODE_ENV || 'development',
-    port: process.env.PORT || 3000,
+    port: parseInt(process.env.PORT || '5400'),
   },
 };
 

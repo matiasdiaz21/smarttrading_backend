@@ -98,10 +98,26 @@ CREATE TABLE IF NOT EXISTS webhook_logs (
     INDEX idx_processed_at (processed_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Tabla de planes de pago (NOWPayments)
+CREATE TABLE IF NOT EXISTS payment_plans (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NULL,
+    amount DECIMAL(10, 2) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+    duration_days INT NOT NULL DEFAULT 30,
+    features TEXT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_active (is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Tabla de suscripciones de pago (NOWPayments)
 CREATE TABLE IF NOT EXISTS subscriptions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
+    payment_plan_id INT NULL,
     payment_id VARCHAR(255) NOT NULL UNIQUE,
     status ENUM('pending', 'confirmed', 'expired', 'cancelled') NOT NULL DEFAULT 'pending',
     amount DECIMAL(10, 2) NOT NULL,
@@ -109,10 +125,24 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     expires_at DATETIME NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (payment_plan_id) REFERENCES payment_plans(id) ON DELETE SET NULL,
     INDEX idx_user_id (user_id),
+    INDEX idx_payment_plan_id (payment_plan_id),
     INDEX idx_payment_id (payment_id),
     INDEX idx_status (status),
     INDEX idx_expires_at (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Tabla de credenciales de NOWPayments (solo una configuración global)
+CREATE TABLE IF NOT EXISTS nowpayments_credentials (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    api_key TEXT NOT NULL,
+    public_key TEXT NOT NULL,
+    api_url VARCHAR(255) NOT NULL DEFAULT 'https://api.nowpayments.io/v1',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_active (is_active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Insertar usuario admin por defecto (password: admin123 - cambiar en producción)

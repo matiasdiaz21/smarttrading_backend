@@ -1,0 +1,772 @@
+//@version=5
+indicator("Auto Trading Improved V2 1.0.5", overlay=true, precision=4, max_bars_back=1440, max_lines_count=500, max_labels_count=500)
+
+// ═══════════════════════════════════════════════════════════════
+// 📂 CONFIGURACIÓN ORGANIZADA PARA MODIFICACIÓN FÁCIL
+// ═══════════════════════════════════════════════════════════════
+
+// Grupo: Configuración General
+group_general = 'Configuración General'
+tema = input.string("Oscuro", title="Tema", options=["Oscuro", "Claro"], group=group_general)
+i_textSize = input.string("Small", title="Text Size", options=["Tiny", "Small", "Normal", "Large"], group=group_general)
+textSize = i_textSize == "Small" ? size.small : i_textSize == "Normal" ? size.normal : i_textSize == "Large" ? size.large : size.tiny
+DEC = input.int(5, title="Decimales", minval=0, step=1, group=group_general)
+num_ops = input.int(20, title="Número de operaciones para winrate", minval=1, group=group_general)
+tpc = input.bool(true, title="Mostrar zona de profit", group=group_general)
+SML_Channel_TF_mins_D_W_M = input.int(2500, title="Minutos SML", minval=1, group=group_general)
+
+// Grupo: Configuración de Cuenta / Riesgo
+group_cuenta = 'Configuración de Cuenta / Riesgo'
+capital = input.float(100, title="Capital inicial: USDT 💲", minval=0, step=0.05, group=group_cuenta)
+perdida_ = input.float(1, title="Riesgo asumido (% de cuenta)", minval=0, step=0.05, group=group_cuenta)
+comision = input.float(0.08, title="Comisión Apertura + Cierre (%)", minval=0.01, maxval=0.2, step=0.005, group=group_cuenta)
+take_profit = input.float(1.7, title="Ratio Take Profit (RR)", step=0.1, group=group_cuenta)
+breakeven_ratio = input.float(0.5, title="Breakeven Ratio (0-1)", minval=0, maxval=1, step=0.05, group=group_cuenta)
+
+// Grupo: Filtros de Estrategia
+group_filtros = 'Filtros de Estrategia'
+pupupu = input.bool(true, title="Activar Filtro EMA", group=group_filtros)
+rsifilter = input.bool(false, title="Activar Filtro RSI", group=group_filtros)
+tsr = input.bool(true, title="Activar Pivotes Soporte/Resistencia", group=group_filtros)
+use_vol_filter = input.bool(false, title="Activar Filtro de Volatilidad (ATR)", group=group_filtros)
+atr_length = input.int(14, title="Período ATR", minval=1, group=group_filtros)
+atr_sma_length = input.int(50, title="Período SMA de ATR", minval=1, group=group_filtros)
+atr_multiplier = input.float(1.5, title="Multiplicador ATR para Alta Volatilidad", minval=1.0, step=0.1, group=group_filtros)
+
+// Grupo: Configuración EMA
+group_ema = 'Configuración EMA'
+len = input.int(12, minval=1, title="Período EMA", group=group_ema)
+emacolor = input.color(color.rgb(223, 223, 219), title="Color EMA", group=group_ema)
+
+// Grupo: Configuración RSI
+group_rsi = 'Configuración RSI'
+rsiLength = input.int(14, title="Período RSI", minval=1, group=group_rsi)
+sobrecompra = input.int(70, title="Sobrecompra", group=group_rsi)
+sobreventa = input.int(30, title="Sobreventa", group=group_rsi)
+
+// Grupo: Configuración MACD (para análisis)
+group_macd = 'Configuración MACD'
+macd_fast = input.int(12, title="MACD Fast Length", group=group_macd)
+macd_slow = input.int(26, title="MACD Slow Length", group=group_macd)
+macd_signal = input.int(9, title="MACD Signal Length", group=group_macd)
+
+// Grupo: RSI en Pantalla (Opcional)
+group_rsi_display = 'Mostrar RSI en Gráfico'
+multifilter = input.string("NONE", title="Activar RSI en Pantalla", tooltip="Muestra RSI en el gráfico", options=["NONE", "-RSI-"], group=group_rsi_display)
+oscLookbackLength = input.int(200, title="Cantidad de barras a bloquear (Profundidad)", minval=50, maxval=500, step=50, group=group_rsi_display)
+
+// ═══════════════════════════════════════════════════════════════
+// 📈 CÁLCULOS DE INDICADORES
+// ═══════════════════════════════════════════════════════════════
+
+// Pivotes - Convertir minutos a formato de timeframe válido
+SML_Channel_TF_string = timeframe.from_seconds(SML_Channel_TF_mins_D_W_M * 60)
+M_HIGH = request.security(syminfo.tickerid, SML_Channel_TF_string, high, lookahead=barmerge.lookahead_on)
+M_LOW = request.security(syminfo.tickerid, SML_Channel_TF_string, low, lookahead=barmerge.lookahead_on)
+M_MED = M_LOW + (M_HIGH - M_LOW) / 2
+
+plot(tsr ? M_HIGH : na, title="Resistencia", color=M_HIGH != M_HIGH[1] ? na : color.rgb(110, 1, 100), style=plot.style_line, linewidth=2)
+plot(tsr ? M_LOW : na, title="Soporte", color=M_LOW != M_LOW[1] ? na : color.rgb(110, 1, 100), style=plot.style_line, linewidth=2)
+plot(tsr ? M_MED : na, title="50%", color=M_LOW != M_LOW[1] ? na : color.rgb(111, 111, 111), style=plot.style_line, linewidth=1)
+
+// RSI
+srcm = close
+rsi = ta.rsi(srcm, rsiLength)
+sc = multifilter == "-RSI-" ? rsi > sobrecompra : na
+sv = multifilter == "-RSI-" ? rsi < sobreventa : na
+rsi_alcista = rsi[1] < sobreventa or rsi[2] < sobreventa or rsi[3] < sobreventa or rsi[4] < sobreventa or rsi[5] < sobreventa or rsi[6] < sobreventa or rsi[7] < sobreventa
+rsi_bajista = rsi[1] > sobrecompra or rsi[2] > sobrecompra or rsi[3] > sobrecompra or rsi[4] > sobrecompra or rsi[5] > sobrecompra or rsi[6] > sobrecompra or rsi[7] > sobrecompra
+
+// EMA Estrategia
+ema1 = ta.ema(close, len)
+plot(pupupu ? ema1 : na, color=emacolor, title="EMA Estrategia", linewidth=1, style=plot.style_stepline)
+
+// MACD (para análisis, sin plot)
+[macd_line, signal_line, hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// Filtro de Volatilidad con ATR
+atrValue = ta.atr(atr_length)
+atrSMA = ta.sma(atrValue, atr_sma_length)
+high_vol = atrValue > atrSMA * atr_multiplier
+
+// Volumen
+vol = volume
+
+// ═══════════════════════════════════════════════════════════════
+// 📊 FUNCIONES HELPER PARA MULTI-TIMEFRAME
+// ═══════════════════════════════════════════════════════════════
+
+// Calcular timeframes superiores dinámicamente
+int currentTfSeconds = timeframe.in_seconds()
+string htf1 = timeframe.from_seconds(currentTfSeconds * 4)  // 4x el timeframe actual
+string htf2 = timeframe.from_seconds(currentTfSeconds * 16)  // 16x el timeframe actual
+string htf3 = "1D"  // Diario
+
+// Función helper para obtener valores MACD individuales (para usar en request.security)
+getMACDLine() =>
+    [macd_line, _, _] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+    macd_line
+
+getMACDSignal() =>
+    [_, signal_line, _] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+    signal_line
+
+getMACDHist() =>
+    [_, _, hist_line] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+    hist_line
+
+// Función para obtener datos técnicos de un timeframe específico
+getTimeframeIndicators(string tf) =>
+    [rsi_val, macd_line_val, macd_signal_val, macd_hist_val, ema_val, atr_val, vol_val, open_val, high_val, low_val, close_val] = request.security(syminfo.tickerid, tf, [ta.rsi(close, rsiLength), getMACDLine(), getMACDSignal(), getMACDHist(), ta.ema(close, len), ta.atr(atr_length), volume, open, high, low, close], lookahead=barmerge.lookahead_on)
+
+// Función para calcular sentimiento de un timeframe
+calculateSentiment(float rsi_val, float ema_val, float close_val, float macd_line_val, float macd_signal_val, float macd_hist_val) =>
+    // RSI: estado actual y reciente
+    bool rsi_bullish = rsi_val > 50 and rsi_val < sobrecompra
+    bool rsi_bearish = rsi_val < 50 and rsi_val > sobreventa
+    bool rsi_oversold = rsi_val < sobreventa
+    bool rsi_overbought = rsi_val > sobrecompra
+    
+    // Tendencia (EMA): precio vs EMA
+    bool uptrend_tf = close_val > ema_val
+    bool downtrend_tf = close_val < ema_val
+    
+    // MACD: momentum
+    bool macd_bullish_tf = macd_line_val > macd_signal_val and macd_hist_val > 0
+    bool macd_bearish_tf = macd_line_val < macd_signal_val and macd_hist_val < 0
+    
+    // Cálculo de puntuación
+    int bullish_score_tf = 0
+    int bearish_score_tf = 0
+    
+    // Puntuación RSI (peso: 30%)
+    if rsi_oversold
+        bullish_score_tf += 30
+    else if rsi_bullish
+        bullish_score_tf += 15
+    else if rsi_overbought
+        bearish_score_tf += 30
+    else if rsi_bearish
+        bearish_score_tf += 15
+    
+    // Puntuación Tendencia EMA (peso: 40%)
+    if uptrend_tf
+        bullish_score_tf += 40
+    else if downtrend_tf
+        bearish_score_tf += 40
+    
+    // Puntuación MACD (peso: 30%)
+    if macd_bullish_tf
+        bullish_score_tf += 30
+    else if macd_bearish_tf
+        bearish_score_tf += 30
+    
+    // Determinación final
+    string sentiment_result = "NEUTRAL"
+    if bullish_score_tf > bearish_score_tf and bullish_score_tf >= 40
+        sentiment_result := "ALCISTA"
+    else if bearish_score_tf > bullish_score_tf and bearish_score_tf >= 40
+        sentiment_result := "BAJISTA"
+    
+    [sentiment_result, bullish_score_tf, bearish_score_tf]
+
+// Función para calcular tendencia
+calculateTrend(float close_val, float ema_val, float close_prev, float ema_prev, float close_prev2, float ema_prev2) =>
+    bool uptrend_tf = close_val > ema_val
+    bool downtrend_tf = close_val < ema_val
+    bool strong_uptrend_tf = close_val > ema_val and close_prev > ema_prev and close_prev2 > ema_prev2
+    bool strong_downtrend_tf = close_val < ema_val and close_prev < ema_prev and close_prev2 < ema_prev2
+    
+    string direction = "SIDEWAYS"
+    string strength = "WEAK"
+    
+    if strong_uptrend_tf
+        direction := "UP"
+        strength := "STRONG"
+    else if uptrend_tf
+        direction := "UP"
+        strength := "MODERATE"
+    else if strong_downtrend_tf
+        direction := "DOWN"
+        strength := "STRONG"
+    else if downtrend_tf
+        direction := "DOWN"
+        strength := "MODERATE"
+    
+    [direction, strength]
+
+// Función para obtener volumen relativo
+getVolumeRelative(float vol_val, string tf) =>
+    float vol_avg = request.security(syminfo.tickerid, tf, ta.sma(volume, 20), lookahead=barmerge.lookahead_on)
+    float vol_relative = vol_avg > 0 ? (vol_val / vol_avg) * 100 : 100.0
+    string vol_state = vol_relative > 120 ? "ABOVE_AVERAGE" : vol_relative < 80 ? "BELOW_AVERAGE" : "AVERAGE"
+    [vol_relative, vol_state]
+
+// Función para obtener ATR relativo
+getATRRelative(float atr_val, string tf) =>
+    float atr_avg = request.security(syminfo.tickerid, tf, ta.sma(ta.atr(atr_length), 20), lookahead=barmerge.lookahead_on)
+    float atr_relative = atr_avg > 0 ? (atr_val / atr_avg) * 100 : 100.0
+    string atr_state = atr_relative > 150 ? "HIGH" : atr_relative < 80 ? "LOW" : "NORMAL"
+    [atr_relative, atr_state]
+
+// Función para construir JSON de timeframe completo
+buildTimeframeJSON(string tf_name, string tf_period, float rsi_val, float macd_line_val, float macd_signal_val, float macd_hist_val, float ema_val, float atr_val, float vol_val, float open_val, float high_val, float low_val, float close_val, float close_prev, float ema_prev, float close_prev2, float ema_prev2) =>
+    // Calcular sentimiento
+    [sentiment_val, bullish_score, bearish_score] = calculateSentiment(rsi_val, ema_val, close_val, macd_line_val, macd_signal_val, macd_hist_val)
+    
+    // Calcular tendencia
+    [trend_dir, trend_str] = calculateTrend(close_val, ema_val, close_prev, ema_prev, close_prev2, ema_prev2)
+    
+    // Calcular volumen relativo
+    [vol_rel, vol_state] = getVolumeRelative(vol_val, tf_period)
+    
+    // Calcular ATR relativo
+    [atr_rel, atr_state] = getATRRelative(atr_val, tf_period)
+    
+    // Estado RSI
+    string rsi_state = rsi_val > sobrecompra ? "OVERBOUGHT" : rsi_val < sobreventa ? "OVERSOLD" : "NEUTRAL"
+    
+    // Dirección MACD
+    string macd_dir = macd_line_val > macd_signal_val and macd_hist_val > 0 ? "BULLISH" : macd_line_val < macd_signal_val and macd_hist_val < 0 ? "BEARISH" : "NEUTRAL"
+    
+    // Relación precio-EMA
+    string price_ema_rel = close_val > ema_val ? "ABOVE" : "BELOW"
+    
+    // Construir JSON string
+    '"' + tf_name + '": {"timeframe": "' + tf_period + '", "indicators": {"rsi": {"value": ' + str.tostring(rsi_val, "#.##") + ', "state": "' + rsi_state + '"}, "macd": {"line": ' + str.tostring(macd_line_val, "#.####") + ', "signal": ' + str.tostring(macd_signal_val, "#.####") + ', "hist": ' + str.tostring(macd_hist_val, "#.####") + ', "direction": "' + macd_dir + '"}, "ema": {"value": ' + str.tostring(ema_val, "#.####") + ', "priceRelation": "' + price_ema_rel + '"}, "atr": {"value": ' + str.tostring(atr_val, "#.####") + ', "relative": ' + str.tostring(atr_rel, "#.##") + ', "state": "' + atr_state + '"}}, "ohlc": {"open": ' + str.tostring(open_val, "#.####") + ', "high": ' + str.tostring(high_val, "#.####") + ', "low": ' + str.tostring(low_val, "#.####") + ', "close": ' + str.tostring(close_val, "#.####") + '}, "volume": {"value": ' + str.tostring(vol_val, "#.##") + ', "relative": ' + str.tostring(vol_rel, "#.##") + ', "state": "' + vol_state + '"}, "sentiment": {"value": "' + sentiment_val + '", "score": {"bullish": ' + str.tostring(bullish_score) + ', "bearish": ' + str.tostring(bearish_score) + '}}, "trend": {"direction": "' + trend_dir + '", "strength": "' + trend_str + '"}}'
+
+// Función para construir JSON completo de todos los timeframes y contexto de mercado
+buildMultiTimeframeJSON() =>
+    // Obtener datos del timeframe actual
+    string current_tf = timeframe.period
+    float current_close_prev = close[1]
+    float current_ema_prev = ema1[1]
+    float current_close_prev2 = close[2]
+    float current_ema_prev2 = ema1[2]
+    
+    // Construir JSON del timeframe actual
+    string current_json = buildTimeframeJSON("current", current_tf, rsi, macd_line, signal_line, hist, ema1, atrValue, vol, open, high, low, close, current_close_prev, current_ema_prev, current_close_prev2, current_ema_prev2)
+    
+    // Obtener datos de HTF1
+    [htf1_rsi, htf1_macd_line, htf1_macd_signal, htf1_macd_hist, htf1_ema, htf1_atr, htf1_vol, htf1_open, htf1_high, htf1_low, htf1_close] = getTimeframeIndicators(htf1)
+    float htf1_close_prev = request.security(syminfo.tickerid, htf1, close[1], lookahead=barmerge.lookahead_on)
+    float htf1_ema_prev = request.security(syminfo.tickerid, htf1, ta.ema(close, len)[1], lookahead=barmerge.lookahead_on)
+    float htf1_close_prev2 = request.security(syminfo.tickerid, htf1, close[2], lookahead=barmerge.lookahead_on)
+    float htf1_ema_prev2 = request.security(syminfo.tickerid, htf1, ta.ema(close, len)[2], lookahead=barmerge.lookahead_on)
+    string htf1_json = buildTimeframeJSON("htf1", htf1, htf1_rsi, htf1_macd_line, htf1_macd_signal, htf1_macd_hist, htf1_ema, htf1_atr, htf1_vol, htf1_open, htf1_high, htf1_low, htf1_close, htf1_close_prev, htf1_ema_prev, htf1_close_prev2, htf1_ema_prev2)
+    
+    // Obtener datos de HTF2
+    [htf2_rsi, htf2_macd_line, htf2_macd_signal, htf2_macd_hist, htf2_ema, htf2_atr, htf2_vol, htf2_open, htf2_high, htf2_low, htf2_close] = getTimeframeIndicators(htf2)
+    float htf2_close_prev = request.security(syminfo.tickerid, htf2, close[1], lookahead=barmerge.lookahead_on)
+    float htf2_ema_prev = request.security(syminfo.tickerid, htf2, ta.ema(close, len)[1], lookahead=barmerge.lookahead_on)
+    float htf2_close_prev2 = request.security(syminfo.tickerid, htf2, close[2], lookahead=barmerge.lookahead_on)
+    float htf2_ema_prev2 = request.security(syminfo.tickerid, htf2, ta.ema(close, len)[2], lookahead=barmerge.lookahead_on)
+    string htf2_json = buildTimeframeJSON("htf2", htf2, htf2_rsi, htf2_macd_line, htf2_macd_signal, htf2_macd_hist, htf2_ema, htf2_atr, htf2_vol, htf2_open, htf2_high, htf2_low, htf2_close, htf2_close_prev, htf2_ema_prev, htf2_close_prev2, htf2_ema_prev2)
+    
+    // Obtener datos de HTF3 (Diario)
+    [htf3_rsi, htf3_macd_line, htf3_macd_signal, htf3_macd_hist, htf3_ema, htf3_atr, htf3_vol, htf3_open, htf3_high, htf3_low, htf3_close] = getTimeframeIndicators(htf3)
+    float htf3_close_prev = request.security(syminfo.tickerid, htf3, close[1], lookahead=barmerge.lookahead_on)
+    float htf3_ema_prev = request.security(syminfo.tickerid, htf3, ta.ema(close, len)[1], lookahead=barmerge.lookahead_on)
+    float htf3_close_prev2 = request.security(syminfo.tickerid, htf3, close[2], lookahead=barmerge.lookahead_on)
+    float htf3_ema_prev2 = request.security(syminfo.tickerid, htf3, ta.ema(close, len)[2], lookahead=barmerge.lookahead_on)
+    string htf3_json = buildTimeframeJSON("htf3", htf3, htf3_rsi, htf3_macd_line, htf3_macd_signal, htf3_macd_hist, htf3_ema, htf3_atr, htf3_vol, htf3_open, htf3_high, htf3_low, htf3_close, htf3_close_prev, htf3_ema_prev, htf3_close_prev2, htf3_ema_prev2)
+    
+    // Calcular contexto de mercado global
+    [atr_rel_global, atr_state_global] = getATRRelative(atrValue, current_tf)
+    [vol_rel_global, vol_state_global] = getVolumeRelative(vol, current_tf)
+    
+    // Distancia a soportes/resistencias
+    float dist_to_support = close - M_LOW
+    float dist_to_resistance = M_HIGH - close
+    float range_size = M_HIGH - M_LOW
+    float position_in_range = range_size > 0 ? ((close - M_LOW) / range_size) * 100 : 50.0
+    string position_state = position_in_range > 70 ? "NEAR_RESISTANCE" : position_in_range < 30 ? "NEAR_SUPPORT" : "MID_RANGE"
+    
+    // Construir JSON de contexto de mercado
+    string market_context = '"marketContext": {"volatility": {"atrRelative": ' + str.tostring(atr_rel_global, "#.##") + ', "state": "' + atr_state_global + '"}, "volume": {"relative": ' + str.tostring(vol_rel_global, "#.##") + ', "state": "' + vol_state_global + '"}, "supportResistance": {"distanceToSupport": ' + str.tostring(dist_to_support, "#.####") + ', "distanceToResistance": ' + str.tostring(dist_to_resistance, "#.####") + ', "positionInRange": ' + str.tostring(position_in_range, "#.##") + ', "state": "' + position_state + '"}}'
+    
+    // Construir JSON completo de timeframes
+    '"timeframes": {' + current_json + ', ' + htf1_json + ', ' + htf2_json + ', ' + htf3_json + '}, ' + market_context
+
+// ═══════════════════════════════════════════════════════════════
+// 🔄 CONDICIONES DE ENTRADA/SALIDA
+// ═══════════════════════════════════════════════════════════════
+
+// Condiciones de soporte y resistencia
+soporte = ((low <= M_LOW or low[1] <= M_LOW or low[2] <= M_LOW or low[3] <= M_LOW or low[4] <= M_LOW or low[5] <= M_LOW or low[6] <= M_LOW or low[7] <= M_LOW or low[8] <= M_LOW or low[9] <= M_LOW or low[10] <= M_LOW or low[11] <= M_LOW or low[12] <= M_LOW or low[13] <= M_LOW or low[14] <= M_LOW or low[15] <= M_LOW) and (ta.crossover(close, ema1) and (close[1] < ema1[1]) and (close[2] < ema1[2] and close[3] < ema1[3] and close[4] < ema1[4]) or (low[1] <= M_LOW) or low[2] <= M_LOW) and (ta.crossover(close, ema1)))
+resistencia = ((high >= M_HIGH or high[1] >= M_HIGH or high[2] >= M_HIGH or high[3] >= M_HIGH or high[4] >= M_HIGH or high[5] >= M_HIGH or high[6] >= M_HIGH or high[7] >= M_HIGH or high[8] >= M_HIGH or high[9] >= M_HIGH or high[10] >= M_HIGH or high[11] >= M_HIGH or high[12] >= M_HIGH or high[13] >= M_HIGH or high[14] >= M_HIGH or high[15] >= M_HIGH) and (ta.crossunder(close, ema1) and (close[1] > ema1[1]) and (close[2] > ema1[2] and close[3] > ema1[3] and close[4] > ema1[4]) or (high[1] >= M_HIGH) or high[2] >= M_HIGH) and (ta.crossunder(close, ema1)))
+filtro_long = ema1 < M_MED
+filtro_short = ema1 > M_MED
+
+// Condiciones combinadas con filtro de volatilidad
+longcondicion = soporte and (not rsifilter or rsi_alcista) and (macd_line > signal_line and hist > hist[1]) and filtro_long and pupupu and (not use_vol_filter or not high_vol)
+shortcondicion = resistencia and (not rsifilter or rsi_bajista) and (macd_line < signal_line and hist < hist[1]) and filtro_short and pupupu and (not use_vol_filter or not high_vol)
+
+// ═══════════════════════════════════════════════════════════════
+// 📊 LÓGICA DE ESTRATEGIA
+// ═══════════════════════════════════════════════════════════════
+
+var limitl = 0.0
+var stopl = 0.0
+var tpl = 0.0
+var limits = 0.0
+var stops = 0.0
+var tps = 0.0
+var float activeEntry = 0.0
+var float activeStop = 0.0
+var float originalStop = 0.0  // Guardar stop original para cálculos
+var float activeTp = 0.0
+var float breakeven = 0.0
+var string op = "na"
+var float cien = 0
+// Variables para entrada y stop (se asignan dinámicamente)
+float limit = 0.0
+float stop = 0.0
+var bool alert_take_profit_triggered = false
+var bool alert_stop_loss_triggered = false
+var bool alert_breakeven_triggered = false
+var bool be_hit = false
+var label be_label = na  // Label de breakeven para evitar duplicados
+var int be_bar_index = -1  // Barra donde se alcanzó breakeven (para evitar SL en misma barra)
+var bool isTradeOpen = false
+var string activeTradeType = "na"
+var int trade_id = 0
+var float[] outcomes = array.new_float(0)
+var float[] normal_outcomes = array.new_float(0)
+var tp = 0.0
+var bool tp_hit = false
+var bool sl_hit = false
+// Variables para balance de cuenta y estadísticas
+var float normalBalance = capital   // Balance normal (solo TP y SL completos)
+var float breakevenBalance = capital  // Balance con BE (TP completo, SL con BE=50%, SL sin BE=pérdida)
+var int totalWins = 0
+var int totalLosses = 0
+var int totalBreakevens = 0
+var float currentQty = 0.0
+// Entradas y salidas - Solo ejecutar al cierre de barra para consistencia con alertas
+if longcondicion and not isTradeOpen and barstate.isconfirmed
+    limit := ema1
+    limitl := limit
+    limits := 0.0
+    stop := M_LOW
+    stopl := stop
+    stops := 0.0
+    tp := limit + (limit - stop) * take_profit
+    tpl := tp
+    tps := 0.0
+    breakeven := limit + (tp - limit) * breakeven_ratio
+    activeTradeType := "LONG"
+    activeEntry := limit
+    activeStop := stop
+    originalStop := stop  // Guardar stop original
+    activeTp := tp
+    alert_take_profit_triggered := false
+    alert_stop_loss_triggered := false
+    alert_breakeven_triggered := false
+    be_bar_index := -1  // Resetear para nueva operación
+    isTradeOpen := true
+    trade_id += 1  // Incrementa el contador de trades secuencialmente
+    qty = (perdida_ * normalBalance / 100) / math.abs(limit - stop)
+    currentQty := qty  // Guardar qty para calcular balance al cerrar
+    // Construir JSON multi-timeframe
+    string multi_tf_json = buildMultiTimeframeJSON()
+    // Construir alert con estructura completa (mantener compatibilidad + nueva estructura)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(limit) + ', "stopLoss": ' + str.tostring(stop) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+    label.new(bar_index, limit, text="Long Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(breakeven, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+
+if shortcondicion and not isTradeOpen and barstate.isconfirmed
+    limit := ema1
+    limits := limit
+    limitl := 0.0
+    stop := M_HIGH
+    stops := stop
+    stopl := 0.0
+    tp := limit - math.abs(limit - stop) * take_profit
+    tps := tp
+    tpl := 0.0
+    breakeven := limit - (limit - tp) * breakeven_ratio
+    activeTradeType := "SHORT"
+    activeEntry := limit
+    activeStop := stop
+    originalStop := stop  // Guardar stop original
+    activeTp := tp
+    alert_take_profit_triggered := false
+    alert_stop_loss_triggered := false
+    alert_breakeven_triggered := false
+    be_bar_index := -1  // Resetear para nueva operación
+    isTradeOpen := true
+    trade_id += 1  // Incrementa el contador de trades secuencialmente
+    qty = (perdida_ * normalBalance / 100) / math.abs(stop - limit)
+    currentQty := qty  // Guardar qty para calcular balance al cerrar
+    // Construir JSON multi-timeframe
+    string multi_tf_json = buildMultiTimeframeJSON()
+    // Construir alert con estructura completa (mantener compatibilidad + nueva estructura)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(limit) + ', "stopLoss": ' + str.tostring(stop) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+    label.new(bar_index, limit, text="Short Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(breakeven, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+
+// Determinar tipo de operación
+if activeEntry < activeStop and isTradeOpen
+    op := "SHORT"
+    cien := -1
+else if activeEntry > activeStop and isTradeOpen
+    op := "LONG"
+    cien := 1
+else
+    op := "na"
+
+// Gestión de riesgo (usar activeEntry y activeStop si hay trade abierto)
+float diferencia = isTradeOpen ? math.abs(activeEntry - activeStop) : 0.0
+float PORCENTT = (isTradeOpen and activeEntry > 0 and cien != 0) ? (diferencia * 100 / activeEntry) * cien : 0.0
+float POSICION = (isTradeOpen and PORCENTT != 0) ? (100 / PORCENTT) * perdida_ : 0.0
+float LOTE = (isTradeOpen and activeEntry > 0 and POSICION > 0) ? POSICION / activeEntry : 0.0
+float COMI = (isTradeOpen and POSICION > 0) ? (comision * POSICION / 100) * -1 : 0.0
+
+// Alertas de Breakeven - Se activa cuando la vela toca el nivel (no solo cuando cruza)
+// Para LONG: se activa si high toca o supera el breakeven
+if activeTradeType == "LONG" and high >= breakeven and not alert_breakeven_triggered and isTradeOpen
+    activeStop := activeEntry
+    stopl := activeEntry
+    be_hit := true
+    be_bar_index := bar_index  // Guardar la barra donde se alcanzó BE
+    // Enviar alert y crear label inmediatamente en tiempo real
+    string multi_tf_json_be = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json_be + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, breakeven, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
+    alert_breakeven_triggered := true
+    totalBreakevens += 1  // Incrementar contador de breakevens
+    be_label := na  // Resetear label para el próximo breakeven
+
+// Para SHORT: se activa si low toca o cae por debajo del breakeven
+if activeTradeType == "SHORT" and low <= breakeven and not alert_breakeven_triggered and isTradeOpen
+    activeStop := activeEntry
+    stops := activeEntry
+    be_hit := true
+    be_bar_index := bar_index  // Guardar la barra donde se alcanzó BE
+    // Enviar alert y crear label inmediatamente en tiempo real
+    string multi_tf_json_be = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json_be + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, breakeven, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
+    alert_breakeven_triggered := true
+    totalBreakevens += 1  // Incrementar contador de breakevens
+    be_label := na  // Resetear label para el próximo breakeven
+
+// Track TP/SL for manual winrate (since strategy handles exits)
+// Usar originalStop para detectar stop loss real, no activeStop que puede cambiar con BE
+if low <= activeTp and activeTradeType == "SHORT" and not alert_take_profit_triggered and isTradeOpen
+    tp_hit := true
+    // Enviar alert y crear label inmediatamente en tiempo real
+    string multi_tf_json_tp = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a take profit", "precio_actual": ' + str.tostring(close) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json_tp + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, low, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.green, textcolor=color.white, size=textSize)
+    alert_take_profit_triggered := true
+    alert_stop_loss_triggered := true
+    array.push(outcomes, 1.0)
+    array.push(normal_outcomes, 1.0)
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    if array.size(normal_outcomes) > num_ops
+        array.shift(normal_outcomes)
+    // Calcular ganancia en TP
+    float profit = 0.0
+    float posicion_trade = activeEntry * currentQty
+    float comision_trade = (comision * posicion_trade / 100)
+    profit := (activeEntry - activeTp) * currentQty - comision_trade
+    normalBalance += profit  // Balance normal: TP completo siempre
+    // Balance BE: si se alcanzó breakeven, solo suma el 50% restante (ya se "aseguró" el 50% en BE)
+    if alert_breakeven_triggered
+        float profit_be = profit * (1 - breakeven_ratio)  // Resto del profit (50% si ratio=0.5)
+        breakevenBalance += profit_be
+    else
+        breakevenBalance += profit
+    totalWins += 1
+    alert_breakeven_triggered := false
+    limits := 0.0
+    tps := 0.0
+    stops := 0.0
+    op := "na"
+    breakeven := 0.0
+    isTradeOpen := false
+    activeTradeType := "na"
+
+if high >= activeTp and activeTradeType == "LONG" and not alert_take_profit_triggered and isTradeOpen
+    tp_hit := true
+    // Enviar alert y crear label inmediatamente en tiempo real
+    string multi_tf_json_tp = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a take profit", "precio_actual": ' + str.tostring(close) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json_tp + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, high, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+    alert_take_profit_triggered := true
+    alert_stop_loss_triggered := true
+    array.push(outcomes, 1.0)
+    array.push(normal_outcomes, 1.0)
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    if array.size(normal_outcomes) > num_ops
+        array.shift(normal_outcomes)
+    // Calcular ganancia en TP
+    float profit = 0.0
+    float posicion_trade = activeEntry * currentQty
+    float comision_trade = (comision * posicion_trade / 100)
+    profit := (activeTp - activeEntry) * currentQty - comision_trade
+    normalBalance += profit  // Balance normal: TP completo siempre
+    // Balance BE: si se alcanzó breakeven, solo suma el 50% restante (ya se "aseguró" el 50% en BE)
+    if alert_breakeven_triggered
+        float profit_be = profit * (1 - breakeven_ratio)  // Resto del profit (50% si ratio=0.5)
+        breakevenBalance += profit_be
+    else
+        breakevenBalance += profit
+    totalWins += 1
+    alert_breakeven_triggered := false
+    limitl := 0.0
+    tpl := 0.0
+    stopl := 0.0
+    op := "na"
+    breakeven := 0.0
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// Para SHORT: stop loss está arriba, se activa si high toca o supera el stop actual (puede ser original o breakeven)
+// Solo se activa si NO es la misma barra donde se alcanzó breakeven (evita cerrar en la misma barra de BE)
+if high >= activeStop and activeTradeType == "SHORT" and not alert_stop_loss_triggered and isTradeOpen and bar_index != be_bar_index
+    sl_hit := true
+    // Enviar alert y crear label inmediatamente en tiempo real
+    string multi_tf_json_sl = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a stop loss", "precio_actual": ' + str.tostring(close) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json_sl + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+    alert_stop_loss_triggered := true
+    alert_take_profit_triggered := true
+    array.push(normal_outcomes, 0.0)  // SL siempre es 0.0 en winrate normal
+    if alert_breakeven_triggered
+        array.push(outcomes, 0.5)  // BE = 50% de ganancia (0.5)
+    else
+        array.push(outcomes, 0.0)  // Loss completo
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    if array.size(normal_outcomes) > num_ops
+        array.shift(normal_outcomes)
+    // Calcular pérdida en SL
+    float loss_normal = 0.0
+    float loss_be = 0.0
+    float posicion_trade_sl = activeEntry * currentQty
+    float comision_trade_sl = (comision * posicion_trade_sl / 100)
+    if alert_breakeven_triggered
+        // Balance normal: cuenta como pérdida completa (no considera BE, usa stop original)
+        loss_normal := (originalStop - activeEntry) * currentQty - comision_trade_sl
+        // Balance BE: ganancia parcial (50% del TP)
+        float profit_be = (activeEntry - activeTp) * currentQty * 0.5 - comision_trade_sl
+        loss_be := profit_be
+    else
+        // Pérdida completa para ambos balances (sin BE, usar stop original)
+        loss_normal := (originalStop - activeEntry) * currentQty - comision_trade_sl
+        loss_be := loss_normal
+    normalBalance += loss_normal
+    breakevenBalance += loss_be
+    totalLosses += 1
+    alert_breakeven_triggered := false
+    limits := 0.0
+    tps := 0.0
+    stops := 0.0
+    op := "na"
+    breakeven := 0.0
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// Para LONG: stop loss está abajo, se activa si low toca o cae por debajo del stop actual (puede ser original o breakeven)
+// Solo se activa si NO es la misma barra donde se alcanzó breakeven (evita cerrar en la misma barra de BE)
+if low <= activeStop and activeTradeType == "LONG" and not alert_stop_loss_triggered and isTradeOpen and bar_index != be_bar_index
+    sl_hit := true
+    // Enviar alert y crear label inmediatamente en tiempo real
+    string multi_tf_json_sl = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a stop loss", "precio_actual": ' + str.tostring(close) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json_sl + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.red, textcolor=color.white, size=textSize)
+    alert_stop_loss_triggered := true
+    alert_take_profit_triggered := true
+    array.push(normal_outcomes, 0.0)  // SL siempre es 0.0 en winrate normal
+    if alert_breakeven_triggered
+        array.push(outcomes, 0.5)  // BE = 50% de ganancia (0.5)
+    else
+        array.push(outcomes, 0.0)  // Loss completo
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    if array.size(normal_outcomes) > num_ops
+        array.shift(normal_outcomes)
+    // Calcular pérdida en SL
+    float loss_normal = 0.0
+    float loss_be = 0.0
+    float posicion_trade_sl = activeEntry * currentQty
+    float comision_trade_sl = (comision * posicion_trade_sl / 100)
+    if alert_breakeven_triggered
+        // Balance normal: cuenta como pérdida completa (no considera BE, usa stop original)
+        loss_normal := (activeEntry - originalStop) * currentQty - comision_trade_sl
+        // Balance BE: ganancia parcial (50% del TP)
+        float profit_be = (activeTp - activeEntry) * currentQty * 0.5 - comision_trade_sl
+        loss_be := profit_be
+    else
+        // Pérdida completa para ambos balances (sin BE, usar stop original)
+        loss_normal := (activeEntry - originalStop) * currentQty - comision_trade_sl
+        loss_be := loss_normal
+    normalBalance += loss_normal
+    breakevenBalance += loss_be
+    totalLosses += 1
+    alert_breakeven_triggered := false
+    limitl := 0.0
+    tpl := 0.0
+    stopl := 0.0
+    op := "na"
+    breakeven := 0.0
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// Process alerts and resets at bar close
+if barstate.isconfirmed
+    // Calcular JSON multi-timeframe una vez para todos los alerts (consistencia)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    
+    // Verificar condiciones históricas para BREAKEVEN (solo para crear labels persistentes, el alert ya se envió en tiempo real)
+    if isTradeOpen and not alert_breakeven_triggered and breakeven > 0
+        bool be_condition_met = false
+        if activeTradeType == "LONG" and high >= breakeven
+            be_condition_met := true
+        else if activeTradeType == "SHORT" and low <= breakeven
+            be_condition_met := true
+        
+        if be_condition_met
+            // Solo crear label para persistencia histórica, el alert ya se envió en tiempo real
+            if activeTradeType == "LONG"
+                label.new(bar_index, breakeven, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
+            else if activeTradeType == "SHORT"
+                label.new(bar_index, breakeven, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
+    // Verificar condiciones históricas para TP (solo para crear labels persistentes, el alert ya se envió en tiempo real)
+    if isTradeOpen and not alert_take_profit_triggered and activeTp > 0
+        bool tp_condition_met = false
+        if activeTradeType == "LONG" and high >= activeTp
+            tp_condition_met := true
+        else if activeTradeType == "SHORT" and low <= activeTp
+            tp_condition_met := true
+        
+        if tp_condition_met
+            // Solo crear label para persistencia histórica, el alert ya se envió en tiempo real
+            if activeTradeType == "LONG"
+                label.new(bar_index, high, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+            else if activeTradeType == "SHORT"
+                label.new(bar_index, low, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.green, textcolor=color.white, size=textSize)
+
+// ═══════════════════════════════════════════════════════════════
+// 📊 VISUALIZACIÓN (MANTENIENDO EL DISEÑO ORIGINAL)
+// ═══════════════════════════════════════════════════════════════
+
+// Plot de las condiciones RSI
+plotshape(sc, style=shape.triangledown, location=location.top, color=color.red, size=size.tiny)
+plotshape(sv, style=shape.triangleup, location=location.bottom, color=color.green, size=size.tiny)
+
+// Plot breakeven
+plot(isTradeOpen ? breakeven : na, "Breakeven", color=color.orange, style=plot.style_linebr, linewidth=1)
+
+// Plots de niveles de entrada, TP y SL
+medios = plot(pupupu and limits > 0.0 ? limits : na, title="Entry Point Short", style=plot.style_linebr, color=color.rgb(255, 255, 30, 50), linewidth=1)
+ganancias = plot(tpc and tps > 0.0 ? tps : na, title="TP-1 Short", style=plot.style_linebr, color=color.rgb(17, 84, 64, 65), linewidth=1)
+perdidas = plot(tpc and stops > 0.0 ? stops : na, title="Stop Short", style=plot.style_linebr, color=color.rgb(244, 42, 42, 80), linewidth=1)
+fill(medios, ganancias, color=color.rgb(17, 84, 64, 65))
+fill(medios, perdidas, color=color.rgb(224, 42, 42, 80))
+
+mediol = plot(pupupu and limitl > 0.0 ? limitl : na, title="Entry Point Long", style=plot.style_linebr, color=color.rgb(255, 255, 30, 50), linewidth=1)
+ganancial = plot(tpc and tpl > 0.0 ? tpl : na, title="TP-1 Long", style=plot.style_linebr, color=color.rgb(17, 84, 64, 65), linewidth=1)
+perdidal = plot(tpc and stopl > 0.0 ? stopl : na, title="Stop Long", style=plot.style_linebr, color=color.rgb(244, 42, 42, 80), linewidth=1)
+fill(mediol, ganancial, color=color.rgb(17, 84, 64, 65))
+fill(mediol, perdidal, color=color.rgb(224, 42, 42, 85))
+
+// Tabla de información
+mysite = "AutoTrading Improved"
+var infoTable = table.new(position=position.bottom_right, columns=1, rows=14, bgcolor=color.rgb(208, 207, 198), border_width=2)
+table.cell(infoTable, 0, 0, text=mysite, text_halign=text.align_center, text_size=textSize, text_color=chart.bg_color, bgcolor=chart.fg_color)
+table.cell(infoTable, 0, 1, text=op + " " + syminfo.ticker + "▐ RR 1:" + str.tostring(take_profit) + "▐ " + str.tostring(SML_Channel_TF_mins_D_W_M) + "m", text_size=textSize, text_halign=text.align_left, text_color=color.fuchsia, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 2, text="ENTRADA : " + (isTradeOpen ? str.tostring(math.round(activeEntry, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.yellow, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 3, text="STOP : " + (isTradeOpen ? str.tostring(math.round(activeStop, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.red, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 4, text="TP-1 : " + (isTradeOpen ? str.tostring(math.round(activeTp, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.green, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 5, text="LOTE : " + (isTradeOpen ? str.tostring(math.round(LOTE, 5)) + "▐ $ " + str.tostring(math.round(POSICION, 2)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 6, text="COMISIÓN: ▐ " + (isTradeOpen ? str.tostring(math.round(COMI, 4)) : "---") + " ▐ ", text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 7, text="Trade ID: " + str.tostring(trade_id), text_size=textSize, text_halign=text.align_left, text_color=color.blue, bgcolor=chart.bg_color)
+
+// Balance normal (solo TP y SL completos, sin considerar BE)
+float normalBalanceChange = normalBalance - capital
+float normalBalancePercent = capital > 0 ? (normalBalanceChange / capital) * 100 : 0.0
+table.cell(infoTable, 0, 8, text="Balance Normal: " + str.tostring(math.round(normalBalance, 2)) + " USDT (" + (normalBalanceChange >= 0 ? "+" : "") + str.tostring(math.round(normalBalancePercent, 2)) + "%)", text_size=textSize, text_halign=text.align_left, text_color=normalBalanceChange >= 0 ? color.green : color.red, bgcolor=chart.bg_color)
+
+// Balance breakeven (TP completo, SL con BE=50%, SL sin BE=pérdida)
+float beBalanceChange = breakevenBalance - capital
+float beBalancePercent = capital > 0 ? (beBalanceChange / capital) * 100 : 0.0
+table.cell(infoTable, 0, 9, text="Balance BE: " + str.tostring(math.round(breakevenBalance, 2)) + " USDT (" + (beBalanceChange >= 0 ? "+" : "") + str.tostring(math.round(beBalancePercent, 2)) + "%)", text_size=textSize, text_halign=text.align_left, text_color=beBalanceChange >= 0 ? color.green : color.red, bgcolor=chart.bg_color)
+
+// Contador W/L/BE
+table.cell(infoTable, 0, 10, text="W/L/BE: " + str.tostring(totalWins) + "/" + str.tostring(totalLosses) + "/" + str.tostring(totalBreakevens), text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
+
+// Winrate Normal (solo TP=1.0 y SL=0.0, sin considerar breakeven)
+winrate = array.size(normal_outcomes) > 0 ? (array.sum(normal_outcomes) / array.size(normal_outcomes)) * 100 : 0.0
+table.cell(infoTable, 0, 11, text="Winrate Normal: " + str.tostring(math.round(winrate, 2)) + "%", text_size=textSize, text_halign=text.align_left, text_color=winrate >= 50 ? color.green : color.red, bgcolor=chart.bg_color)
+
+// Adjusted Winrate (TP=1.0, SL con BE=0.5, SL sin BE=0.0)
+adjusted_winrate = array.size(outcomes) > 0 ? (array.sum(outcomes) / array.size(outcomes)) * 100 : 0.0
+table.cell(infoTable, 0, 12, text="Winrate Adjusted (BE=50%): " + str.tostring(math.round(adjusted_winrate, 2)) + "%", text_size=textSize, text_halign=text.align_left, text_color=adjusted_winrate >= 50 ? color.green : color.red, bgcolor=chart.bg_color)
+
+// Sentimiento mejorado: combina RSI, EMA (tendencia) y MACD
+// 1. RSI: estado actual y reciente
+bool rsi_bullish_current = rsi > 50 and rsi < sobrecompra  // RSI alcista pero no sobrecomprado
+bool rsi_bearish_current = rsi < 50 and rsi > sobreventa   // RSI bajista pero no sobrevendido
+bool rsi_oversold_recent = rsi < sobreventa or rsi[1] < sobreventa or rsi[2] < sobreventa  // Sobreventa reciente
+bool rsi_overbought_recent = rsi > sobrecompra or rsi[1] > sobrecompra or rsi[2] > sobrecompra  // Sobrecompra reciente
+
+// 2. Tendencia (EMA): precio vs EMA
+bool uptrend = close > ema1
+bool downtrend = close < ema1
+bool strong_uptrend = close > ema1 and close[1] > ema1[1] and close[2] > ema1[2]  // 3 barras consecutivas arriba
+bool strong_downtrend = close < ema1 and close[1] < ema1[1] and close[2] < ema1[2]  // 3 barras consecutivas abajo
+
+// 3. MACD: momentum
+bool macd_bullish = macd_line > signal_line and hist > 0  // MACD alcista con histograma positivo
+bool macd_bearish = macd_line < signal_line and hist < 0  // MACD bajista con histograma negativo
+bool macd_cross_bullish = ta.crossover(macd_line, signal_line)  // Cruce alcista reciente
+bool macd_cross_bearish = ta.crossunder(macd_line, signal_line)  // Cruce bajista reciente
+
+// 4. Cálculo de puntuación de sentimiento (0-100, donde 50 es neutral)
+int bullish_score = 0
+int bearish_score = 0
+
+// Puntuación RSI (peso: 30%)
+if rsi_oversold_recent
+    bullish_score += 30  // Sobreventa reciente = muy alcista
+else if rsi_bullish_current
+    bullish_score += 15
+else if rsi_overbought_recent
+    bearish_score += 30  // Sobrecompra reciente = muy bajista
+else if rsi_bearish_current
+    bearish_score += 15
+
+// Puntuación Tendencia EMA (peso: 40%)
+if strong_uptrend
+    bullish_score += 40
+else if uptrend
+    bullish_score += 20
+else if strong_downtrend
+    bearish_score += 40
+else if downtrend
+    bearish_score += 20
+
+// Puntuación MACD (peso: 30%)
+if macd_cross_bullish
+    bullish_score += 30  // Cruce alcista = muy alcista
+else if macd_bullish
+    bullish_score += 15
+else if macd_cross_bearish
+    bearish_score += 30  // Cruce bajista = muy bajista
+else if macd_bearish
+    bearish_score += 15
+
+// 5. Determinación final del sentimiento
+string sentimiento = "NEUTRAL"
+if bullish_score > bearish_score and bullish_score >= 40
+    sentimiento := "ALCISTA"
+else if bearish_score > bullish_score and bearish_score >= 40
+    sentimiento := "BAJISTA"
+else
+    sentimiento := "NEUTRAL"
+
+table.cell(infoTable, 0, 13, text="SENTIMIENTO: " + sentimiento, text_size=textSize, text_halign=text.align_left, text_color=sentimiento == "ALCISTA" ? color.green : sentimiento == "BAJISTA" ? color.red : color.gray, bgcolor=chart.bg_color)

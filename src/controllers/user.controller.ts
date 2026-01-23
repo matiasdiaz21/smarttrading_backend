@@ -154,5 +154,76 @@ export class UserController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  static async getPendingPayment(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      // Obtener todas las suscripciones del usuario
+      const subscriptions = await PaymentSubscriptionModel.findByUserId(req.user.userId);
+      
+      // Buscar la última suscripción pendiente (solo las que están realmente pendientes, no las expiradas o canceladas)
+      const pendingSubscription = subscriptions
+        .filter(sub => sub.status === 'pending')
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+
+      if (!pendingSubscription) {
+        res.json({ pending_payment: null });
+        return;
+      }
+
+      // Obtener el plan asociado si existe
+      let plan = null;
+      if (pendingSubscription.payment_plan_id) {
+        const { PaymentPlanModel } = await import('../models/PaymentPlan');
+        plan = await PaymentPlanModel.findById(pendingSubscription.payment_plan_id);
+      }
+
+      // Obtener detalles del payment desde NOWPayments
+      const { NOWPaymentsService } = await import('../services/nowpayments.service');
+      const nowpayments = new NOWPaymentsService();
+      let paymentDetails = null;
+      
+      try {
+        paymentDetails = await nowpayments.getPaymentStatus(pendingSubscription.payment_id);
+        // Asegurarse de que expiration_estimate_date esté presente (usar el de la BD si no viene de la API)
+        if (!paymentDetails.expiration_estimate_date && pendingSubscription.expiration_estimate_date) {
+          paymentDetails.expiration_estimate_date = pendingSubscription.expiration_estimate_date;
+        }
+      } catch (error) {
+        console.error('Error al obtener detalles del payment:', error);
+        // Si falla, usar los datos guardados en la suscripción
+        paymentDetails = {
+          payment_id: pendingSubscription.payment_id,
+          payment_status: pendingSubscription.payment_status || 'waiting',
+          pay_address: pendingSubscription.pay_address || '',
+          price_amount: pendingSubscription.amount,
+          price_currency: pendingSubscription.currency,
+          pay_amount: pendingSubscription.pay_amount,
+          pay_currency: pendingSubscription.pay_currency,
+          order_id: pendingSubscription.order_id,
+          expiration_estimate_date: pendingSubscription.expiration_estimate_date,
+          purchase_id: pendingSubscription.purchase_id,
+          amount_received: pendingSubscription.amount_received,
+          network: pendingSubscription.network,
+        };
+      }
+
+      res.json({
+        pending_payment: {
+          ...paymentDetails,
+          plan: plan,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
 }
 
