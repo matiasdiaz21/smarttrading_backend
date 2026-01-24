@@ -2,7 +2,21 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import dotenv from 'dotenv';
 import { apiLimiter } from '../src/middleware/rateLimit';
+
+// Cargar variables de entorno (solo en desarrollo local)
+// En Vercel, las variables se inyectan automáticamente
+dotenv.config();
+
+// Logging de variables de entorno para diagnóstico
+console.log('🔍 Variables de entorno detectadas:');
+console.log(`   NODE_ENV: ${process.env.NODE_ENV || 'no definido'}`);
+console.log(`   VERCEL: ${process.env.VERCEL || 'no definido'}`);
+console.log(`   DB_HOST: ${process.env.DB_HOST ? '✅ configurado' : '❌ NO configurado'}`);
+console.log(`   DB_USER: ${process.env.DB_USER ? '✅ configurado' : '❌ NO configurado'}`);
+console.log(`   DB_PASSWORD: ${process.env.DB_PASSWORD ? '✅ configurado' : '❌ NO configurado'}`);
+console.log(`   DB_NAME: ${process.env.DB_NAME ? '✅ configurado' : '❌ NO configurado'}`);
 import { AuthController } from '../src/controllers/auth.controller';
 import { StrategyController } from '../src/controllers/strategy.controller';
 import { CredentialsController } from '../src/controllers/credentials.controller';
