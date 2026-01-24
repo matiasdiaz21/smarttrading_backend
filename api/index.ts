@@ -185,14 +185,17 @@ app.use((req: Request, res: Response) => {
 export default function handler(req: VercelRequest, res: VercelResponse) {
   // Agregar logging extensivo para debugging
   const timestamp = new Date().toISOString();
-  const url = req.url || req.path || '/';
+  const url = req.url || '/';
   const method = req.method || 'GET';
+  
+  // Extraer path de la URL (remover query string)
+  const path = url.split('?')[0];
   
   // Logging que aparecerá en Vercel
   console.log(`\n========== REQUEST RECIBIDO ==========`);
   console.log(`[${timestamp}] ${method} ${url}`);
   console.log(`[${timestamp}] Original URL: ${req.url}`);
-  console.log(`[${timestamp}] Path: ${req.path}`);
+  console.log(`[${timestamp}] Path: ${path}`);
   console.log(`[${timestamp}] Query:`, JSON.stringify(req.query));
   console.log(`[${timestamp}] Headers:`, {
     'content-type': req.headers['content-type'],
