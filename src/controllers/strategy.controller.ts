@@ -38,7 +38,7 @@ export class StrategyController {
         return;
       }
 
-      const { name, description } = req.body;
+      const { name, description, recommendations } = req.body;
 
       if (!name) {
         res.status(400).json({ error: 'Name is required' });
@@ -51,6 +51,7 @@ export class StrategyController {
       const strategyId = await StrategyModel.create(
         name,
         description || null,
+        recommendations || null,
         webhookSecret,
         req.user.userId
       );
@@ -71,7 +72,7 @@ export class StrategyController {
       }
 
       const { id } = req.params;
-      const { name, description, is_active } = req.body;
+      const { name, description, recommendations, is_active } = req.body;
 
       const strategy = await StrategyModel.findById(parseInt(id));
       if (!strategy) {
@@ -83,6 +84,7 @@ export class StrategyController {
         parseInt(id),
         name,
         description,
+        recommendations,
         is_active !== undefined ? Boolean(is_active) : undefined
       );
 
