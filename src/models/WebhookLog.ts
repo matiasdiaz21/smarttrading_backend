@@ -113,6 +113,13 @@ export class WebhookLogModel {
 
   /**
    * Obtiene las últimas señales cerradas (STOP_LOSS o TAKE_PROFIT) para estrategias a las que el usuario está suscrito
+   * Solo incluye señales que tengan un ENTRY previo y un cierre (TAKE_PROFIT o STOP_LOSS)
+   * Excluye: solo ENTRY, solo ENTRY+BREAKEVEN sin cierre, solo BREAKEVEN sin ENTRY
+   * 
+   * Requisitos:
+   * - Debe tener ENTRY previo (por trade_id o symbol)
+   * - Debe tener STOP_LOSS o TAKE_PROFIT (cierre)
+   * - Puede tener BREAKEVEN o no, pero debe tener cierre
    */
   static async findClosedSignalsByUserStrategies(
     strategyIds: number[],
@@ -131,12 +138,39 @@ export class WebhookLogModel {
     // Crear placeholders para los strategy_ids
     const placeholders = strategyIds.map(() => '?').join(',');
     
+    // Solo obtener señales de STOP_LOSS o TAKE_PROFIT que tengan un ENTRY previo
+    // Verificamos que exista un ENTRY con el mismo trade_id (alertData.id) o symbol en la misma estrategia
+    // Esto asegura que solo mostremos operaciones completas (ENTRY -> BREAKEVEN? -> STOP_LOSS/TAKE_PROFIT)
     const [rows] = await pool.execute(
-      `SELECT * FROM webhook_logs 
-       WHERE strategy_id IN (${placeholders})
-         AND JSON_EXTRACT(payload, '$.alertType') IN ('STOP_LOSS', 'TAKE_PROFIT')
-         AND status = 'success'
-       ORDER BY processed_at DESC 
+      `SELECT DISTINCT wl.* FROM webhook_logs wl
+       WHERE wl.strategy_id IN (${placeholders})
+         AND JSON_EXTRACT(wl.payload, '$.alertType') IN ('STOP_LOSS', 'TAKE_PROFIT')
+         AND wl.status = 'success'
+         AND EXISTS (
+           SELECT 1 FROM webhook_logs wl_entry
+           WHERE wl_entry.strategy_id = wl.strategy_id
+             AND JSON_EXTRACT(wl_entry.payload, '$.alertType') = 'ENTRY'
+             AND wl_entry.status = 'success'
+             AND (
+               -- Verificar por trade_id (alertData.id) - método preferido
+               (
+                 JSON_EXTRACT(wl_entry.payload, '$.alertData.id') IS NOT NULL
+                 AND JSON_EXTRACT(wl_entry.payload, '$.alertData.id') = JSON_EXTRACT(wl.payload, '$.alertData.id')
+               )
+               OR
+               (
+                 JSON_EXTRACT(wl_entry.payload, '$.alertData.id') IS NOT NULL
+                 AND JSON_EXTRACT(wl_entry.payload, '$.alertData.id') = JSON_EXTRACT(wl.payload, '$.trade_id')
+               )
+               OR
+               -- Fallback: verificar por symbol si no hay trade_id
+               (
+                 JSON_EXTRACT(wl_entry.payload, '$.alertData.id') IS NULL
+                 AND JSON_EXTRACT(wl_entry.payload, '$.symbol') = JSON_EXTRACT(wl.payload, '$.symbol')
+               )
+             )
+         )
+       ORDER BY wl.processed_at DESC 
        LIMIT ${limitInt}`,
       strategyIds
     );
