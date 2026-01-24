@@ -50,9 +50,24 @@ export class TradeModel {
   }
 
   static async findByUserId(userId: number, limit = 50): Promise<Trade[]> {
+    // Validar parámetros
+    const userIdInt = parseInt(String(userId), 10);
+    const limitInt = Math.max(1, Math.min(1000, parseInt(String(limit), 10) || 50));
+    
+    if (isNaN(userIdInt) || !Number.isInteger(userIdInt)) {
+      throw new Error('Invalid user_id');
+    }
+    
+    if (!Number.isInteger(limitInt) || limitInt < 1 || limitInt > 1000) {
+      throw new Error('Invalid limit value');
+    }
+    
+    // MySQL2 puede tener problemas con LIMIT como parámetro preparado
+    // Usamos execute con user_id como parámetro y limit validado en la query
+    // La validación previa asegura que no hay riesgo de SQL injection
     const [rows] = await pool.execute(
-      'SELECT * FROM trades WHERE user_id = ? ORDER BY executed_at DESC LIMIT ?',
-      [userId, limit]
+      `SELECT * FROM trades WHERE user_id = ? ORDER BY executed_at DESC LIMIT ${limitInt}`,
+      [userIdInt]
     );
     return rows as Trade[];
   }
