@@ -160,13 +160,25 @@ export class StatsController {
       return p?.alertType || p?.alert_type || 'UNKNOWN';
     });
 
-    // Determinar estado del trade
+    // Determinar estado del trade según la lógica de negocio:
+    // 1. Si llega a BREAKEVEN y luego a STOP_LOSS → 'won' (se tomó ganancia del 50% en breakeven)
+    // 2. Si va directamente de ENTRY a STOP_LOSS (sin BREAKEVEN) → 'lost'
+    // 3. Si tiene TAKE_PROFIT → 'won'
+    // 4. Si tiene BREAKEVEN (aunque no tenga STOP_LOSS aún) → 'won'
     let status: 'won' | 'lost' | 'pending' = 'pending';
     const uniqueAlertTypes = [...new Set(alertTypes)];
-    if (uniqueAlertTypes.includes('STOP_LOSS')) {
-      status = 'lost';
-    } else if (uniqueAlertTypes.includes('BREAKEVEN') || uniqueAlertTypes.includes('TAKE_PROFIT')) {
+    
+    // Verificar si tiene TAKE_PROFIT → siempre ganado
+    if (uniqueAlertTypes.includes('TAKE_PROFIT')) {
       status = 'won';
+    }
+    // Verificar si tiene BREAKEVEN → ganado (incluso si luego tiene STOP_LOSS)
+    else if (uniqueAlertTypes.includes('BREAKEVEN')) {
+      status = 'won';
+    }
+    // Verificar si tiene STOP_LOSS pero NO tiene BREAKEVEN → perdido
+    else if (uniqueAlertTypes.includes('STOP_LOSS')) {
+      status = 'lost';
     }
 
     return {
