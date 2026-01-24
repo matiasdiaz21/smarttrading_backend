@@ -55,5 +55,60 @@ export class WebhookLogModel {
     );
     return rows as WebhookLog[];
   }
+
+  /**
+   * Verifica si existe un ENTRY previo para un trade_id específico en webhook_logs
+   */
+  static async hasEntryForTradeId(
+    strategyId: number,
+    tradeId: number | string
+  ): Promise<boolean> {
+    const strategyIdInt = parseInt(String(strategyId), 10);
+    const tradeIdStr = String(tradeId);
+    
+    if (isNaN(strategyIdInt) || !Number.isInteger(strategyIdInt)) {
+      return false;
+    }
+    
+    // Buscar en webhook_logs si existe un ENTRY con el mismo trade_id
+    const [rows] = await pool.execute(
+      `SELECT COUNT(*) as count 
+       FROM webhook_logs 
+       WHERE strategy_id = ? 
+         AND JSON_EXTRACT(payload, '$.alertData.id') = ?
+         AND JSON_EXTRACT(payload, '$.alertType') = 'ENTRY'
+       LIMIT 1`,
+      [strategyIdInt, tradeIdStr]
+    );
+    const result = rows as any[];
+    return result[0]?.count > 0;
+  }
+
+  /**
+   * Verifica si existe un ENTRY previo para un símbolo específico en webhook_logs
+   */
+  static async hasEntryForSymbol(
+    strategyId: number,
+    symbol: string
+  ): Promise<boolean> {
+    const strategyIdInt = parseInt(String(strategyId), 10);
+    
+    if (isNaN(strategyIdInt) || !Number.isInteger(strategyIdInt)) {
+      return false;
+    }
+    
+    // Buscar en webhook_logs si existe un ENTRY con el mismo símbolo
+    const [rows] = await pool.execute(
+      `SELECT COUNT(*) as count 
+       FROM webhook_logs 
+       WHERE strategy_id = ? 
+         AND JSON_EXTRACT(payload, '$.symbol') = ?
+         AND JSON_EXTRACT(payload, '$.alertType') = 'ENTRY'
+       LIMIT 1`,
+      [strategyIdInt, symbol]
+    );
+    const result = rows as any[];
+    return result[0]?.count > 0;
+  }
 }
 
