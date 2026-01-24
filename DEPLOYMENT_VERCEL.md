@@ -45,7 +45,12 @@ npm install
 
 ### 4. Configurar Variables de Entorno
 
-Antes de desplegar, configura estas variables en **Settings > Environment Variables**:
+**⚠️ IMPORTANTE:** Las variables de entorno DEBEN estar configuradas en **Vercel Environment Variables**, NO solo en GitHub Secrets.
+
+- **GitHub Secrets**: Solo se usan para CI/CD (GitHub Actions)
+- **Vercel Environment Variables**: Se inyectan en el runtime de la aplicación
+
+Antes de desplegar, configura estas variables en **Vercel Dashboard > Settings > Environment Variables**:
 
 #### Variables Requeridas:
 
@@ -68,10 +73,23 @@ APP_URL=https://tu-backend.vercel.app
 FRONTEND_URL=https://tu-frontend.vercel.app
 ```
 
+#### Cómo Configurar en Vercel:
+
+1. Ve a **Vercel Dashboard** > Tu proyecto del backend
+2. Ve a **Settings** > **Environment Variables**
+3. Haz clic en **Add New** para cada variable
+4. Para cada variable:
+   - **Name**: El nombre de la variable (ej: `DB_HOST`)
+   - **Value**: El valor de la variable (ej: `tu-host-mysql`)
+   - **Environment**: Selecciona **Production**, **Preview** y **Development** (o al menos Production)
+5. Haz clic en **Save** después de cada variable
+6. **IMPORTANTE:** Después de agregar todas las variables, ve a **Deployments** y haz clic en **Redeploy** en el último deployment
+
 **Importante:**
 - `JWT_SECRET`: Debe ser una cadena segura de al menos 32 caracteres
 - `ENCRYPTION_KEY`: Debe ser exactamente 32 caracteres (para AES-256)
 - Puedes generar claves seguras con: `openssl rand -base64 32`
+- Si las variables no están configuradas, verás errores en los logs de Vercel indicando qué variables faltan
 
 ### 5. Desplegar
 
