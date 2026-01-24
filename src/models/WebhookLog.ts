@@ -112,14 +112,19 @@ export class WebhookLogModel {
   }
 
   /**
-   * Obtiene las últimas señales cerradas (STOP_LOSS o TAKE_PROFIT) para estrategias a las que el usuario está suscrito
-   * Solo incluye señales que tengan un ENTRY previo y un cierre (TAKE_PROFIT o STOP_LOSS)
-   * Excluye: solo ENTRY, solo ENTRY+BREAKEVEN sin cierre, solo BREAKEVEN sin ENTRY
+   * Obtiene las últimas señales cerradas (STOP_LOSS, TAKE_PROFIT o BREAKEVEN) para estrategias a las que el usuario está suscrito
+   * Solo incluye señales que tengan un ENTRY previo y un cierre (TAKE_PROFIT, STOP_LOSS o BREAKEVEN)
+   * Excluye: solo ENTRY sin cierre, solo BREAKEVEN sin ENTRY
    * 
    * Requisitos:
    * - Debe tener ENTRY previo (por trade_id o symbol)
-   * - Debe tener STOP_LOSS o TAKE_PROFIT (cierre)
-   * - Puede tener BREAKEVEN o no, pero debe tener cierre
+   * - Debe tener STOP_LOSS, TAKE_PROFIT o BREAKEVEN (cierre)
+   * 
+   * Lógica de negocio:
+   * - TAKE_PROFIT = Ganado (100% del objetivo)
+   * - BREAKEVEN = Ganado (50% de ganancia tomada, SL movido a entrada)
+   * - STOP_LOSS sin BREAKEVEN previo = Perdido
+   * - STOP_LOSS con BREAKEVEN previo = Ganado (ya se tomó 50% de ganancia)
    */
   static async findClosedSignalsByUserStrategies(
     strategyIds: number[],
@@ -138,13 +143,13 @@ export class WebhookLogModel {
     // Crear placeholders para los strategy_ids
     const placeholders = strategyIds.map(() => '?').join(',');
     
-    // Solo obtener señales de STOP_LOSS o TAKE_PROFIT que tengan un ENTRY previo
+    // Obtener señales de STOP_LOSS, TAKE_PROFIT o BREAKEVEN que tengan un ENTRY previo
     // Verificamos que exista un ENTRY con el mismo trade_id (alertData.id) o symbol en la misma estrategia
-    // Esto asegura que solo mostremos operaciones completas (ENTRY -> BREAKEVEN? -> STOP_LOSS/TAKE_PROFIT)
+    // Esto asegura que solo mostremos operaciones completas (ENTRY -> BREAKEVEN/STOP_LOSS/TAKE_PROFIT)
     const [rows] = await pool.execute(
       `SELECT DISTINCT wl.* FROM webhook_logs wl
        WHERE wl.strategy_id IN (${placeholders})
-         AND JSON_EXTRACT(wl.payload, '$.alertType') IN ('STOP_LOSS', 'TAKE_PROFIT')
+         AND JSON_EXTRACT(wl.payload, '$.alertType') IN ('STOP_LOSS', 'TAKE_PROFIT', 'BREAKEVEN')
          AND wl.status = 'success'
          AND EXISTS (
            SELECT 1 FROM webhook_logs wl_entry
