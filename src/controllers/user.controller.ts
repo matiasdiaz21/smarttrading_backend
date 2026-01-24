@@ -5,6 +5,7 @@ import { SubscriptionModel } from '../models/Subscription';
 import { TradeModel } from '../models/Trade';
 import { PaymentSubscriptionModel } from '../models/PaymentSubscription';
 import { UserModel } from '../models/User';
+import { WebhookLogModel } from '../models/WebhookLog';
 
 export class UserController {
   static async getStrategies(req: AuthRequest, res: Response): Promise<void> {
@@ -142,9 +143,55 @@ export class UserController {
       }
 
       const limit = parseInt(req.query.limit as string) || 10;
-      const trades = await TradeModel.findClosedTradesByUserId(req.user.userId, limit);
+      
+      // Obtener estrategias a las que el usuario está suscrito
+      const subscriptions = await SubscriptionModel.findByUserId(req.user.userId);
+      const strategyIds = subscriptions.map(sub => sub.strategy_id);
+      
+      if (strategyIds.length === 0) {
+        res.json([]);
+        return;
+      }
 
-      res.json(trades);
+      // Obtener las últimas señales cerradas (STOP_LOSS o TAKE_PROFIT) de las estrategias suscritas
+      const webhookLogs = await WebhookLogModel.findClosedSignalsByUserStrategies(strategyIds, limit);
+      
+      // Parsear el payload y formatear la respuesta
+      const closedSignals = webhookLogs.map(log => {
+        try {
+          const payload = typeof log.payload === 'string' ? JSON.parse(log.payload) : log.payload;
+          return {
+            id: log.id,
+            strategy_id: log.strategy_id,
+            symbol: payload.symbol || 'N/A',
+            side: payload.side || 'N/A',
+            entryPrice: payload.entryPrice || payload.entry_price || null,
+            stopLoss: payload.stopLoss || payload.stop_loss || null,
+            takeProfit: payload.takeProfit || payload.take_profit || null,
+            alertType: payload.alertType || payload.alert_type || 'N/A',
+            tradeId: payload.alertData?.id || payload.trade_id || null,
+            processedAt: log.processed_at,
+            payload: log.payload
+          };
+        } catch (error) {
+          console.error('Error parsing webhook log payload:', error);
+          return {
+            id: log.id,
+            strategy_id: log.strategy_id,
+            symbol: 'N/A',
+            side: 'N/A',
+            entryPrice: null,
+            stopLoss: null,
+            takeProfit: null,
+            alertType: 'N/A',
+            tradeId: null,
+            processedAt: log.processed_at,
+            payload: log.payload
+          };
+        }
+      });
+
+      res.json(closedSignals);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

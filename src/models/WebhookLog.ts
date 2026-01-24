@@ -110,5 +110,37 @@ export class WebhookLogModel {
     const result = rows as any[];
     return result[0]?.count > 0;
   }
+
+  /**
+   * Obtiene las últimas señales cerradas (STOP_LOSS o TAKE_PROFIT) para estrategias a las que el usuario está suscrito
+   */
+  static async findClosedSignalsByUserStrategies(
+    strategyIds: number[],
+    limit = 10
+  ): Promise<WebhookLog[]> {
+    if (!strategyIds || strategyIds.length === 0) {
+      return [];
+    }
+
+    const limitInt = Math.max(1, Math.min(100, parseInt(String(limit), 10) || 10));
+    
+    if (!Number.isInteger(limitInt) || limitInt < 1 || limitInt > 100) {
+      throw new Error('Invalid limit value');
+    }
+
+    // Crear placeholders para los strategy_ids
+    const placeholders = strategyIds.map(() => '?').join(',');
+    
+    const [rows] = await pool.execute(
+      `SELECT * FROM webhook_logs 
+       WHERE strategy_id IN (${placeholders})
+         AND JSON_EXTRACT(payload, '$.alertType') IN ('STOP_LOSS', 'TAKE_PROFIT')
+         AND status = 'success'
+       ORDER BY processed_at DESC 
+       LIMIT ${limitInt}`,
+      strategyIds
+    );
+    return rows as WebhookLog[];
+  }
 }
 
