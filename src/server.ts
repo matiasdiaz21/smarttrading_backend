@@ -90,8 +90,11 @@ app.get('/api/user/strategies', authenticate, UserController.getStrategies);
 app.post('/api/user/strategies/:id/subscribe', authenticate, UserController.subscribeToStrategy);
 app.put('/api/user/strategies/:id/toggle', authenticate, UserController.toggleStrategy);
 app.get('/api/user/trades', authenticate, UserController.getTrades);
+app.get('/api/user/trades/closed', authenticate, UserController.getClosedTrades);
 app.get('/api/user/subscription', authenticate, UserController.getSubscriptionStatus);
 app.get('/api/user/pending-payment', authenticate, UserController.getPendingPayment);
+app.post('/api/user/trading-terms/accept', authenticate, UserController.acceptTradingTerms);
+app.get('/api/user/trading-terms/status', authenticate, UserController.getTradingTermsStatus);
 
 // Webhook routes (público, pero con verificación HMAC)
 app.get('/api/webhooks/tradingview/test', WebhookController.test); // Endpoint de prueba

@@ -4,6 +4,7 @@ import { StrategyModel } from '../models/Strategy';
 import { SubscriptionModel } from '../models/Subscription';
 import { TradeModel } from '../models/Trade';
 import { PaymentSubscriptionModel } from '../models/PaymentSubscription';
+import { UserModel } from '../models/User';
 
 export class UserController {
   static async getStrategies(req: AuthRequest, res: Response): Promise<void> {
@@ -133,6 +134,22 @@ export class UserController {
     }
   }
 
+  static async getClosedTrades(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const limit = parseInt(req.query.limit as string) || 10;
+      const trades = await TradeModel.findClosedTradesByUserId(req.user.userId, limit);
+
+      res.json(trades);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   static async getSubscriptionStatus(
     req: AuthRequest,
     res: Response
@@ -222,6 +239,49 @@ export class UserController {
           ...paymentDetails,
           plan: plan,
         },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async acceptTradingTerms(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      await UserModel.acceptTradingTerms(req.user.userId);
+
+      res.json({
+        message: 'Trading terms accepted successfully',
+        accepted_at: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async getTradingTermsStatus(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const hasAccepted = await UserModel.hasAcceptedTradingTerms(req.user.userId);
+      const user = await UserModel.findById(req.user.userId);
+
+      res.json({
+        has_accepted: hasAccepted,
+        accepted_at: user?.trading_terms_accepted_at || null,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

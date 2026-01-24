@@ -66,8 +66,24 @@ export class UserModel {
   }
 
   static async getAll(): Promise<User[]> {
-    const [rows] = await pool.execute('SELECT id, uuid, email, role, subscription_status, subscription_expires_at, created_at FROM users');
+    const [rows] = await pool.execute('SELECT id, uuid, email, role, subscription_status, subscription_expires_at, trading_terms_accepted_at, created_at FROM users');
     return rows as User[];
+  }
+
+  static async acceptTradingTerms(userId: number): Promise<void> {
+    await pool.execute(
+      'UPDATE users SET trading_terms_accepted_at = NOW() WHERE id = ?',
+      [userId]
+    );
+  }
+
+  static async hasAcceptedTradingTerms(userId: number): Promise<boolean> {
+    const [rows] = await pool.execute(
+      'SELECT trading_terms_accepted_at FROM users WHERE id = ?',
+      [userId]
+    );
+    const users = rows as any[];
+    return users[0]?.trading_terms_accepted_at !== null;
   }
 }
 

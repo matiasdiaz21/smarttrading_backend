@@ -6,6 +6,7 @@ export interface User {
   role: 'admin' | 'user';
   subscription_status: 'active' | 'inactive' | 'expired';
   subscription_expires_at: Date | null;
+  trading_terms_accepted_at: Date | null;
   created_at: Date;
 }
 

@@ -127,5 +127,32 @@ export class TradeModel {
     const result = rows as any[];
     return result[0]?.count > 0;
   }
+
+  /**
+   * Obtiene las últimas operaciones cerradas (STOP_LOSS o TAKE_PROFIT) para un usuario
+   */
+  static async findClosedTradesByUserId(userId: number, limit = 10): Promise<Trade[]> {
+    const userIdInt = parseInt(String(userId), 10);
+    const limitInt = Math.max(1, Math.min(100, parseInt(String(limit), 10) || 10));
+    
+    if (isNaN(userIdInt) || !Number.isInteger(userIdInt)) {
+      throw new Error('Invalid user_id');
+    }
+    
+    if (!Number.isInteger(limitInt) || limitInt < 1 || limitInt > 100) {
+      throw new Error('Invalid limit value');
+    }
+    
+    const [rows] = await pool.execute(
+      `SELECT * FROM trades 
+       WHERE user_id = ? 
+         AND alert_type IN ('STOP_LOSS', 'TAKE_PROFIT')
+         AND status = 'filled'
+       ORDER BY executed_at DESC 
+       LIMIT ${limitInt}`,
+      [userIdInt]
+    );
+    return rows as Trade[];
+  }
 }
 
