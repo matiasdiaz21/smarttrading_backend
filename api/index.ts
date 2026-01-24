@@ -70,30 +70,57 @@ app.get('/', (req: Request, res: Response) => {
 
 // Endpoint de diagnóstico de variables de entorno (solo para debugging)
 app.get('/api/env-check', (req: Request, res: Response) => {
-  const envVars = {
+  // Obtener todas las variables de entorno relacionadas con DB
+  const allEnvVars = Object.keys(process.env).filter(key => 
+    key.startsWith('DB_') || 
+    key === 'NODE_ENV' || 
+    key === 'VERCEL' ||
+    key === 'JWT_SECRET' ||
+    key === 'ENCRYPTION_KEY'
+  );
+
+  const envVars: Record<string, any> = {
     NODE_ENV: process.env.NODE_ENV || 'no definido',
     VERCEL: process.env.VERCEL || 'no definido',
-    DB_HOST: process.env.DB_HOST ? '✅ configurado' : '❌ NO configurado',
-    DB_PORT: process.env.DB_PORT || 'no definido',
-    DB_USER: process.env.DB_USER ? '✅ configurado' : '❌ NO configurado',
-    DB_PASSWORD: process.env.DB_PASSWORD ? '✅ configurado' : '❌ NO configurado',
-    DB_NAME: process.env.DB_NAME ? '✅ configurado' : '❌ NO configurado',
-    JWT_SECRET: process.env.JWT_SECRET ? '✅ configurado' : '❌ NO configurado',
-    ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ? '✅ configurado' : '❌ NO configurado',
+    VERCEL_ENV: process.env.VERCEL_ENV || 'no definido',
   };
 
-  const missingVars = [];
-  if (!process.env.DB_HOST) missingVars.push('DB_HOST');
-  if (!process.env.DB_USER) missingVars.push('DB_USER');
-  if (!process.env.DB_PASSWORD) missingVars.push('DB_PASSWORD');
-  if (!process.env.DB_NAME) missingVars.push('DB_NAME');
+  // Agregar todas las variables DB_ encontradas
+  allEnvVars.forEach(key => {
+    if (key.startsWith('DB_')) {
+      const value = process.env[key];
+      envVars[key] = value ? `✅ configurado (${value.length} caracteres)` : '❌ NO configurado';
+    } else if (key === 'JWT_SECRET' || key === 'ENCRYPTION_KEY') {
+      const value = process.env[key];
+      envVars[key] = value ? `✅ configurado (${value.length} caracteres)` : '❌ NO configurado';
+    }
+  });
+
+  const requiredVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
+  const missingVars = requiredVars.filter(varName => !process.env[varName]);
+
+  // Información adicional para diagnóstico
+  const diagnosticInfo = {
+    totalEnvVars: Object.keys(process.env).length,
+    dbRelatedVars: allEnvVars.filter(k => k.startsWith('DB_')),
+    vercelEnv: process.env.VERCEL_ENV,
+    isProduction: process.env.NODE_ENV === 'production',
+  };
 
   res.json({
     message: 'Diagnóstico de Variables de Entorno',
     environment: envVars,
     missing: missingVars.length > 0 ? missingVars : 'Ninguna',
+    diagnostic: diagnosticInfo,
     instructions: missingVars.length > 0 
-      ? 'Configura las variables faltantes en Vercel Dashboard > Settings > Environment Variables y haz Redeploy'
+      ? {
+          step1: 'Ve a Vercel Dashboard > Tu proyecto > Settings > Environment Variables',
+          step2: 'Verifica que las variables estén configuradas para "Production" (no solo Preview o Development)',
+          step3: 'Asegúrate de que los valores no tengan espacios al inicio o final',
+          step4: 'Haz clic en "Save" después de cada variable',
+          step5: 'Ve a Deployments y haz clic en "Redeploy" en el último deployment',
+          step6: 'Espera a que termine el deployment y verifica nuevamente',
+        }
       : 'Todas las variables están configuradas',
   });
 });

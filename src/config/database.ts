@@ -22,24 +22,41 @@ const dbConfig = {
 // Validar que las variables críticas estén configuradas SOLO en producción
 if (isProduction) {
   const requiredVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
-  const missingVars = requiredVars.filter(varName => !process.env[varName]);
+  const missingVars = requiredVars.filter(varName => {
+    const value = process.env[varName];
+    // Verificar que la variable existe y no está vacía
+    return !value || value.trim() === '';
+  });
 
   if (missingVars.length > 0) {
-    const errorMessage = `
-❌ ERROR: Variables de entorno de base de datos faltantes:
-${missingVars.map(v => `   - ${v}`).join('\n')}
-
-⚠️ SOLUCIÓN:
-1. Ve a Vercel Dashboard > Tu proyecto > Settings > Environment Variables
-2. Agrega las siguientes variables:
-${missingVars.map(v => `   - ${v}=tu-valor`).join('\n')}
-3. Selecciona "Production", "Preview" y "Development"
-4. Haz clic en "Save"
-5. Ve a Deployments y haz clic en "Redeploy" en el último deployment
-
-Las variables deben estar en Vercel Environment Variables, NO solo en GitHub Secrets.
-    `;
-    console.error(errorMessage);
+    // Logging detallado para diagnóstico
+    console.error('\n❌ ERROR: Variables de entorno de base de datos faltantes o vacías:');
+    missingVars.forEach(v => {
+      const value = process.env[v];
+      console.error(`   - ${v}: ${value ? `vacía (longitud: ${value.length})` : 'no existe'}`);
+    });
+    
+    // Mostrar todas las variables DB_ que existen
+    const existingDbVars = Object.keys(process.env).filter(k => k.startsWith('DB_'));
+    console.error('\n📋 Variables DB_ encontradas en process.env:');
+    if (existingDbVars.length > 0) {
+      existingDbVars.forEach(k => {
+        const val = process.env[k];
+        console.error(`   - ${k}: ${val ? `existe (${val.length} chars)` : 'vacía'}`);
+      });
+    } else {
+      console.error('   - Ninguna variable DB_ encontrada');
+    }
+    
+    console.error('\n⚠️ SOLUCIÓN:');
+    console.error('1. Ve a Vercel Dashboard > Tu proyecto > Settings > Environment Variables');
+    console.error('2. Verifica que las variables estén configuradas para "Production" (no solo Preview o Development)');
+    console.error('3. Asegúrate de que los valores no tengan espacios al inicio o final');
+    console.error('4. Haz clic en "Save" después de cada variable');
+    console.error('5. Ve a Deployments y haz clic en "Redeploy" en el último deployment');
+    console.error('6. Espera a que termine el deployment completamente');
+    console.error('\n💡 Tip: Usa el endpoint /api/env-check para ver un diagnóstico detallado\n');
+    
     throw new Error(`Variables de entorno faltantes: ${missingVars.join(', ')}. Ver logs para más detalles.`);
   }
 }
