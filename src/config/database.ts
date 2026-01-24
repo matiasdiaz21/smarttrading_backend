@@ -6,13 +6,41 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Obtener valores de las variables de entorno
+// IMPORTANTE: En Vercel, estas variables DEBEN estar configuradas en Environment Variables
 const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
+  host: process.env.DB_HOST,
   port: parseInt(process.env.DB_PORT || '3306'),
-  user: process.env.DB_USER || 'root',
+  user: process.env.DB_USER,
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'smarttrading',
+  database: process.env.DB_NAME,
 };
+
+// Validar que las variables críticas estén configuradas
+const requiredVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
+const missingVars = requiredVars.filter(varName => !process.env[varName]);
+
+if (missingVars.length > 0) {
+  const errorMessage = `
+❌ ERROR: Variables de entorno de base de datos faltantes:
+${missingVars.map(v => `   - ${v}`).join('\n')}
+
+⚠️ SOLUCIÓN:
+1. Ve a Vercel Dashboard > Tu proyecto > Settings > Environment Variables
+2. Agrega las siguientes variables:
+${missingVars.map(v => `   - ${v}=tu-valor`).join('\n')}
+3. Selecciona "Production", "Preview" y "Development"
+4. Haz clic en "Save"
+5. Ve a Deployments y haz clic en "Redeploy" en el último deployment
+
+Las variables deben estar en Vercel Environment Variables, NO solo en GitHub Secrets.
+  `;
+  console.error(errorMessage);
+  
+  // En producción, lanzar error para que sea visible
+  if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+    throw new Error(`Variables de entorno faltantes: ${missingVars.join(', ')}. Ver logs para más detalles.`);
+  }
+}
 
 // Logging para diagnóstico (sin mostrar contraseña)
 console.log('📊 Configuración de Base de Datos:');

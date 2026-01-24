@@ -63,7 +63,38 @@ app.get('/', (req: Request, res: Response) => {
       publicStats: '/api/public/stats',
       auth: '/api/auth',
       api: '/api',
+      envCheck: '/api/env-check',
     },
+  });
+});
+
+// Endpoint de diagnóstico de variables de entorno (solo para debugging)
+app.get('/api/env-check', (req: Request, res: Response) => {
+  const envVars = {
+    NODE_ENV: process.env.NODE_ENV || 'no definido',
+    VERCEL: process.env.VERCEL || 'no definido',
+    DB_HOST: process.env.DB_HOST ? '✅ configurado' : '❌ NO configurado',
+    DB_PORT: process.env.DB_PORT || 'no definido',
+    DB_USER: process.env.DB_USER ? '✅ configurado' : '❌ NO configurado',
+    DB_PASSWORD: process.env.DB_PASSWORD ? '✅ configurado' : '❌ NO configurado',
+    DB_NAME: process.env.DB_NAME ? '✅ configurado' : '❌ NO configurado',
+    JWT_SECRET: process.env.JWT_SECRET ? '✅ configurado' : '❌ NO configurado',
+    ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ? '✅ configurado' : '❌ NO configurado',
+  };
+
+  const missingVars = [];
+  if (!process.env.DB_HOST) missingVars.push('DB_HOST');
+  if (!process.env.DB_USER) missingVars.push('DB_USER');
+  if (!process.env.DB_PASSWORD) missingVars.push('DB_PASSWORD');
+  if (!process.env.DB_NAME) missingVars.push('DB_NAME');
+
+  res.json({
+    message: 'Diagnóstico de Variables de Entorno',
+    environment: envVars,
+    missing: missingVars.length > 0 ? missingVars : 'Ninguna',
+    instructions: missingVars.length > 0 
+      ? 'Configura las variables faltantes en Vercel Dashboard > Settings > Environment Variables y haz Redeploy'
+      : 'Todas las variables están configuradas',
   });
 });
 
