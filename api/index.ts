@@ -5,6 +5,19 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { apiLimiter } from '../src/middleware/rateLimit';
 
+// Suprimir warning de deprecación de url.parse() que viene de dependencias
+// Este warning viene de librerías como mysql2 o axios que aún usan url.parse()
+// No podemos controlarlo directamente, así que lo suprimimos
+process.removeAllListeners('warning');
+process.on('warning', (warning) => {
+  if (warning.name === 'DeprecationWarning' && warning.message.includes('url.parse()')) {
+    // Suprimir solo el warning de url.parse() que viene de dependencias
+    return;
+  }
+  // Mostrar otros warnings normalmente
+  console.warn(warning.name, warning.message);
+});
+
 // Cargar variables de entorno (solo en desarrollo local)
 // En Vercel, las variables se inyectan automáticamente
 dotenv.config();

@@ -2,6 +2,19 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { apiLimiter } from './middleware/rateLimit';
+
+// Suprimir warning de deprecación de url.parse() que viene de dependencias
+// Este warning viene de librerías como mysql2 o axios que aún usan url.parse()
+// No podemos controlarlo directamente, así que lo suprimimos
+process.removeAllListeners('warning');
+process.on('warning', (warning) => {
+  if (warning.name === 'DeprecationWarning' && warning.message.includes('url.parse()')) {
+    // Suprimir solo el warning de url.parse() que viene de dependencias
+    return;
+  }
+  // Mostrar otros warnings normalmente
+  console.warn(warning.name, warning.message);
+});
 import { AuthController } from './controllers/auth.controller';
 import { StrategyController } from './controllers/strategy.controller';
 import { CredentialsController } from './controllers/credentials.controller';
