@@ -256,6 +256,55 @@ export class BitgetService {
     return await this.makeRequest('GET', endpoint, credentials);
   }
 
+  // Establecer TP/SL para una posición recién abierta
+  async setPositionTPSL(
+    credentials: BitgetCredentials,
+    symbol: string,
+    side: 'buy' | 'sell',
+    stopLossPrice: number,
+    takeProfitPrice: number,
+    productType: string = 'USDT-FUTURES',
+    marginCoin: string = 'USDT'
+  ): Promise<any> {
+    try {
+      const holdSide = side === 'buy' ? 'long' : 'short';
+      
+      const endpoint = '/api/v2/mix/order/place-tpsl-order';
+      const payload: any = {
+        marginCoin,
+        productType: productType.toLowerCase(),
+        symbol,
+        planType: 'pos_profit', // Profit plan (TP)
+        triggerPrice: takeProfitPrice.toString(),
+        triggerType: 'fill_price',
+        executePrice: takeProfitPrice.toString(),
+        holdSide,
+        size: 'all', // Cerrar toda la posición en TP
+      };
+
+      console.log(`[Bitget] 🎯 Configurando Take Profit en ${takeProfitPrice} para ${symbol} ${holdSide}`);
+      await this.makeRequest('POST', endpoint, credentials, payload);
+
+      // Configurar Stop Loss
+      const slPayload: any = {
+        marginCoin,
+        productType: productType.toLowerCase(),
+        symbol,
+        planType: 'pos_loss', // Loss plan (SL)
+        triggerPrice: stopLossPrice.toString(),
+        triggerType: 'fill_price',
+        executePrice: stopLossPrice.toString(),
+        holdSide,
+        size: 'all', // Cerrar toda la posición en SL
+      };
+
+      console.log(`[Bitget] 🛑 Configurando Stop Loss en ${stopLossPrice} para ${symbol} ${holdSide}`);
+      return await this.makeRequest('POST', endpoint, credentials, slPayload);
+    } catch (error: any) {
+      throw new Error(`Error al configurar TP/SL: ${error.message}`);
+    }
+  }
+
   // Modificar stop loss de una posición usando place-pos-tpsl
   // Este endpoint permite establecer o modificar stop loss y take profit para una posición existente
   async modifyPositionStopLoss(

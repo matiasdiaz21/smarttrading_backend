@@ -192,6 +192,32 @@ export class TradingService {
 
       console.log(`[TradeService] ✅ Orden ejecutada en Bitget. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
 
+      // Configurar Stop Loss y Take Profit si están disponibles
+      if (alert.stopLoss && alert.takeProfit) {
+        try {
+          console.log(`[TradeService] 📊 Configurando TP/SL para ${symbol}...`);
+          console.log(`[TradeService]   Stop Loss: ${alert.stopLoss}`);
+          console.log(`[TradeService]   Take Profit: ${alert.takeProfit}`);
+          
+          await this.bitgetService.setPositionTPSL(
+            decryptedCredentials,
+            symbol,
+            bitgetSide,
+            alert.stopLoss,
+            alert.takeProfit,
+            productType,
+            alert.marginCoin || 'USDT'
+          );
+          
+          console.log(`[TradeService] ✅ TP/SL configurados exitosamente en Bitget`);
+        } catch (tpslError: any) {
+          console.error(`[TradeService] ⚠️ Error al configurar TP/SL: ${tpslError.message}`);
+          // No fallar la operación si el TP/SL falla, la orden ya fue ejecutada
+        }
+      } else {
+        console.warn(`[TradeService] ⚠️ No se configuró TP/SL: stopLoss=${alert.stopLoss}, takeProfit=${alert.takeProfit}`);
+      }
+
       // Registrar trade en base de datos con toda la información
       // Convertir side a buy/sell para la base de datos
       const dbSide: 'buy' | 'sell' = alert.side === 'LONG' || alert.side === 'buy' ? 'buy' : 'sell';
@@ -358,32 +384,96 @@ export class TradingService {
           passphrase: credentials.passphrase,
         });
 
-        // Modificar stop loss a precio de entrada (breakeven)
-        // El entryPrice en la alerta de BREAKEVEN es el nuevo stop loss (precio de entrada)
-        const newStopLoss = alert.entryPrice || alert.stopLoss;
-        if (!newStopLoss) {
-          console.warn(`No se proporcionó entryPrice para BREAKEVEN en trade_id ${alert.trade_id}`);
+        // BREAKEVEN: Cerrar 50% de la posición y mover stop loss al precio de entrada
+        const breakevenPrice = alert.breakeven || alert.entryPrice;
+        if (!breakevenPrice) {
+          console.warn(`[BREAKEVEN] No se proporcionó breakeven/entryPrice para trade_id ${alert.trade_id}`);
           failed++;
           continue;
         }
 
-        // Modificar stop loss en Bitget
         // Remover .P del símbolo si existe (Bitget no acepta .P en el símbolo)
         const symbol = alert.symbol ? alert.symbol.replace(/\.P$/, '') : alert.symbol;
-        
-        // Usar entryPrice como nuevo stop loss (breakeven = precio de entrada)
-        // Si hay takeProfit en el trade original, mantenerlo
-        await this.bitgetService.modifyPositionStopLoss(
-          decryptedCredentials,
-          symbol,
-          newStopLoss,
-          alert.productType || 'USDT-FUTURES',
-          alert.marginCoin || 'USDT',
-          trade.take_profit ? parseFloat(trade.take_profit.toString()) : undefined
-        );
+        const productType = alert.productType || 'USDT-FUTURES';
+        const marginCoin = alert.marginCoin || 'USDT';
 
-        // Actualizar stop loss en base de datos
-        await TradeModel.updateStopLoss(trade.id, newStopLoss);
+        console.log(`[BREAKEVEN] Procesando breakeven para usuario ${subscription.user_id}, symbol ${symbol}, trade_id ${alert.trade_id}`);
+        console.log(`[BREAKEVEN] Precio de breakeven: ${breakevenPrice}`);
+
+        // 1. Cerrar 50% de la posición al precio de breakeven
+        try {
+          // Obtener la posición actual para saber el tamaño
+          const positions = await this.bitgetService.getPositions(
+            decryptedCredentials,
+            symbol,
+            productType
+          );
+
+          if (positions && positions.length > 0) {
+            const position = positions[0];
+            const currentSize = parseFloat(position.total || position.available || '0');
+            
+            if (currentSize > 0) {
+              // Calcular 50% del tamaño de la posición
+              const halfSize = (currentSize / 2).toString();
+              const holdSide = position.holdSide || (trade.side === 'buy' ? 'long' : 'short');
+              
+              // Determinar el side de cierre (opuesto al de apertura)
+              const closeSide: 'buy' | 'sell' = trade.side === 'buy' ? 'sell' : 'buy';
+
+              console.log(`[BREAKEVEN] Cerrando 50% de la posición: ${halfSize} contratos de ${currentSize} total`);
+
+              // Colocar orden de cierre del 50%
+              await this.bitgetService.placeOrder(
+                decryptedCredentials,
+                {
+                  symbol: symbol,
+                  productType: productType,
+                  marginMode: 'isolated',
+                  marginCoin: marginCoin,
+                  size: halfSize,
+                  side: closeSide,
+                  tradeSide: 'close',
+                  orderType: 'market',
+                  clientOid: `ST_BREAKEVEN_${subscription.user_id}_${strategyId}_${alert.trade_id}_${Date.now()}`,
+                }
+              );
+
+              console.log(`[BREAKEVEN] ✅ 50% de la posición cerrada exitosamente`);
+            } else {
+              console.warn(`[BREAKEVEN] ⚠️ No se encontró tamaño de posición válido para cerrar`);
+            }
+          } else {
+            console.warn(`[BREAKEVEN] ⚠️ No se encontró posición abierta para ${symbol}`);
+          }
+        } catch (closeError: any) {
+          console.error(`[BREAKEVEN] ❌ Error al cerrar 50% de la posición: ${closeError.message}`);
+          // Continuar con el movimiento del stop loss aunque falle el cierre
+        }
+
+        // 2. Mover stop loss al precio de entrada (breakeven)
+        try {
+          const newStopLoss = alert.entryPrice || breakevenPrice;
+          
+          console.log(`[BREAKEVEN] Moviendo stop loss a precio de entrada: ${newStopLoss}`);
+          
+          await this.bitgetService.modifyPositionStopLoss(
+            decryptedCredentials,
+            symbol,
+            newStopLoss,
+            productType,
+            marginCoin,
+            trade.take_profit ? parseFloat(trade.take_profit.toString()) : undefined
+          );
+
+          console.log(`[BREAKEVEN] ✅ Stop loss movido a breakeven exitosamente`);
+
+          // Actualizar stop loss en base de datos
+          await TradeModel.updateStopLoss(trade.id, newStopLoss);
+        } catch (slError: any) {
+          console.error(`[BREAKEVEN] ❌ Error al mover stop loss: ${slError.message}`);
+          // No fallar si solo el stop loss falla
+        }
 
         successful++;
       } catch (error: any) {
