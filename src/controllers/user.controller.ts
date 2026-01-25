@@ -157,21 +157,36 @@ export class UserController {
       const webhookLogs = await WebhookLogModel.findClosedSignalsByUserStrategies(strategyIds, limit);
       
       // Parsear el payload y formatear la respuesta
+      // Aplicar la misma lógica de negocio que en webhook-logs:
+      // - TAKE_PROFIT → siempre ganado
+      // - BREAKEVEN → siempre ganado (se tomó 50% de ganancia)
+      // - STOP_LOSS con BREAKEVEN previo → ganado
+      // - STOP_LOSS sin BREAKEVEN → perdido
       const closedSignals = await Promise.all(webhookLogs.map(async (log) => {
         try {
           const payload = typeof log.payload === 'string' ? JSON.parse(log.payload) : log.payload;
           const tradeId = payload.alertData?.id || payload.trade_id;
           let alertType = payload.alertType || payload.alert_type || 'N/A';
           
-          // Si el alertType es STOP_LOSS, verificar si hubo BREAKEVEN previo
-          // Si hubo BREAKEVEN, mostrar como TAKE_PROFIT (ya se tomó ganancia del 50%)
-          if (alertType === 'STOP_LOSS' && tradeId) {
+          // Aplicar lógica de negocio para determinar el tipo de alerta a mostrar
+          if (alertType === 'TAKE_PROFIT') {
+            // TAKE_PROFIT siempre es ganado
+            alertType = 'TAKE_PROFIT';
+          } else if (alertType === 'BREAKEVEN') {
+            // BREAKEVEN es ganado (50% de ganancia tomada)
+            alertType = 'TAKE_PROFIT';
+          } else if (alertType === 'STOP_LOSS' && tradeId) {
+            // STOP_LOSS: verificar si hubo BREAKEVEN previo
             const hasBreakeven = await WebhookLogModel.hasBreakevenForTrade(
               log.strategy_id,
               tradeId
             );
             if (hasBreakeven) {
+              // Si tuvo BREAKEVEN, es ganado
               alertType = 'TAKE_PROFIT';
+            } else {
+              // Si no tuvo BREAKEVEN, es perdido
+              alertType = 'STOP_LOSS';
             }
           }
           

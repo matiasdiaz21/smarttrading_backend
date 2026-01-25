@@ -162,14 +162,15 @@ export class WebhookLogModel {
     // Crear placeholders para los strategy_ids
     const placeholders = strategyIds.map(() => '?').join(',');
     
-    // Obtener señales de STOP_LOSS o TAKE_PROFIT que tengan un ENTRY previo
-    // Verificamos que exista un ENTRY con el mismo trade_id (alertData.id) o symbol en la misma estrategia
-    // Esto asegura que solo mostremos operaciones completas y cerradas (ENTRY -> STOP_LOSS/TAKE_PROFIT)
-    // NOTA: BREAKEVEN NO es un cierre, es solo mover el SL a entrada, el trade sigue abierto
+    // Obtener señales cerradas: STOP_LOSS, TAKE_PROFIT o BREAKEVEN
+    // Lógica de negocio:
+    // - TAKE_PROFIT = trade ganado (100% objetivo alcanzado)
+    // - BREAKEVEN = trade ganado (50% de ganancia tomada, SL movido a entrada)
+    // - STOP_LOSS = puede ser ganado (si tuvo BREAKEVEN previo) o perdido (si no tuvo BREAKEVEN)
     const [rows] = await pool.execute(
       `SELECT DISTINCT wl.* FROM webhook_logs wl
        WHERE wl.strategy_id IN (${placeholders})
-         AND JSON_EXTRACT(wl.payload, '$.alertType') IN ('STOP_LOSS', 'TAKE_PROFIT')
+         AND JSON_EXTRACT(wl.payload, '$.alertType') IN ('STOP_LOSS', 'TAKE_PROFIT', 'BREAKEVEN')
          AND wl.status = 'success'
          AND EXISTS (
            SELECT 1 FROM webhook_logs wl_entry
