@@ -157,9 +157,24 @@ export class UserController {
       const webhookLogs = await WebhookLogModel.findClosedSignalsByUserStrategies(strategyIds, limit);
       
       // Parsear el payload y formatear la respuesta
-      const closedSignals = webhookLogs.map(log => {
+      const closedSignals = await Promise.all(webhookLogs.map(async (log) => {
         try {
           const payload = typeof log.payload === 'string' ? JSON.parse(log.payload) : log.payload;
+          const tradeId = payload.alertData?.id || payload.trade_id;
+          let alertType = payload.alertType || payload.alert_type || 'N/A';
+          
+          // Si el alertType es STOP_LOSS, verificar si hubo BREAKEVEN previo
+          // Si hubo BREAKEVEN, mostrar como TAKE_PROFIT (ya se tomó ganancia del 50%)
+          if (alertType === 'STOP_LOSS' && tradeId) {
+            const hasBreakeven = await WebhookLogModel.hasBreakevenForTrade(
+              log.strategy_id,
+              tradeId
+            );
+            if (hasBreakeven) {
+              alertType = 'TAKE_PROFIT';
+            }
+          }
+          
           return {
             id: log.id,
             strategy_id: log.strategy_id,
@@ -168,8 +183,8 @@ export class UserController {
             entryPrice: payload.entryPrice || payload.entry_price || null,
             stopLoss: payload.stopLoss || payload.stop_loss || null,
             takeProfit: payload.takeProfit || payload.take_profit || null,
-            alertType: payload.alertType || payload.alert_type || 'N/A',
-            tradeId: payload.alertData?.id || payload.trade_id || null,
+            alertType: alertType,
+            tradeId: tradeId || null,
             processedAt: log.processed_at,
             payload: log.payload
           };
@@ -189,7 +204,7 @@ export class UserController {
             payload: log.payload
           };
         }
-      });
+      }));
 
       res.json(closedSignals);
     } catch (error: any) {

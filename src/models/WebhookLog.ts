@@ -126,6 +126,25 @@ export class WebhookLogModel {
    * - STOP_LOSS sin BREAKEVEN previo = Perdido
    * - STOP_LOSS con BREAKEVEN previo = Ganado (ya se tomó 50% de ganancia)
    */
+  static async hasBreakevenForTrade(
+    strategyId: number,
+    tradeId: string | number
+  ): Promise<boolean> {
+    const [rows] = await pool.execute(
+      `SELECT COUNT(*) as count FROM webhook_logs
+       WHERE strategy_id = ?
+         AND JSON_EXTRACT(payload, '$.alertType') = 'BREAKEVEN'
+         AND (
+           JSON_EXTRACT(payload, '$.alertData.id') = ?
+           OR JSON_EXTRACT(payload, '$.trade_id') = ?
+         )
+         AND status = 'success'`,
+      [strategyId, String(tradeId), String(tradeId)]
+    );
+    const result = rows as any[];
+    return result[0]?.count > 0;
+  }
+
   static async findClosedSignalsByUserStrategies(
     strategyIds: number[],
     limit = 10
