@@ -103,15 +103,52 @@ export class TradingService {
         };
       }
 
-      // Calcular el tamaño correcto de la orden
-      const requestedSize = alert.size || contractInfo.minTradeNum;
-      const calculatedSize = this.bitgetService.calculateOrderSize(
+      // Calcular el tamaño correcto de la orden basado en el valor mínimo en USDT
+      // Si se proporciona un tamaño, usarlo; sino, calcular basándose en minTradeUSDT
+      let requestedSize = alert.size;
+      
+      if (!requestedSize && entryPrice) {
+        // Calcular el tamaño mínimo basado en minTradeUSDT y el precio de entrada
+        const minUSDT = parseFloat(contractInfo.minTradeUSDT);
+        const price = parseFloat(entryPrice.toString());
+        
+        // Tamaño mínimo = minTradeUSDT / precio
+        // Añadir un pequeño margen (5%) para asegurar que se cumpla el mínimo
+        requestedSize = ((minUSDT * 1.05) / price).toString();
+        console.log(`[TradeService] 📊 Calculando tamaño basado en minTradeUSDT: ${minUSDT} USDT / ${price} = ${requestedSize} contratos`);
+      } else if (!requestedSize) {
+        requestedSize = contractInfo.minTradeNum;
+      }
+      
+      let calculatedSize = this.bitgetService.calculateOrderSize(
         requestedSize,
         contractInfo.minTradeNum,
         contractInfo.sizeMultiplier
       );
 
-      console.log(`[TradeService] 📏 Tamaño solicitado: ${requestedSize}, Tamaño calculado: ${calculatedSize}`);
+      // Convertir side de LONG/SHORT a buy/sell para Bitget
+      const bitgetSide: 'buy' | 'sell' = alert.side === 'LONG' || alert.side === 'buy' ? 'buy' : 'sell';
+
+      // Verificar que el valor notional cumpla con el mínimo de USDT
+      if (entryPrice) {
+        const notionalValue = parseFloat(calculatedSize) * parseFloat(entryPrice.toString());
+        const minUSDT = parseFloat(contractInfo.minTradeUSDT);
+        console.log(`[TradeService] 📏 Tamaño calculado: ${calculatedSize} contratos, Valor notional: ${notionalValue.toFixed(2)} USDT (mínimo: ${minUSDT} USDT)`);
+        
+        if (notionalValue < minUSDT) {
+          console.warn(`[TradeService] ⚠️ Valor notional (${notionalValue.toFixed(2)} USDT) es menor al mínimo (${minUSDT} USDT). Ajustando tamaño...`);
+          // Recalcular el tamaño para cumplir con el mínimo
+          const adjustedSize = ((minUSDT * 1.05) / parseFloat(entryPrice.toString())).toString();
+          calculatedSize = this.bitgetService.calculateOrderSize(
+            adjustedSize,
+            contractInfo.minTradeNum,
+            contractInfo.sizeMultiplier
+          );
+          console.log(`[TradeService] ✅ Tamaño ajustado: ${calculatedSize} contratos, Valor notional ajustado: ${(parseFloat(calculatedSize) * parseFloat(entryPrice.toString())).toFixed(2)} USDT`);
+        }
+      } else {
+        console.log(`[TradeService] 📏 Tamaño solicitado: ${requestedSize}, Tamaño calculado: ${calculatedSize}`);
+      }
       
       // Configurar el apalancamiento antes de ejecutar la orden
       try {
@@ -129,9 +166,6 @@ export class TradingService {
         console.warn(`[TradeService] ⚠️ No se pudo configurar el apalancamiento: ${leverageError.message}. Continuando con la orden...`);
         // Continuar con la orden aunque falle la configuración de leverage (puede que ya esté configurado)
       }
-      
-      // Convertir side de LONG/SHORT a buy/sell para Bitget
-      const bitgetSide: 'buy' | 'sell' = alert.side === 'LONG' || alert.side === 'buy' ? 'buy' : 'sell';
       
       const orderData = {
         symbol: symbol,
