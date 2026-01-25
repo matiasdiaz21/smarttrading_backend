@@ -25,13 +25,13 @@ export class StrategyModel {
   static async create(
     name: string,
     description: string | null,
-    recommendations: string | null,
+    warnings: string | null,
     webhookSecret: string,
     createdBy: number
   ): Promise<number> {
     const [result] = await pool.execute(
-      'INSERT INTO strategies (name, description, recommendations, tradingview_webhook_secret, is_active, created_by) VALUES (?, ?, ?, ?, true, ?)',
-      [name, description, recommendations, webhookSecret, createdBy]
+      'INSERT INTO strategies (name, description, warnings, tradingview_webhook_secret, is_active, created_by) VALUES (?, ?, ?, ?, true, ?)',
+      [name, description, warnings, webhookSecret, createdBy]
     );
     return (result as any).insertId;
   }
@@ -40,7 +40,7 @@ export class StrategyModel {
     id: number,
     name?: string,
     description?: string | null,
-    recommendations?: string | null,
+    warnings?: string | null,
     isActive?: boolean
   ): Promise<void> {
     const updates: string[] = [];
@@ -54,9 +54,9 @@ export class StrategyModel {
       updates.push('description = ?');
       values.push(description);
     }
-    if (recommendations !== undefined) {
-      updates.push('recommendations = ?');
-      values.push(recommendations);
+    if (warnings !== undefined) {
+      updates.push('warnings = ?');
+      values.push(warnings);
     }
     if (isActive !== undefined) {
       updates.push('is_active = ?');

@@ -14,7 +14,7 @@ export interface Strategy {
   id: number;
   name: string;
   description: string | null;
-  recommendations: string | null;
+  warnings: string | null;
   tradingview_webhook_secret: string;
   is_active: boolean;
   created_by: number;

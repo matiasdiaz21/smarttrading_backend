@@ -1,8 +1,8 @@
--- Agregar campo de recomendaciones a la tabla strategies
--- Este campo almacenará recomendaciones en formato JSON como array de strings
+-- Agregar campo de advertencias a la tabla strategies
+-- Este campo almacenará advertencias en formato de texto multilínea
 
 USE smarttrading;
 
 ALTER TABLE strategies 
-ADD COLUMN recommendations TEXT NULL COMMENT 'JSON array de recomendaciones para la estrategia' 
+ADD COLUMN warnings TEXT NULL COMMENT 'Advertencias importantes sobre la estrategia' 
 AFTER description;
