@@ -52,10 +52,25 @@ export class TradingService {
       // Obtener el leverage del usuario (si tiene uno personalizado) o el de la estrategia por defecto
       const { StrategyModel } = await import('../models/Strategy');
       const strategy = await StrategyModel.findById(strategyId);
-      const leverage = strategySubscription.leverage !== null && strategySubscription.leverage !== undefined
-        ? strategySubscription.leverage
-        : (strategy?.leverage || 10);
-      console.log(`[TradeService] 📊 Apalancamiento configurado: ${leverage}x (${strategySubscription.leverage !== null ? 'personalizado' : 'por defecto'})`);
+      
+      let leverage: number;
+      let leverageSource: string;
+      
+      if (strategySubscription.leverage !== null && strategySubscription.leverage !== undefined) {
+        // Usuario configuró leverage personalizado
+        leverage = strategySubscription.leverage;
+        leverageSource = 'personalizado del usuario';
+      } else if (strategy?.leverage) {
+        // Usar leverage por defecto de la estrategia
+        leverage = strategy.leverage;
+        leverageSource = 'por defecto de la estrategia';
+      } else {
+        // Usar leverage por defecto del sistema (10x)
+        leverage = 10;
+        leverageSource = 'por defecto del sistema';
+      }
+      
+      console.log(`[TradeService] 📊 Apalancamiento configurado: ${leverage}x (${leverageSource})`);
 
       // Obtener credenciales activas del usuario
       const credentials = await CredentialsModel.findActiveByUserId(userId);

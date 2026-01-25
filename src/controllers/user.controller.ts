@@ -27,10 +27,19 @@ export class UserController {
       // Combinar estrategias con estado de suscripción
       const result = strategies.map((strategy) => {
         const subscription = subscriptionMap.get(strategy.id);
-        // Si el usuario tiene leverage personalizado, usarlo; si no, usar el de la estrategia
-        const userLeverage = subscription?.leverage !== null && subscription?.leverage !== undefined
-          ? subscription.leverage
-          : strategy.leverage;
+        
+        // Determinar el leverage a usar:
+        // 1. Si el usuario tiene leverage personalizado (no null), usarlo
+        // 2. Si no, usar el leverage de la estrategia
+        // 3. Si la estrategia no tiene leverage, usar 10 por defecto
+        let userLeverage: number;
+        if (subscription?.leverage !== null && subscription?.leverage !== undefined) {
+          userLeverage = subscription.leverage;
+        } else if (strategy.leverage) {
+          userLeverage = strategy.leverage;
+        } else {
+          userLeverage = 10;
+        }
         
         return {
           ...strategy,
@@ -38,7 +47,7 @@ export class UserController {
           is_enabled: subscription?.is_enabled || false,
           subscription_id: subscription?.id || null,
           user_leverage: userLeverage,
-          default_leverage: strategy.leverage,
+          default_leverage: strategy.leverage || 10,
         };
       });
 
