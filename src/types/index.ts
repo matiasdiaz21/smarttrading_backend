@@ -17,6 +17,7 @@ export interface Strategy {
   warnings: string | null;
   tradingview_webhook_secret: string;
   is_active: boolean;
+  leverage: number;
   created_by: number;
   created_at: Date;
 }
@@ -36,6 +37,7 @@ export interface UserStrategySubscription {
   user_id: number;
   strategy_id: number;
   is_enabled: boolean;
+  leverage: number | null;
   created_at: Date;
   updated_at: Date;
 }

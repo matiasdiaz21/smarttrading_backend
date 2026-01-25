@@ -38,12 +38,15 @@ export class StrategyController {
         return;
       }
 
-      const { name, description, warnings } = req.body;
+      const { name, description, warnings, leverage } = req.body;
 
       if (!name) {
         res.status(400).json({ error: 'Name is required' });
         return;
       }
+
+      // Validar leverage (entre 1 y 125, por defecto 10)
+      const leverageValue = leverage ? Math.max(1, Math.min(125, parseInt(String(leverage), 10) || 10)) : 10;
 
       // Generar secret para el webhook
       const webhookSecret = crypto.randomBytes(32).toString('hex');
@@ -53,7 +56,8 @@ export class StrategyController {
         description || null,
         warnings || null,
         webhookSecret,
-        req.user.userId
+        req.user.userId,
+        leverageValue
       );
 
       const strategy = await StrategyModel.findById(strategyId);
@@ -72,7 +76,7 @@ export class StrategyController {
       }
 
       const { id } = req.params;
-      const { name, description, warnings, is_active } = req.body;
+      const { name, description, warnings, is_active, leverage } = req.body;
 
       const strategy = await StrategyModel.findById(parseInt(id));
       if (!strategy) {
@@ -80,12 +84,18 @@ export class StrategyController {
         return;
       }
 
+      // Validar leverage si se proporciona (entre 1 y 125)
+      const leverageValue = leverage !== undefined 
+        ? Math.max(1, Math.min(125, parseInt(String(leverage), 10) || 10))
+        : undefined;
+
       await StrategyModel.update(
         parseInt(id),
         name,
         description,
         warnings,
-        is_active !== undefined ? Boolean(is_active) : undefined
+        is_active !== undefined ? Boolean(is_active) : undefined,
+        leverageValue
       );
 
       const updated = await StrategyModel.findById(parseInt(id));

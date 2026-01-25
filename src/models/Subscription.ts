@@ -31,10 +31,10 @@ export class SubscriptionModel {
     return subscriptions[0] || null;
   }
 
-  static async create(userId: number, strategyId: number): Promise<number> {
+  static async create(userId: number, strategyId: number, leverage: number | null = null): Promise<number> {
     const [result] = await pool.execute(
-      'INSERT INTO user_strategy_subscriptions (user_id, strategy_id, is_enabled) VALUES (?, ?, false)',
-      [userId, strategyId]
+      'INSERT INTO user_strategy_subscriptions (user_id, strategy_id, is_enabled, leverage) VALUES (?, ?, false, ?)',
+      [userId, strategyId, leverage]
     );
     return (result as any).insertId;
   }
@@ -43,6 +43,13 @@ export class SubscriptionModel {
     await pool.execute(
       'UPDATE user_strategy_subscriptions SET is_enabled = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',
       [enabled, userId, strategyId]
+    );
+  }
+
+  static async updateLeverage(userId: number, strategyId: number, leverage: number | null): Promise<void> {
+    await pool.execute(
+      'UPDATE user_strategy_subscriptions SET leverage = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',
+      [leverage, userId, strategyId]
     );
   }
 

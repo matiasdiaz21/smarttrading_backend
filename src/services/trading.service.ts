@@ -49,6 +49,14 @@ export class TradingService {
       }
       console.log(`[TradeService] ✅ Usuario ${userId} tiene suscripción activa a la estrategia ${strategyId}`);
 
+      // Obtener el leverage del usuario (si tiene uno personalizado) o el de la estrategia por defecto
+      const { StrategyModel } = await import('../models/Strategy');
+      const strategy = await StrategyModel.findById(strategyId);
+      const leverage = strategySubscription.leverage !== null && strategySubscription.leverage !== undefined
+        ? strategySubscription.leverage
+        : (strategy?.leverage || 10);
+      console.log(`[TradeService] 📊 Apalancamiento configurado: ${leverage}x (${strategySubscription.leverage !== null ? 'personalizado' : 'por defecto'})`);
+
       // Obtener credenciales activas del usuario
       const credentials = await CredentialsModel.findActiveByUserId(userId);
       if (!credentials) {
@@ -104,6 +112,23 @@ export class TradingService {
       );
 
       console.log(`[TradeService] 📏 Tamaño solicitado: ${requestedSize}, Tamaño calculado: ${calculatedSize}`);
+      
+      // Configurar el apalancamiento antes de ejecutar la orden
+      try {
+        const holdSide = alert.side === 'LONG' || alert.side === 'buy' ? 'long' : 'short';
+        await this.bitgetService.setLeverage(
+          decryptedCredentials,
+          symbol,
+          leverage,
+          productType,
+          alert.marginCoin || 'USDT',
+          holdSide
+        );
+        console.log(`[TradeService] ✅ Apalancamiento configurado a ${leverage}x para ${symbol}`);
+      } catch (leverageError: any) {
+        console.warn(`[TradeService] ⚠️ No se pudo configurar el apalancamiento: ${leverageError.message}. Continuando con la orden...`);
+        // Continuar con la orden aunque falle la configuración de leverage (puede que ya esté configurado)
+      }
       
       // Convertir side de LONG/SHORT a buy/sell para Bitget
       const bitgetSide: 'buy' | 'sell' = alert.side === 'LONG' || alert.side === 'buy' ? 'buy' : 'sell';

@@ -315,6 +315,32 @@ export class BitgetService {
     return await this.makeRequest('GET', endpoint, credentials);
   }
 
+  // Configurar apalancamiento para un símbolo
+  async setLeverage(
+    credentials: BitgetCredentials,
+    symbol: string,
+    leverage: number,
+    productType: string = 'USDT-FUTURES',
+    marginCoin: string = 'USDT',
+    holdSide?: 'long' | 'short'
+  ): Promise<any> {
+    const endpoint = '/api/v2/mix/account/set-leverage';
+    
+    const payload: any = {
+      symbol: symbol.toUpperCase(),
+      productType: productType,
+      marginCoin: marginCoin.toUpperCase(),
+      leverage: leverage.toString(),
+    };
+
+    // Si se especifica holdSide, agregarlo (necesario para posiciones bidireccionales en modo isolated)
+    if (holdSide) {
+      payload.holdSide = holdSide;
+    }
+
+    return await this.makeRequest('POST', endpoint, credentials, payload);
+  }
+
   // Validar conexión con Bitget usando las credenciales
   async validateConnection(credentials: BitgetCredentials): Promise<{ valid: boolean; message: string }> {
     try {

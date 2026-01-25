@@ -27,11 +27,18 @@ export class UserController {
       // Combinar estrategias con estado de suscripción
       const result = strategies.map((strategy) => {
         const subscription = subscriptionMap.get(strategy.id);
+        // Si el usuario tiene leverage personalizado, usarlo; si no, usar el de la estrategia
+        const userLeverage = subscription?.leverage !== null && subscription?.leverage !== undefined
+          ? subscription.leverage
+          : strategy.leverage;
+        
         return {
           ...strategy,
           subscribed: !!subscription,
           is_enabled: subscription?.is_enabled || false,
           subscription_id: subscription?.id || null,
+          user_leverage: userLeverage,
+          default_leverage: strategy.leverage,
         };
       });
 
@@ -114,6 +121,55 @@ export class UserController {
 
       res.json({
         message: `Strategy ${enabled ? 'enabled' : 'disabled'} successfully`,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async updateLeverage(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const { id } = req.params;
+      const { leverage } = req.body;
+
+      if (leverage === undefined || leverage === null) {
+        res.status(400).json({ error: 'leverage is required' });
+        return;
+      }
+
+      // Validar leverage (entre 1 y 125)
+      const leverageValue = Math.max(1, Math.min(125, parseInt(String(leverage), 10)));
+      if (isNaN(leverageValue) || leverageValue < 1 || leverageValue > 125) {
+        res.status(400).json({ error: 'leverage must be between 1 and 125' });
+        return;
+      }
+
+      // Verificar que existe la suscripción
+      const subscription = await SubscriptionModel.findById(
+        req.user.userId,
+        parseInt(id)
+      );
+
+      if (!subscription) {
+        res.status(404).json({
+          error: 'Not subscribed to this strategy',
+        });
+        return;
+      }
+
+      await SubscriptionModel.updateLeverage(req.user.userId, parseInt(id), leverageValue);
+
+      res.json({
+        message: 'Leverage updated successfully',
+        leverage: leverageValue,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
