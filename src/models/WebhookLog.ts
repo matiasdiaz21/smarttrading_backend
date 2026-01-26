@@ -215,37 +215,69 @@ export class WebhookLogModel {
     const strategyIdInt = parseInt(String(strategyId), 10);
     
     if (isNaN(strategyIdInt) || !Number.isInteger(strategyIdInt)) {
+      console.log(`[WebhookLogModel] Invalid strategy_id: ${strategyId}`);
       return null;
     }
+
+    // Normalizar el símbolo (remover .P si existe para búsqueda más flexible)
+    const normalizedSymbol = symbol.replace(/\.P$/, '');
+    const symbolWithP = symbol.endsWith('.P') ? symbol : `${symbol}.P`;
+    
+    console.log(`[WebhookLogModel] Buscando webhook log: strategy_id=${strategyIdInt}, trade_id=${tradeId}, symbol=${symbol}`);
 
     let query: string;
     let params: any[];
 
     // Si hay trade_id, buscar por trade_id y symbol (más preciso)
+    // Usamos CAST para comparar números correctamente y JSON_UNQUOTE para strings
     if (tradeId !== null && tradeId !== undefined) {
-      const tradeIdStr = String(tradeId);
+      const tradeIdNum = parseInt(String(tradeId), 10);
+      
+      // Intentar múltiples variaciones de búsqueda
+      // 1. Buscar con el símbolo exacto y trade_id como número
       query = `SELECT * FROM webhook_logs 
                WHERE strategy_id = ? 
-                 AND JSON_EXTRACT(payload, '$.alertData.id') = ?
-                 AND JSON_EXTRACT(payload, '$.symbol') = ?
+                 AND CAST(JSON_EXTRACT(payload, '$.alertData.id') AS UNSIGNED) = ?
+                 AND (
+                   JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')) = ?
+                   OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')) = ?
+                   OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')) = ?
+                 )
                ORDER BY processed_at DESC, id DESC 
                LIMIT 1`;
-      params = [strategyIdInt, tradeIdStr, symbol];
+      params = [strategyIdInt, tradeIdNum, symbol, normalizedSymbol, symbolWithP];
     } else {
       // Si no hay trade_id, buscar solo por symbol (menos preciso)
       query = `SELECT * FROM webhook_logs 
                WHERE strategy_id = ? 
-                 AND JSON_EXTRACT(payload, '$.symbol') = ?
-                 AND JSON_EXTRACT(payload, '$.alertType') = 'ENTRY'
+                 AND (
+                   JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')) = ?
+                   OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')) = ?
+                   OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')) = ?
+                 )
+                 AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.alertType')) = 'ENTRY'
                ORDER BY processed_at DESC, id DESC 
                LIMIT 1`;
-      params = [strategyIdInt, symbol];
+      params = [strategyIdInt, symbol, normalizedSymbol, symbolWithP];
     }
 
-    const [rows] = await pool.execute(query, params);
-    const result = rows as WebhookLog[];
-    
-    return result.length > 0 ? result[0] : null;
+    try {
+      const [rows] = await pool.execute(query, params);
+      const result = rows as WebhookLog[];
+      
+      if (result.length > 0) {
+        console.log(`[WebhookLogModel] ✅ Webhook log encontrado: id=${result[0].id}`);
+        return result[0];
+      } else {
+        console.log(`[WebhookLogModel] ⚠️ No se encontró webhook log para strategy_id=${strategyIdInt}, trade_id=${tradeId}, symbol=${symbol}`);
+        return null;
+      }
+    } catch (error: any) {
+      console.error(`[WebhookLogModel] ❌ Error al buscar webhook log:`, error.message);
+      console.error(`[WebhookLogModel] Query:`, query);
+      console.error(`[WebhookLogModel] Params:`, params);
+      return null;
+    }
   }
 }
 

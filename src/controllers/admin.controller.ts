@@ -86,8 +86,11 @@ export class AdminController {
         errors.map(async (error) => {
           // Si ya tiene alert_data, no buscar en webhook_logs
           if (error.alert_data) {
+            console.log(`[AdminController] Error ${error.id} ya tiene alert_data, omitiendo búsqueda en webhook_logs`);
             return error;
           }
+
+          console.log(`[AdminController] 🔍 Buscando webhook log para error ${error.id}: strategy_id=${error.strategy_id}, trade_id=${error.trade_id}, symbol=${error.symbol}`);
 
           // Buscar el webhook log por trade_id y symbol
           try {
@@ -98,24 +101,32 @@ export class AdminController {
             );
 
             if (webhookLog && webhookLog.payload) {
+              console.log(`[AdminController] ✅ Webhook log encontrado para error ${error.id}, parseando payload...`);
+              
               // Parsear el payload del webhook log
               try {
                 const payload = typeof webhookLog.payload === 'string' 
                   ? JSON.parse(webhookLog.payload) 
                   : webhookLog.payload;
                 
+                console.log(`[AdminController] ✅ Payload parseado exitosamente para error ${error.id}`);
+                
                 // Agregar el payload como alert_data si no existe
                 return {
                   ...error,
                   alert_data: payload,
                 };
-              } catch (parseError) {
-                console.error(`[AdminController] Error parsing webhook payload for error ${error.id}:`, parseError);
+              } catch (parseError: any) {
+                console.error(`[AdminController] ❌ Error parsing webhook payload for error ${error.id}:`, parseError.message);
+                console.error(`[AdminController] Payload (first 200 chars):`, webhookLog.payload?.substring(0, 200));
                 return error;
               }
+            } else {
+              console.log(`[AdminController] ⚠️ No se encontró webhook log para error ${error.id}`);
             }
-          } catch (webhookError) {
-            console.error(`[AdminController] Error fetching webhook log for error ${error.id}:`, webhookError);
+          } catch (webhookError: any) {
+            console.error(`[AdminController] ❌ Error fetching webhook log for error ${error.id}:`, webhookError.message);
+            console.error(`[AdminController] Stack:`, webhookError.stack);
           }
 
           return error;
