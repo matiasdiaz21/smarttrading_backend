@@ -6,6 +6,7 @@ import { UserModel } from '../models/User';
 import { PaymentSubscriptionModel } from '../models/PaymentSubscription';
 import { TradingViewAlert } from '../types';
 import { decrypt } from '../utils/encryption';
+import OrderErrorModel from '../models/orderError.model';
 
 export class TradingService {
   private bitgetService: BitgetService;
@@ -399,8 +400,26 @@ export class TradingService {
 
       return { success: true, orderId: result?.orderId || existingPosition?.positionId || 'existing' };
     } catch (error: any) {
-      // NO registrar trades fallidos - solo se registran los que se ejecutan exitosamente en Bitget
+      // Registrar el error en la base de datos para monitoreo
       console.error(`[TradeService] ❌ Error al ejecutar trade en Bitget para usuario ${userId}:`, error.message);
+      
+      try {
+        const tradeId = alert.trade_id ? (typeof alert.trade_id === 'string' ? parseInt(alert.trade_id) : alert.trade_id) : null;
+        await OrderErrorModel.create(
+          userId,
+          strategyId,
+          alert.symbol,
+          alert.side,
+          alert.alertType || 'ENTRY',
+          error.message || 'Unknown error',
+          tradeId,
+          error.response?.data || null,
+          alert
+        );
+        console.log(`[TradeService] 📝 Error registrado en order_errors para monitoreo`);
+      } catch (logError: any) {
+        console.error(`[TradeService] ⚠️ No se pudo registrar el error en BD:`, logError.message);
+      }
       
       return {
         success: false,

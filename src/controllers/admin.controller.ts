@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import { UserModel } from '../models/User';
 import { WebhookLogModel } from '../models/WebhookLog';
 import { TradeModel } from '../models/Trade';
+import OrderErrorModel from '../models/orderError.model';
 
 export class AdminController {
   static async getUsers(req: AuthRequest, res: Response): Promise<void> {
@@ -57,6 +58,21 @@ export class AdminController {
       res.json({
         message: 'Stats endpoint - implementar según necesidades',
       });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async getOrderErrors(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+
+      const limit = parseInt(req.query.limit as string) || 100;
+      const errors = await OrderErrorModel.getAll(limit);
+      res.json(errors);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

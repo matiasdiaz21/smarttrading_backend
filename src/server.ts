@@ -131,6 +131,7 @@ app.get('/api/admin/nowpayments/currencies', authenticate, requireAdmin, NOWPaym
 // Admin routes
 app.get('/api/admin/users', authenticate, requireAdmin, AdminController.getUsers);
 app.get('/api/admin/webhook-logs', authenticate, requireAdmin, AdminController.getWebhookLogs);
+app.get('/api/admin/order-errors', authenticate, requireAdmin, AdminController.getOrderErrors);
 app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats);
 
 // Error handler
