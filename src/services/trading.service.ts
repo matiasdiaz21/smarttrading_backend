@@ -50,27 +50,35 @@ export class TradingService {
       console.log(`[TradeService] ✅ Usuario ${userId} tiene suscripción activa a la estrategia ${strategyId}`);
 
       // Obtener el leverage del usuario (si tiene uno personalizado) o el de la estrategia por defecto
+      // PRIORIDAD: 1. Leverage del usuario en user_strategy_subscriptions, 2. Leverage de la estrategia, 3. 10x por defecto
       const { StrategyModel } = await import('../models/Strategy');
       const strategy = await StrategyModel.findById(strategyId);
       
       let leverage: number;
       let leverageSource: string;
       
-      if (strategySubscription.leverage !== null && strategySubscription.leverage !== undefined) {
-        // Usuario configuró leverage personalizado
-        leverage = strategySubscription.leverage;
-        leverageSource = 'personalizado del usuario';
-      } else if (strategy?.leverage) {
+      // Verificar si el usuario tiene leverage personalizado en user_strategy_subscriptions
+      const userLeverage = strategySubscription.leverage;
+      console.log(`[TradeService] 🔍 Verificando leverage - Usuario: ${userLeverage}, Estrategia: ${strategy?.leverage || 'N/A'}`);
+      
+      if (userLeverage !== null && userLeverage !== undefined && userLeverage > 0) {
+        // Usuario configuró leverage personalizado - PRIORIDAD MÁXIMA
+        leverage = userLeverage;
+        leverageSource = 'personalizado del usuario (user_strategy_subscriptions)';
+        console.log(`[TradeService] ✅ Usando leverage personalizado del usuario: ${leverage}x`);
+      } else if (strategy?.leverage && strategy.leverage > 0) {
         // Usar leverage por defecto de la estrategia
         leverage = strategy.leverage;
         leverageSource = 'por defecto de la estrategia';
+        console.log(`[TradeService] ✅ Usando leverage de la estrategia: ${leverage}x`);
       } else {
         // Usar leverage por defecto del sistema (10x)
         leverage = 10;
         leverageSource = 'por defecto del sistema';
+        console.log(`[TradeService] ✅ Usando leverage por defecto del sistema: ${leverage}x`);
       }
       
-      console.log(`[TradeService] 📊 Apalancamiento configurado: ${leverage}x (${leverageSource})`);
+      console.log(`[TradeService] 📊 Apalancamiento final seleccionado: ${leverage}x (${leverageSource})`);
 
       // Obtener credenciales activas del usuario
       const credentials = await CredentialsModel.findActiveByUserId(userId);
@@ -165,9 +173,12 @@ export class TradingService {
         console.log(`[TradeService] 📏 Tamaño solicitado: ${requestedSize}, Tamaño calculado: ${calculatedSize}`);
       }
       
-      // Configurar el apalancamiento antes de ejecutar la orden
+      // Configurar el apalancamiento ANTES de ejecutar la orden
+      // Esto es CRÍTICO: el leverage debe estar configurado antes de abrir la posición
+      const holdSide = alert.side === 'LONG' || alert.side === 'buy' ? 'long' : 'short';
+      
       try {
-        const holdSide = alert.side === 'LONG' || alert.side === 'buy' ? 'long' : 'short';
+        console.log(`[TradeService] 🔧 Configurando leverage a ${leverage}x para ${symbol} antes de abrir posición...`);
         await this.bitgetService.setLeverage(
           decryptedCredentials,
           symbol,
@@ -176,10 +187,15 @@ export class TradingService {
           alert.marginCoin || 'USDT',
           holdSide
         );
-        console.log(`[TradeService] ✅ Apalancamiento configurado a ${leverage}x para ${symbol}`);
+        console.log(`[TradeService] ✅ Apalancamiento configurado exitosamente a ${leverage}x para ${symbol}`);
+        
+        // Pequeña pausa para asegurar que el leverage se haya aplicado antes de continuar
+        await new Promise(resolve => setTimeout(resolve, 500));
       } catch (leverageError: any) {
-        console.warn(`[TradeService] ⚠️ No se pudo configurar el apalancamiento: ${leverageError.message}. Continuando con la orden...`);
-        // Continuar con la orden aunque falle la configuración de leverage (puede que ya esté configurado)
+        // NO continuar si falla la configuración del leverage - esto es crítico
+        console.error(`[TradeService] ❌ ERROR CRÍTICO: No se pudo configurar el apalancamiento a ${leverage}x: ${leverageError.message}`);
+        console.error(`[TradeService] Detalles del error:`, leverageError);
+        throw new Error(`No se pudo configurar el apalancamiento a ${leverage}x: ${leverageError.message}. La operación se ha cancelado para evitar usar un leverage incorrecto.`);
       }
       
       const orderData = {
@@ -207,27 +223,74 @@ export class TradingService {
 
       console.log(`[TradeService] ✅ Orden ejecutada en Bitget. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
 
+      // Esperar un momento para que la posición se registre en Bitget
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Obtener el tamaño real de la posición después de abrirla
+      let actualPositionSize = calculatedSize;
+      try {
+        const positions = await this.bitgetService.getPositions(
+          decryptedCredentials,
+          symbol,
+          productType
+        );
+        
+        if (positions && positions.length > 0) {
+          const position = positions[0];
+          actualPositionSize = position.total || position.available || position.size || calculatedSize;
+          console.log(`[TradeService] 📊 Tamaño de posición obtenido: ${actualPositionSize} (solicitado: ${calculatedSize})`);
+        } else {
+          console.warn(`[TradeService] ⚠️ No se encontró posición abierta, usando tamaño calculado: ${calculatedSize}`);
+        }
+      } catch (positionError: any) {
+        console.warn(`[TradeService] ⚠️ No se pudo obtener el tamaño de la posición: ${positionError.message}. Usando tamaño calculado: ${calculatedSize}`);
+      }
+
       // Configurar Stop Loss y Take Profit si están disponibles
       if (alert.stopLoss && alert.takeProfit) {
         try {
-          console.log(`[TradeService] 📊 Configurando TP/SL para ${symbol}...`);
+          console.log(`[TradeService] 📊 Configurando órdenes TP/SL avanzadas para ${symbol}...`);
           console.log(`[TradeService]   Stop Loss: ${alert.stopLoss}`);
+          console.log(`[TradeService]   Breakeven: ${alert.breakeven || 'N/A'}`);
           console.log(`[TradeService]   Take Profit: ${alert.takeProfit}`);
+          console.log(`[TradeService]   Tamaño de posición: ${actualPositionSize}`);
           
-          await this.bitgetService.setPositionTPSL(
-            decryptedCredentials,
-            symbol,
-            bitgetSide,
-            alert.stopLoss,
-            alert.takeProfit,
-            productType,
-            alert.marginCoin || 'USDT'
-          );
+          // Si hay breakeven, usar el método avanzado que configura múltiples órdenes
+          if (alert.breakeven && alert.breakeven > 0) {
+            console.log(`[TradeService] 🎯 Configurando estrategia con breakeven (TP 50% en breakeven, TP 50% en takeProfit)`);
+            
+            await this.bitgetService.setAdvancedPositionTPSL(
+              decryptedCredentials,
+              symbol,
+              bitgetSide,
+              alert.stopLoss,
+              alert.breakeven,
+              alert.takeProfit,
+              actualPositionSize,
+              productType,
+              alert.marginCoin || 'USDT'
+            );
+          } else {
+            // Si no hay breakeven, usar el método básico (TP 100% en takeProfit)
+            console.log(`[TradeService] 🎯 Configurando estrategia básica (TP 100% en takeProfit, sin breakeven)`);
+            
+            await this.bitgetService.setPositionTPSL(
+              decryptedCredentials,
+              symbol,
+              bitgetSide,
+              alert.stopLoss,
+              alert.takeProfit,
+              productType,
+              alert.marginCoin || 'USDT'
+            );
+          }
           
-          console.log(`[TradeService] ✅ TP/SL configurados exitosamente en Bitget`);
+          console.log(`[TradeService] ✅ Todas las órdenes TP/SL configuradas exitosamente en Bitget`);
         } catch (tpslError: any) {
           console.error(`[TradeService] ⚠️ Error al configurar TP/SL: ${tpslError.message}`);
           // No fallar la operación si el TP/SL falla, la orden ya fue ejecutada
+          // Pero registrar el error para debugging
+          console.error(`[TradeService] Stack trace:`, tpslError.stack);
         }
       } else {
         console.warn(`[TradeService] ⚠️ No se configuró TP/SL: stopLoss=${alert.stopLoss}, takeProfit=${alert.takeProfit}`);

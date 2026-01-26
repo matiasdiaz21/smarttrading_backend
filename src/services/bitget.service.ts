@@ -256,7 +256,7 @@ export class BitgetService {
     return await this.makeRequest('GET', endpoint, credentials);
   }
 
-  // Establecer TP/SL para una posición recién abierta
+  // Establecer TP/SL para una posición recién abierta (método básico - mantiene compatibilidad)
   async setPositionTPSL(
     credentials: BitgetCredentials,
     symbol: string,
@@ -302,6 +302,108 @@ export class BitgetService {
       return await this.makeRequest('POST', endpoint, credentials, slPayload);
     } catch (error: any) {
       throw new Error(`Error al configurar TP/SL: ${error.message}`);
+    }
+  }
+
+  // Configurar múltiples órdenes TP/SL incluyendo breakeven parcial
+  // Configura: Stop Loss, Take Profit parcial (50%) en breakeven, Take Profit final (50%) en takeProfit
+  async setAdvancedPositionTPSL(
+    credentials: BitgetCredentials,
+    symbol: string,
+    side: 'buy' | 'sell',
+    stopLossPrice: number,
+    breakevenPrice: number | null,
+    takeProfitPrice: number,
+    positionSize: string, // Tamaño total de la posición
+    productType: string = 'USDT-FUTURES',
+    marginCoin: string = 'USDT'
+  ): Promise<any> {
+    try {
+      const holdSide = side === 'buy' ? 'long' : 'short';
+      const endpoint = '/api/v2/mix/order/place-tpsl-order';
+      
+      const results: any[] = [];
+
+      // 1. Configurar Stop Loss (cierra toda la posición)
+      console.log(`[Bitget] 🛑 Configurando Stop Loss en ${stopLossPrice} para ${symbol} ${holdSide}`);
+      const slPayload: any = {
+        marginCoin: marginCoin.toUpperCase(),
+        productType: productType.toLowerCase(),
+        symbol: symbol.toUpperCase(),
+        planType: 'pos_loss',
+        triggerPrice: stopLossPrice.toString(),
+        triggerType: 'fill_price',
+        executePrice: stopLossPrice.toString(),
+        holdSide,
+        size: 'all', // Cerrar toda la posición en SL
+        clientOid: `SL_${symbol}_${Date.now()}`,
+      };
+      
+      const slResult = await this.makeRequest('POST', endpoint, credentials, slPayload);
+      results.push({ type: 'stop_loss', result: slResult });
+      console.log(`[Bitget] ✅ Stop Loss configurado exitosamente`);
+
+      // 2. Si hay breakeven, configurar Take Profit parcial (50%) en breakeven
+      if (breakevenPrice && breakevenPrice > 0) {
+        const positionSizeNum = parseFloat(positionSize);
+        const breakevenSize = (positionSizeNum * 0.5).toString(); // 50% de la posición
+        
+        console.log(`[Bitget] 🎯 Configurando Take Profit PARCIAL (50% = ${breakevenSize}) en breakeven ${breakevenPrice} para ${symbol} ${holdSide}`);
+        const breakevenPayload: any = {
+          marginCoin: marginCoin.toUpperCase(),
+          productType: productType.toLowerCase(),
+          symbol: symbol.toUpperCase(),
+          planType: 'pos_profit',
+          triggerPrice: breakevenPrice.toString(),
+          triggerType: 'fill_price',
+          executePrice: breakevenPrice.toString(),
+          holdSide,
+          size: breakevenSize, // Cerrar 50% de la posición en breakeven
+          clientOid: `TP_BREAKEVEN_${symbol}_${Date.now()}`,
+        };
+        
+        const breakevenResult = await this.makeRequest('POST', endpoint, credentials, breakevenPayload);
+        results.push({ type: 'breakeven_tp_50', result: breakevenResult });
+        console.log(`[Bitget] ✅ Take Profit parcial (50%) en breakeven configurado exitosamente`);
+      }
+
+      // 3. Configurar Take Profit final (50% restante o 100% si no hay breakeven) en takeProfit
+      let finalTPSize: string;
+      let finalTPDescription: string;
+      
+      if (breakevenPrice && breakevenPrice > 0) {
+        // Si hay breakeven, cerrar el 50% restante en takeProfit
+        const positionSizeNum = parseFloat(positionSize);
+        finalTPSize = (positionSizeNum * 0.5).toString(); // 50% restante
+        finalTPDescription = '50% restante';
+      } else {
+        // Si no hay breakeven, cerrar el 100% en takeProfit
+        finalTPSize = 'all';
+        finalTPDescription = '100%';
+      }
+      
+      console.log(`[Bitget] 🎯 Configurando Take Profit FINAL (${finalTPDescription} = ${finalTPSize}) en ${takeProfitPrice} para ${symbol} ${holdSide}`);
+      const tpPayload: any = {
+        marginCoin: marginCoin.toUpperCase(),
+        productType: productType.toLowerCase(),
+        symbol: symbol.toUpperCase(),
+        planType: 'pos_profit',
+        triggerPrice: takeProfitPrice.toString(),
+        triggerType: 'fill_price',
+        executePrice: takeProfitPrice.toString(),
+        holdSide,
+        size: finalTPSize, // Cerrar el resto de la posición en TP final
+        clientOid: `TP_FINAL_${symbol}_${Date.now()}`,
+      };
+      
+      const tpResult = await this.makeRequest('POST', endpoint, credentials, tpPayload);
+      results.push({ type: 'take_profit_final', result: tpResult });
+      console.log(`[Bitget] ✅ Take Profit final (${finalTPDescription}) configurado exitosamente`);
+
+      return results;
+    } catch (error: any) {
+      console.error(`[Bitget] ❌ Error al configurar TP/SL avanzado:`, error);
+      throw new Error(`Error al configurar TP/SL avanzado: ${error.message}`);
     }
   }
 
@@ -375,9 +477,12 @@ export class BitgetService {
   ): Promise<any> {
     const endpoint = '/api/v2/mix/account/set-leverage';
     
+    // Asegurar que productType esté en el formato correcto (mayúsculas con guión)
+    const normalizedProductType = productType.toUpperCase();
+    
     const payload: any = {
       symbol: symbol.toUpperCase(),
-      productType: productType,
+      productType: normalizedProductType,
       marginCoin: marginCoin.toUpperCase(),
       leverage: leverage.toString(),
     };
@@ -387,7 +492,17 @@ export class BitgetService {
       payload.holdSide = holdSide;
     }
 
-    return await this.makeRequest('POST', endpoint, credentials, payload);
+    console.log(`[BitgetService] 🔧 Configurando leverage a ${leverage}x para ${symbol} (${normalizedProductType}, ${marginCoin.toUpperCase()}, holdSide: ${holdSide || 'N/A'})`);
+    
+    try {
+      const result = await this.makeRequest('POST', endpoint, credentials, payload);
+      console.log(`[BitgetService] ✅ Leverage configurado exitosamente:`, result);
+      return result;
+    } catch (error: any) {
+      console.error(`[BitgetService] ❌ Error al configurar leverage:`, error.message);
+      console.error(`[BitgetService] Payload enviado:`, JSON.stringify(payload, null, 2));
+      throw error; // Re-lanzar el error para que el llamador pueda manejarlo
+    }
   }
 
   // Validar conexión con Bitget usando las credenciales

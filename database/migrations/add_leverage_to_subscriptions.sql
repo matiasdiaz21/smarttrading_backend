@@ -8,3 +8,4 @@ AFTER is_enabled;
 -- Comentario: Si leverage es NULL, se usa el leverage por defecto de la estrategia
 -- Si el usuario define un leverage, se usa ese valor personalizado
 
+

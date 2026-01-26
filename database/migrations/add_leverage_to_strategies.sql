@@ -7,3 +7,4 @@ AFTER is_active;
 
 -- Comentario: El apalancamiento por defecto es 10x (10 veces el capital)
 
+
