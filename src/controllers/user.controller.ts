@@ -286,22 +286,27 @@ export class UserController {
         const totalOrderFees = [...openOrders, ...closeOrders].reduce((sum: number, o: any) => 
           sum + Math.abs(parseFloat(o.fee || '0')), 0);
         
-        // Extraer datos de Bitget con los nombres de campo correctos
-        const positionSize = pos.total || totalOpenSize.toString() || '0';
-        const openPrice = pos.openPriceAvg || null;
-        const closePrice = pos.closePriceAvg || null;
-        const leverage = pos.leverage || '1';
+        // Extraer datos de Bitget con los nombres de campo REALES
+        const positionSize = pos.openTotalPos || pos.closeTotalPos || totalOpenSize.toString() || '0';
+        const openPrice = pos.openAvgPrice || null;
+        const closePrice = pos.closeAvgPrice || null;
         const marginMode = pos.marginMode || pos.marginCoin || 'crossed';
         
-        // PnL y fees
-        const grossPnl = parseFloat(pos.achievedProfits || '0');
-        const totalFees = Math.abs(parseFloat(pos.totalFee || '0')) || totalOrderFees;
-        const netPnl = grossPnl - totalFees;
+        // PnL y fees (Bitget devuelve fees como negativos)
+        const grossPnl = parseFloat(pos.pnl || '0');
+        const openFee = Math.abs(parseFloat(pos.openFee || '0'));
+        const closeFee = Math.abs(parseFloat(pos.closeFee || '0'));
+        const totalFees = openFee + closeFee || totalOrderFees;
+        const netPnl = parseFloat(pos.netProfit || '0'); // Bitget ya calcula el neto
+        
+        // Obtener leverage de las órdenes relacionadas
+        const leverage = openOrders.length > 0 ? (openOrders[0].leverage || '1') : 
+                        closeOrders.length > 0 ? (closeOrders[0].leverage || '1') : '1';
         
         console.log(`[UserController] ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, close=${closePrice}, leverage=${leverage}x, grossPnL=${grossPnl}, fees=${totalFees}, netPnL=${netPnl}`);
         
         return {
-          position_id: pos.posId || `${pos.symbol}_${openTime}`,
+          position_id: pos.positionId || pos.posId || `${pos.symbol}_${openTime}`,
           symbol: symbol || 'N/A',
           pos_side: posSide || 'net',
           status: 'closed' as const,
@@ -363,21 +368,24 @@ export class UserController {
         const totalOrderFees = relatedOrders.reduce((sum: number, o: any) => 
           sum + Math.abs(parseFloat(o.fee || '0')), 0);
         
-        // Extraer datos de posición abierta
+        // Extraer datos de posición abierta (campos diferentes para posiciones abiertas)
         const positionSize = pos.total || pos.available || totalOpenSize.toString() || '0';
-        const openPrice = pos.openPriceAvg || pos.averageOpenPrice || null;
-        const leverage = pos.leverage || '1';
+        const openPrice = pos.openPriceAvg || pos.averageOpenPrice || pos.openAvgPrice || null;
         const marginMode = pos.marginMode || pos.marginCoin || 'crossed';
         
         // PnL no realizado y fees
-        const unrealizedPnl = parseFloat(pos.unrealizedPL || pos.upl || '0');
+        const unrealizedPnl = parseFloat(pos.unrealizedPL || pos.upl || pos.pnl || '0');
         const totalFees = Math.abs(parseFloat(pos.totalFee || pos.fee || '0')) || totalOrderFees;
         const netPnl = unrealizedPnl - totalFees;
+        
+        // Obtener leverage de las órdenes relacionadas o de la posición
+        const leverage = pos.leverage || 
+                        (relatedOrders.length > 0 ? (relatedOrders[0].leverage || '1') : '1');
         
         console.log(`[UserController] OPEN ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, leverage=${leverage}x, unrealizedPnL=${unrealizedPnl}, fees=${totalFees}`);
         
         return {
-          position_id: pos.posId || `${pos.symbol}_${openTime}_open`,
+          position_id: pos.positionId || pos.posId || `${pos.symbol}_${openTime}_open`,
           symbol: symbol || 'N/A',
           pos_side: posSide || 'net',
           status: 'open' as const,
