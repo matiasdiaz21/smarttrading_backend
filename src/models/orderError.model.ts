@@ -52,6 +52,17 @@ class OrderErrorModel {
   }
 
   async getAll(limit: number = 100): Promise<OrderErrorWithDetails[]> {
+    // Convertir limit a entero y validar (entre 1 y 1000)
+    const limitInt = Math.max(1, Math.min(1000, parseInt(String(limit), 10) || 100));
+    
+    // Validar que sea un entero válido
+    if (!Number.isInteger(limitInt) || limitInt < 1 || limitInt > 1000) {
+      throw new Error('Invalid limit value');
+    }
+    
+    // MySQL2 puede tener problemas con LIMIT como parámetro preparado
+    // Usamos execute con el número validado directamente en la query
+    // La validación previa asegura que no hay riesgo de SQL injection
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT 
         oe.*,
@@ -61,8 +72,7 @@ class OrderErrorModel {
        JOIN users u ON oe.user_id = u.id
        JOIN strategies s ON oe.strategy_id = s.id
        ORDER BY oe.created_at DESC
-       LIMIT ?`,
-      [limit]
+       LIMIT ${limitInt}`
     );
 
     return rows.map((row) => ({
@@ -73,12 +83,27 @@ class OrderErrorModel {
   }
 
   async getByUser(userId: number, limit: number = 50): Promise<OrderError[]> {
+    // Validar y convertir parámetros
+    const userIdInt = parseInt(String(userId), 10);
+    const limitInt = Math.max(1, Math.min(1000, parseInt(String(limit), 10) || 50));
+    
+    if (isNaN(userIdInt) || !Number.isInteger(userIdInt)) {
+      throw new Error('Invalid user_id');
+    }
+    
+    if (!Number.isInteger(limitInt) || limitInt < 1 || limitInt > 1000) {
+      throw new Error('Invalid limit value');
+    }
+    
+    // MySQL2 puede tener problemas con LIMIT como parámetro preparado
+    // Usamos execute con userId como parámetro y limit validado en la query
+    // La validación previa asegura que no hay riesgo de SQL injection
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT * FROM order_errors
        WHERE user_id = ?
        ORDER BY created_at DESC
-       LIMIT ?`,
-      [userId, limit]
+       LIMIT ${limitInt}`,
+      [userIdInt]
     );
 
     return rows.map((row) => ({
@@ -89,12 +114,27 @@ class OrderErrorModel {
   }
 
   async getByStrategy(strategyId: number, limit: number = 50): Promise<OrderError[]> {
+    // Validar y convertir parámetros
+    const strategyIdInt = parseInt(String(strategyId), 10);
+    const limitInt = Math.max(1, Math.min(1000, parseInt(String(limit), 10) || 50));
+    
+    if (isNaN(strategyIdInt) || !Number.isInteger(strategyIdInt)) {
+      throw new Error('Invalid strategy_id');
+    }
+    
+    if (!Number.isInteger(limitInt) || limitInt < 1 || limitInt > 1000) {
+      throw new Error('Invalid limit value');
+    }
+    
+    // MySQL2 puede tener problemas con LIMIT como parámetro preparado
+    // Usamos execute con strategy_id como parámetro y limit validado en la query
+    // La validación previa asegura que no hay riesgo de SQL injection
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT * FROM order_errors
        WHERE strategy_id = ?
        ORDER BY created_at DESC
-       LIMIT ?`,
-      [strategyId, limit]
+       LIMIT ${limitInt}`,
+      [strategyIdInt]
     );
 
     return rows.map((row) => ({

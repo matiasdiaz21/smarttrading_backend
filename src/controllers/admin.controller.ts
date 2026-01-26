@@ -70,7 +70,15 @@ export class AdminController {
         return;
       }
 
-      const limit = parseInt(req.query.limit as string) || 100;
+      const limitParam = req.query.limit as string;
+      const limit = limitParam ? parseInt(limitParam, 10) : 100;
+      
+      // Validar que limit sea un número válido
+      if (isNaN(limit) || limit < 1) {
+        res.status(400).json({ error: 'Invalid limit parameter' });
+        return;
+      }
+
       const errors = await OrderErrorModel.getAll(limit);
       res.json(errors);
     } catch (error: any) {
