@@ -90,7 +90,7 @@ app.get('/api/user/strategies', authenticate, UserController.getStrategies);
 app.post('/api/user/strategies/:id/subscribe', authenticate, UserController.subscribeToStrategy);
 app.put('/api/user/strategies/:id/toggle', authenticate, UserController.toggleStrategy);
 app.put('/api/user/strategies/:id/leverage', authenticate, UserController.updateLeverage);
-app.get('/api/user/trades', authenticate, UserController.getTrades);
+app.get('/api/user/positions', authenticate, UserController.getPositions);
 app.get('/api/user/trades/closed', authenticate, UserController.getClosedTrades);
 app.get('/api/user/subscription', authenticate, UserController.getSubscriptionStatus);
 app.get('/api/user/pending-payment', authenticate, UserController.getPendingPayment);

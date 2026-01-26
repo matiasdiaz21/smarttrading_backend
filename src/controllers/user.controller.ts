@@ -185,24 +185,21 @@ export class UserController {
     }
   }
 
-  static async getTrades(req: AuthRequest, res: Response): Promise<void> {
+  static async getPositions(req: AuthRequest, res: Response): Promise<void> {
     try {
       if (!req.user) {
         res.status(401).json({ error: 'Unauthorized' });
         return;
       }
 
-      // Obtener credenciales activas del usuario
       const { CredentialsModel } = await import('../models/Credentials');
       const credentials = await CredentialsModel.findActiveByUserId(req.user.userId);
 
       if (!credentials) {
-        // Si no tiene credenciales, devolver array vacío o error según prefieras
         res.json([]);
         return;
       }
 
-      // Desencriptar credenciales
       const { BitgetService } = await import('../services/bitget.service');
       const decryptedCredentials = BitgetService.getDecryptedCredentials({
         api_key: credentials.api_key,
@@ -210,16 +207,14 @@ export class UserController {
         passphrase: credentials.passphrase,
       });
 
-      // Obtener historial de órdenes de Bitget
       const bitgetService = new BitgetService();
       const limit = parseInt(req.query.limit as string) || 100;
       const productType = (req.query.productType as string) || 'USDT-FUTURES';
       
-      // Opcional: filtrar por rango de tiempo (últimos 30 días por defecto)
       const endTime = Date.now();
       const startTime = req.query.startTime 
         ? parseInt(req.query.startTime as string)
-        : endTime - (30 * 24 * 60 * 60 * 1000); // 30 días atrás
+        : endTime - (30 * 24 * 60 * 60 * 1000);
 
       const bitgetOrders = await bitgetService.getOrdersHistory(
         decryptedCredentials,
@@ -229,91 +224,119 @@ export class UserController {
         endTime
       );
 
-      // Mapear órdenes de Bitget al formato esperado por el frontend
-      const trades = bitgetOrders.map((order: any, index: number) => {
-        // Mapear status de Bitget a nuestro formato
-        let status: 'pending' | 'filled' | 'cancelled' | 'failed' = 'pending';
-        if (order.status === 'filled' || order.status === 'FILLED') {
-          status = 'filled';
-        } else if (order.status === 'canceled' || order.status === 'CANCELED' || order.status === 'cancelled') {
-          status = 'cancelled';
-        } else if (order.status === 'failed' || order.status === 'FAILED') {
-          status = 'failed';
-        }
+      // Agrupar órdenes por trade_id extraído del clientOid
+      const positionsMap = new Map<string, any>();
 
-        // Mapear orderType
-        let orderType: 'limit' | 'market' = 'market';
-        if (order.orderType === 'limit' || order.orderType === 'LIMIT') {
-          orderType = 'limit';
-        }
-
-        // Mapear side
-        const side = (order.side?.toLowerCase() === 'sell' ? 'sell' : 'buy') as 'buy' | 'sell';
-
-        // Obtener precio: usar priceAvg si está disponible (precio promedio de ejecución), sino usar price
-        const price = order.priceAvg || order.price || null;
-
-        // Obtener tamaño ejecutado: usar baseVolume si está disponible, sino usar size
-        const size = order.baseVolume || order.size || '0';
-
-        // Obtener fecha: usar uTime (última actualización) o cTime (creación)
-        const executedAt = order.uTime || order.cTime || Date.now().toString();
+      bitgetOrders.forEach((order: any) => {
+        // Extraer trade_id del clientOid (formato: ST_{userId}_{strategyId}_{trade_id})
+        let tradeId = order.clientOid || order.orderId;
         
-        // Convertir timestamp a Date y luego a ISO string
-        let executedAtDate: Date;
-        try {
-          const timestamp = parseInt(executedAt);
-          executedAtDate = new Date(timestamp);
-          // Validar que la fecha sea válida
-          if (isNaN(executedAtDate.getTime())) {
-            executedAtDate = new Date();
+        if (order.clientOid && order.clientOid.startsWith('ST_')) {
+          const parts = order.clientOid.split('_');
+          if (parts.length >= 4) {
+            tradeId = parts[3]; // Extraer trade_id
           }
-        } catch {
-          executedAtDate = new Date();
         }
 
-        // Generar un ID numérico único basado en el orderId o usar un hash
-        let id: number;
-        if (order.orderId) {
-          // Intentar convertir orderId a número, si falla usar un hash
-          const orderIdNum = parseInt(order.orderId);
-          id = isNaN(orderIdNum) ? Math.abs(order.orderId.split('').reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0)) : orderIdNum;
-        } else {
-          // Si no hay orderId, generar un ID basado en el índice y timestamp
-          id = Date.now() + index;
+        const tradeSide = order.tradeSide?.toLowerCase();
+        const symbol = order.symbol?.toUpperCase() || 'N/A';
+        const key = `${symbol}_${tradeId}`;
+
+        if (!positionsMap.has(key)) {
+          positionsMap.set(key, {
+            trade_id: tradeId,
+            symbol: symbol,
+            open_order: null,
+            close_orders: [],
+            status: 'unknown',
+          });
         }
 
-        return {
-          id: id,
-          symbol: order.symbol?.toUpperCase() || 'N/A',
-          side: side,
-          order_type: orderType,
-          size: size,
-          price: price,
-          status: status,
-          executed_at: executedAtDate.toISOString(),
-          // Información adicional de Bitget que puede ser útil (opcional, no afecta al frontend)
-          bitget_order_id: order.orderId,
+        const position = positionsMap.get(key);
+        const orderData = {
+          order_id: order.orderId,
           client_oid: order.clientOid,
+          side: order.side?.toLowerCase() === 'sell' ? 'sell' : 'buy',
+          size: order.baseVolume || order.size || '0',
+          price: order.priceAvg || order.price || null,
           leverage: order.leverage || null,
           margin_mode: order.marginMode || null,
-          trade_side: order.tradeSide || null, // 'open' o 'close'
+          order_type: order.orderType?.toLowerCase() === 'limit' ? 'limit' : 'market',
+          status: order.status?.toLowerCase() || 'unknown',
           total_profits: order.totalProfits || null,
           fee: order.fee || null,
+          executed_at: new Date(parseInt(order.uTime || order.cTime || Date.now().toString())).toISOString(),
+        };
+
+        if (tradeSide === 'open') {
+          position.open_order = orderData;
+        } else if (tradeSide === 'close') {
+          position.close_orders.push(orderData);
+        }
+      });
+
+      // Convertir Map a array y calcular estado y PnL total
+      const positions = Array.from(positionsMap.values()).map(position => {
+        const hasOpen = position.open_order !== null;
+        const hasClose = position.close_orders.length > 0;
+
+        // Calcular PnL total sumando todas las órdenes de cierre
+        const totalPnL = position.close_orders.reduce((sum: number, order: any) => {
+          return sum + parseFloat(order.total_profits || '0');
+        }, 0);
+
+        // Calcular fees totales
+        const totalFees = [
+          ...(position.open_order ? [position.open_order] : []),
+          ...position.close_orders
+        ].reduce((sum: number, order: any) => {
+          return sum + Math.abs(parseFloat(order.fee || '0'));
+        }, 0);
+
+        // Determinar estado de la posición
+        let status: 'open' | 'closed' | 'partial';
+        if (!hasOpen && hasClose) {
+          status = 'closed';
+        } else if (hasOpen && !hasClose) {
+          status = 'open';
+        } else if (hasOpen && hasClose) {
+          // Verificar si se cerró completamente comparando tamaños
+          const openSize = parseFloat(position.open_order.size || '0');
+          const closedSize = position.close_orders.reduce((sum: number, order: any) => {
+            return sum + parseFloat(order.size || '0');
+          }, 0);
+          status = Math.abs(openSize - closedSize) < 0.0001 ? 'closed' : 'partial';
+        } else {
+          status = 'open';
+        }
+
+        // Usar la fecha más reciente (cierre si existe, sino apertura)
+        const latestDate = hasClose 
+          ? position.close_orders[position.close_orders.length - 1].executed_at
+          : position.open_order?.executed_at || new Date().toISOString();
+
+        return {
+          trade_id: position.trade_id,
+          symbol: position.symbol,
+          status: status,
+          open_order: position.open_order,
+          close_orders: position.close_orders,
+          total_pnl: totalPnL,
+          total_fees: totalFees,
+          net_pnl: totalPnL - totalFees,
+          latest_update: latestDate,
         };
       });
 
-      // Ordenar por fecha de ejecución (más recientes primero)
-      trades.sort((a, b) => {
-        const dateA = new Date(a.executed_at).getTime();
-        const dateB = new Date(b.executed_at).getTime();
-        return dateB - dateA;
+      // Ordenar por fecha más reciente
+      positions.sort((a, b) => {
+        return new Date(b.latest_update).getTime() - new Date(a.latest_update).getTime();
       });
 
-      res.json(trades);
+      res.json(positions);
     } catch (error: any) {
-      console.error('[UserController] Error al obtener trades de Bitget:', error);
-      res.status(500).json({ error: error.message || 'Error al obtener trades de Bitget' });
+      console.error('[UserController] Error al obtener posiciones:', error);
+      res.status(500).json({ error: error.message || 'Error al obtener posiciones' });
     }
   }
 
