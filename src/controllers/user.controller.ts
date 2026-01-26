@@ -224,35 +224,21 @@ export class UserController {
         endTime
       );
 
-      // Agrupar órdenes por trade_id extraído del clientOid
+      // Agrupar órdenes por símbolo y posSide (posición de Bitget)
+      // Bitget usa 'posSide' para identificar la dirección de la posición (long/short)
       const positionsMap = new Map<string, any>();
+      let positionCounter = 0;
 
       bitgetOrders.forEach((order: any) => {
-        // Extraer trade_id del clientOid (formato: ST_{userId}_{strategyId}_{trade_id})
-        let tradeId = order.clientOid || order.orderId;
-        
-        if (order.clientOid && order.clientOid.startsWith('ST_')) {
-          const parts = order.clientOid.split('_');
-          if (parts.length >= 4) {
-            tradeId = parts[3]; // Extraer trade_id
-          }
-        }
-
         const tradeSide = order.tradeSide?.toLowerCase();
         const symbol = order.symbol?.toUpperCase() || 'N/A';
-        const key = `${symbol}_${tradeId}`;
-
-        if (!positionsMap.has(key)) {
-          positionsMap.set(key, {
-            trade_id: tradeId,
-            symbol: symbol,
-            open_order: null,
-            close_orders: [],
-            status: 'unknown',
-          });
-        }
-
-        const position = positionsMap.get(key);
+        const posSide = order.posSide?.toLowerCase() || 'net'; // long, short, o net
+        const orderTime = parseInt(order.uTime || order.cTime || Date.now().toString());
+        
+        // Crear clave única por símbolo y posSide
+        // Para órdenes de apertura, crear nueva posición
+        // Para órdenes de cierre, buscar la posición abierta más reciente del mismo símbolo/posSide
+        
         const orderData = {
           order_id: order.orderId,
           client_oid: order.clientOid,
@@ -265,13 +251,59 @@ export class UserController {
           status: order.status?.toLowerCase() || 'unknown',
           total_profits: order.totalProfits || null,
           fee: order.fee || null,
-          executed_at: new Date(parseInt(order.uTime || order.cTime || Date.now().toString())).toISOString(),
+          executed_at: new Date(orderTime).toISOString(),
+          pos_side: posSide,
+          trade_side: tradeSide,
         };
 
         if (tradeSide === 'open') {
-          position.open_order = orderData;
+          // Crear nueva posición para cada orden de apertura
+          positionCounter++;
+          const key = `${symbol}_${posSide}_${positionCounter}`;
+          positionsMap.set(key, {
+            position_id: key,
+            symbol: symbol,
+            pos_side: posSide,
+            open_order: orderData,
+            close_orders: [],
+            status: 'open',
+            open_time: orderTime,
+          });
         } else if (tradeSide === 'close') {
-          position.close_orders.push(orderData);
+          // Buscar la posición abierta más reciente del mismo símbolo y posSide
+          let matchedPosition: any = null;
+          let matchedKey: string = '';
+          
+          for (const [key, pos] of positionsMap.entries()) {
+            if (pos.symbol === symbol && pos.pos_side === posSide) {
+              // Verificar que la orden de cierre sea posterior a la apertura
+              if (pos.open_order && pos.open_time <= orderTime) {
+                // Tomar la posición más reciente que aún no esté completamente cerrada
+                if (!matchedPosition || pos.open_time > matchedPosition.open_time) {
+                  matchedPosition = pos;
+                  matchedKey = key;
+                }
+              }
+            }
+          }
+          
+          if (matchedPosition) {
+            matchedPosition.close_orders.push(orderData);
+          } else {
+            // Orden de cierre huérfana (sin apertura en el historial)
+            // Crear una posición solo con cierre
+            positionCounter++;
+            const key = `${symbol}_${posSide}_orphan_${positionCounter}`;
+            positionsMap.set(key, {
+              position_id: key,
+              symbol: symbol,
+              pos_side: posSide,
+              open_order: null,
+              close_orders: [orderData],
+              status: 'closed',
+              open_time: orderTime,
+            });
+          }
         }
       });
 
@@ -316,8 +348,9 @@ export class UserController {
           : position.open_order?.executed_at || new Date().toISOString();
 
         return {
-          trade_id: position.trade_id,
+          position_id: position.position_id,
           symbol: position.symbol,
+          pos_side: position.pos_side,
           status: status,
           open_order: position.open_order,
           close_orders: position.close_orders,
