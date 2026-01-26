@@ -232,15 +232,44 @@ export class UserController {
         productType
       );
 
-      // Mapear posiciones cerradas de Bitget a nuestro formato
+      // Obtener historial de órdenes para hacer cruce de información
+      const bitgetOrders = await bitgetService.getOrdersHistory(
+        decryptedCredentials,
+        productType,
+        pageSize,
+        startTime,
+        endTime
+      );
+
+      // Mapear posiciones cerradas de Bitget a nuestro formato con cruce de órdenes
       const closedPositions = bitgetPositions.map((pos: any) => {
-        const openTime = parseInt(pos.openPriceAvg || pos.cTime || Date.now().toString());
+        const openTime = parseInt(pos.cTime || Date.now().toString());
         const closeTime = parseInt(pos.uTime || pos.cTime || Date.now().toString());
+        const symbol = pos.symbol?.toUpperCase();
+        const posSide = pos.holdSide?.toLowerCase();
+        
+        // Buscar órdenes relacionadas con esta posición
+        const relatedOrders = bitgetOrders.filter((order: any) => {
+          const orderSymbol = order.symbol?.toUpperCase();
+          const orderPosSide = order.posSide?.toLowerCase();
+          const orderTime = parseInt(order.uTime || order.cTime || '0');
+          
+          // Verificar que sea el mismo símbolo y posSide
+          // Y que la orden esté dentro del rango de tiempo de la posición
+          return orderSymbol === symbol && 
+                 orderPosSide === posSide &&
+                 orderTime >= (openTime - 60000) && // 1 minuto antes de apertura
+                 orderTime <= (closeTime + 60000);   // 1 minuto después de cierre
+        });
+        
+        // Separar órdenes de apertura y cierre
+        const openOrders = relatedOrders.filter((o: any) => o.tradeSide?.toLowerCase() === 'open');
+        const closeOrders = relatedOrders.filter((o: any) => o.tradeSide?.toLowerCase() === 'close');
         
         return {
           position_id: pos.posId || `${pos.symbol}_${openTime}`,
-          symbol: pos.symbol?.toUpperCase() || 'N/A',
-          pos_side: pos.holdSide?.toLowerCase() || 'net',
+          symbol: symbol || 'N/A',
+          pos_side: posSide || 'net',
           status: 'closed' as const,
           side: pos.holdSide === 'long' ? 'buy' : 'sell',
           leverage: pos.leverage || null,
@@ -254,18 +283,50 @@ export class UserController {
           open_time: new Date(openTime).toISOString(),
           close_time: new Date(closeTime).toISOString(),
           latest_update: new Date(closeTime).toISOString(),
+          // Información de órdenes
+          open_orders: openOrders.map((o: any) => ({
+            order_id: o.orderId,
+            size: o.baseVolume || o.size || '0',
+            price: o.priceAvg || o.price || null,
+            fee: o.fee || null,
+            executed_at: new Date(parseInt(o.uTime || o.cTime)).toISOString(),
+          })),
+          close_orders: closeOrders.map((o: any) => ({
+            order_id: o.orderId,
+            size: o.baseVolume || o.size || '0',
+            price: o.priceAvg || o.price || null,
+            fee: o.fee || null,
+            total_profits: o.totalProfits || null,
+            executed_at: new Date(parseInt(o.uTime || o.cTime)).toISOString(),
+          })),
         };
       });
 
-      // Mapear posiciones abiertas
+      // Mapear posiciones abiertas con cruce de órdenes
       const openPositions = (openPositionsData || []).map((pos: any) => {
         const openTime = parseInt(pos.cTime || Date.now().toString());
         const updateTime = parseInt(pos.uTime || pos.cTime || Date.now().toString());
+        const symbol = pos.symbol?.toUpperCase();
+        const posSide = pos.holdSide?.toLowerCase();
+        
+        // Buscar órdenes de apertura relacionadas
+        const relatedOrders = bitgetOrders.filter((order: any) => {
+          const orderSymbol = order.symbol?.toUpperCase();
+          const orderPosSide = order.posSide?.toLowerCase();
+          const orderTime = parseInt(order.uTime || order.cTime || '0');
+          const tradeSide = order.tradeSide?.toLowerCase();
+          
+          return orderSymbol === symbol && 
+                 orderPosSide === posSide &&
+                 tradeSide === 'open' &&
+                 orderTime >= (openTime - 60000) && // 1 minuto antes
+                 orderTime <= (updateTime + 60000);  // 1 minuto después
+        });
         
         return {
           position_id: pos.posId || `${pos.symbol}_${openTime}_open`,
-          symbol: pos.symbol?.toUpperCase() || 'N/A',
-          pos_side: pos.holdSide?.toLowerCase() || 'net',
+          symbol: symbol || 'N/A',
+          pos_side: posSide || 'net',
           status: 'open' as const,
           side: pos.holdSide === 'long' ? 'buy' : 'sell',
           leverage: pos.leverage || null,
@@ -279,6 +340,15 @@ export class UserController {
           open_time: new Date(openTime).toISOString(),
           close_time: null,
           latest_update: new Date(updateTime).toISOString(),
+          // Información de órdenes
+          open_orders: relatedOrders.map((o: any) => ({
+            order_id: o.orderId,
+            size: o.baseVolume || o.size || '0',
+            price: o.priceAvg || o.price || null,
+            fee: o.fee || null,
+            executed_at: new Date(parseInt(o.uTime || o.cTime)).toISOString(),
+          })),
+          close_orders: [],
         };
       });
 
