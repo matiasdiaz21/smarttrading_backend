@@ -192,11 +192,128 @@ export class UserController {
         return;
       }
 
-      const trades = await TradeModel.findByUserId(req.user.userId);
+      // Obtener credenciales activas del usuario
+      const { CredentialsModel } = await import('../models/Credentials');
+      const credentials = await CredentialsModel.findActiveByUserId(req.user.userId);
+
+      if (!credentials) {
+        // Si no tiene credenciales, devolver array vacío o error según prefieras
+        res.json([]);
+        return;
+      }
+
+      // Desencriptar credenciales
+      const { BitgetService } = await import('../services/bitget.service');
+      const decryptedCredentials = BitgetService.getDecryptedCredentials({
+        api_key: credentials.api_key,
+        api_secret: credentials.api_secret,
+        passphrase: credentials.passphrase,
+      });
+
+      // Obtener historial de órdenes de Bitget
+      const bitgetService = new BitgetService();
+      const limit = parseInt(req.query.limit as string) || 100;
+      const productType = (req.query.productType as string) || 'USDT-FUTURES';
+      
+      // Opcional: filtrar por rango de tiempo (últimos 30 días por defecto)
+      const endTime = Date.now();
+      const startTime = req.query.startTime 
+        ? parseInt(req.query.startTime as string)
+        : endTime - (30 * 24 * 60 * 60 * 1000); // 30 días atrás
+
+      const bitgetOrders = await bitgetService.getOrdersHistory(
+        decryptedCredentials,
+        productType,
+        limit,
+        startTime,
+        endTime
+      );
+
+      // Mapear órdenes de Bitget al formato esperado por el frontend
+      const trades = bitgetOrders.map((order: any, index: number) => {
+        // Mapear status de Bitget a nuestro formato
+        let status: 'pending' | 'filled' | 'cancelled' | 'failed' = 'pending';
+        if (order.status === 'filled' || order.status === 'FILLED') {
+          status = 'filled';
+        } else if (order.status === 'canceled' || order.status === 'CANCELED' || order.status === 'cancelled') {
+          status = 'cancelled';
+        } else if (order.status === 'failed' || order.status === 'FAILED') {
+          status = 'failed';
+        }
+
+        // Mapear orderType
+        let orderType: 'limit' | 'market' = 'market';
+        if (order.orderType === 'limit' || order.orderType === 'LIMIT') {
+          orderType = 'limit';
+        }
+
+        // Mapear side
+        const side = (order.side?.toLowerCase() === 'sell' ? 'sell' : 'buy') as 'buy' | 'sell';
+
+        // Obtener precio: usar priceAvg si está disponible (precio promedio de ejecución), sino usar price
+        const price = order.priceAvg || order.price || null;
+
+        // Obtener tamaño ejecutado: usar baseVolume si está disponible, sino usar size
+        const size = order.baseVolume || order.size || '0';
+
+        // Obtener fecha: usar uTime (última actualización) o cTime (creación)
+        const executedAt = order.uTime || order.cTime || Date.now().toString();
+        
+        // Convertir timestamp a Date y luego a ISO string
+        let executedAtDate: Date;
+        try {
+          const timestamp = parseInt(executedAt);
+          executedAtDate = new Date(timestamp);
+          // Validar que la fecha sea válida
+          if (isNaN(executedAtDate.getTime())) {
+            executedAtDate = new Date();
+          }
+        } catch {
+          executedAtDate = new Date();
+        }
+
+        // Generar un ID numérico único basado en el orderId o usar un hash
+        let id: number;
+        if (order.orderId) {
+          // Intentar convertir orderId a número, si falla usar un hash
+          const orderIdNum = parseInt(order.orderId);
+          id = isNaN(orderIdNum) ? Math.abs(order.orderId.split('').reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0)) : orderIdNum;
+        } else {
+          // Si no hay orderId, generar un ID basado en el índice y timestamp
+          id = Date.now() + index;
+        }
+
+        return {
+          id: id,
+          symbol: order.symbol?.toUpperCase() || 'N/A',
+          side: side,
+          order_type: orderType,
+          size: size,
+          price: price,
+          status: status,
+          executed_at: executedAtDate.toISOString(),
+          // Información adicional de Bitget que puede ser útil (opcional, no afecta al frontend)
+          bitget_order_id: order.orderId,
+          client_oid: order.clientOid,
+          leverage: order.leverage || null,
+          margin_mode: order.marginMode || null,
+          trade_side: order.tradeSide || null, // 'open' o 'close'
+          total_profits: order.totalProfits || null,
+          fee: order.fee || null,
+        };
+      });
+
+      // Ordenar por fecha de ejecución (más recientes primero)
+      trades.sort((a, b) => {
+        const dateA = new Date(a.executed_at).getTime();
+        const dateB = new Date(b.executed_at).getTime();
+        return dateB - dateA;
+      });
 
       res.json(trades);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('[UserController] Error al obtener trades de Bitget:', error);
+      res.status(500).json({ error: error.message || 'Error al obtener trades de Bitget' });
     }
   }
 

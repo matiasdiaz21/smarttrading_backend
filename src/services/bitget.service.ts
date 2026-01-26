@@ -256,6 +256,85 @@ export class BitgetService {
     return await this.makeRequest('GET', endpoint, credentials);
   }
 
+  // Obtener historial de órdenes del usuario desde Bitget
+  async getOrdersHistory(
+    credentials: BitgetCredentials,
+    productType: string = 'USDT-FUTURES',
+    limit: number = 100,
+    startTime?: number,
+    endTime?: number,
+    symbol?: string
+  ): Promise<any[]> {
+    try {
+      const endpoint = '/api/v2/mix/order/orders-history';
+      
+      // Construir query parameters
+      const params: any = {
+        productType: productType,
+        limit: limit.toString(),
+      };
+      
+      if (symbol) {
+        params.symbol = symbol;
+      }
+      
+      if (startTime) {
+        params.startTime = startTime.toString();
+      }
+      
+      if (endTime) {
+        params.endTime = endTime.toString();
+      }
+
+      // Construir el requestPath con query parameters para la firma
+      const queryString = Object.keys(params)
+        .map(key => `${key}=${params[key]}`)
+        .join('&');
+      const requestPath = `${endpoint}?${queryString}`;
+
+      const timestamp = Date.now().toString();
+      const bodyString = '';
+
+      const signature = this.generateSignature(
+        timestamp,
+        'GET',
+        requestPath,
+        bodyString,
+        credentials.apiSecret
+      );
+
+      const headers: any = {
+        'ACCESS-KEY': credentials.apiKey,
+        'ACCESS-SIGN': signature,
+        'ACCESS-TIMESTAMP': timestamp,
+        'ACCESS-PASSPHRASE': credentials.passphrase,
+        'Content-Type': 'application/json',
+        'locale': 'en-US',
+      };
+
+      const response = await axios({
+        method: 'GET',
+        url: `${this.apiBaseUrl}${endpoint}`,
+        headers,
+        params,
+      });
+
+      if (response.data.code === '00000') {
+        const data = response.data.data;
+        // La respuesta tiene la estructura: { entrustedList: [...], endId: "..." }
+        if (data && data.entrustedList) {
+          return data.entrustedList;
+        }
+        return [];
+      } else {
+        throw new Error(`Bitget API Error: ${response.data.msg}`);
+      }
+    } catch (error: any) {
+      console.error(`[BitgetService] Error al obtener historial de órdenes:`, error);
+      throw new Error(`Error al obtener historial de órdenes de Bitget: ${error.response?.data?.msg || error.message}`);
+    }
+  }
+
   // Establecer TP/SL para una posición recién abierta (método básico - mantiene compatibilidad)
   async setPositionTPSL(
     credentials: BitgetCredentials,
