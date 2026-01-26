@@ -295,6 +295,16 @@ export class UserController {
       console.log('[UserController] Total posiciones abiertas:', openPositionsData?.length || 0);
       console.log('[UserController] ================================');
 
+      // Identificar qué órdenes son automáticas (de estrategias) vs manuales
+      // Extraer todos los orderIds de las órdenes de Bitget
+      const allOrderIds = bitgetOrders
+        .map((o: any) => o.orderId)
+        .filter((id: string) => id && id !== 'N/A');
+      
+      // Buscar en la tabla trades para identificar cuáles son automáticas
+      const tradeInfoMap = await TradeModel.findByBitgetOrderIds(req.user.userId, allOrderIds);
+      console.log(`[UserController] 🔍 Identificadas ${tradeInfoMap.size} órdenes automáticas de ${allOrderIds.length} totales`);
+
       // Agrupar órdenes cerradas por símbolo + posSide + proximidad temporal
       const groupedOrders = new Map<string, any[]>();
       
@@ -397,6 +407,13 @@ export class UserController {
           
           console.log(`[UserController] ✓ ${symbol} ${posSide}: size=${totalOpenSize.toFixed(4)}, open=${openPrice.toFixed(2)}, close=${closePrice.toFixed(2)}, leverage=${leverage}x, grossPnL=${grossPnl.toFixed(4)}, fees=${totalFees.toFixed(4)}, netPnL=${netPnl.toFixed(4)}`);
           
+          // Identificar si esta posición es automática o manual
+          // Si alguna de las órdenes de apertura está en trades, es automática
+          const isAutomatic = groupOpenOrders.some((o: any) => tradeInfoMap.has(o.orderId));
+          const tradeInfo = groupOpenOrders
+            .map((o: any) => tradeInfoMap.get(o.orderId))
+            .find((info: any) => info !== undefined);
+          
           closedPositions.push({
             position_id: `${symbol}_${posSide}_${openTime}`,
             symbol: symbol,
@@ -414,6 +431,9 @@ export class UserController {
             opened_at: new Date(openTime).toISOString(),
             closed_at: new Date(closeTime).toISOString(),
             latest_update: new Date(closeTime).toISOString(),
+            is_automatic: isAutomatic,
+            strategy_id: tradeInfo?.strategy_id || null,
+            strategy_name: tradeInfo?.strategy_name || null,
             open_orders: groupOpenOrders.map((o: any) => ({
               order_id: o.orderId,
               size: o.baseVolume || o.size || '0',
@@ -421,6 +441,7 @@ export class UserController {
               fee: o.fee || null,
               total_profits: o.totalProfits || null,
               executed_at: new Date(parseInt(o.uTime || o.cTime || '0')).toISOString(),
+              is_automatic: tradeInfoMap.has(o.orderId),
             })),
             close_orders: groupCloseOrders.map((o: any) => ({
               order_id: o.orderId,
@@ -429,12 +450,46 @@ export class UserController {
               fee: o.fee || null,
               total_profits: o.totalProfits || null,
               executed_at: new Date(parseInt(o.uTime || o.cTime || '0')).toISOString(),
+              is_automatic: tradeInfoMap.has(o.orderId),
             })),
           });
         });
       });
 
       // Mapear posiciones abiertas actuales
+      // Para posiciones abiertas, buscamos en trades por símbolo y usuario
+      // Una posición es automática si tiene trades registrados para ese símbolo
+      const { StrategyModel } = await import('../models/Strategy');
+      const userTrades = await TradeModel.findByUserId(req.user.userId, 1000);
+      const tradesBySymbol = new Map<string, { strategy_id: number; strategy_name?: string; latest_trade_at: Date }>();
+      
+      // Agrupar trades por símbolo (mantener el más reciente)
+      userTrades.forEach((trade) => {
+        const symbol = trade.symbol.toUpperCase();
+        const existing = tradesBySymbol.get(symbol);
+        const tradeDate = new Date(trade.executed_at);
+        
+        if (!existing || tradeDate > existing.latest_trade_at) {
+          tradesBySymbol.set(symbol, {
+            strategy_id: trade.strategy_id,
+            strategy_name: null, // Se cargará después
+            latest_trade_at: tradeDate,
+          });
+        }
+      });
+      
+      // Cargar nombres de estrategias
+      if (tradesBySymbol.size > 0) {
+        const strategyIds = Array.from(new Set(Array.from(tradesBySymbol.values()).map(t => t.strategy_id)));
+        const strategies = await StrategyModel.findAll(true);
+        const strategyMap = new Map(strategies.map(s => [s.id, s.name]));
+        
+        // Actualizar nombres de estrategias
+        tradesBySymbol.forEach((value, symbol) => {
+          value.strategy_name = strategyMap.get(value.strategy_id) || null;
+        });
+      }
+      
       const openPositions = (openPositionsData || []).map((pos: any) => {
         const openTime = pos.cTime ? parseInt(pos.cTime) : Date.now();
         const updateTime = pos.uTime ? parseInt(pos.uTime) : (pos.cTime ? parseInt(pos.cTime) : Date.now());
@@ -452,7 +507,11 @@ export class UserController {
         const totalFees = Math.abs(parseFloat(pos.totalFee || pos.fee || '0'));
         const netPnl = unrealizedPnl - totalFees;
         
-        console.log(`[UserController] ✓ OPEN ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, leverage=${leverage}x, unrealizedPnL=${unrealizedPnl}, fees=${totalFees}`);
+        // Verificar si esta posición es automática (tiene trades registrados para este símbolo)
+        const tradeInfo = tradesBySymbol.get(symbol);
+        const isAutomatic = !!tradeInfo;
+        
+        console.log(`[UserController] ✓ OPEN ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, leverage=${leverage}x, unrealizedPnL=${unrealizedPnl}, fees=${totalFees}, automatic=${isAutomatic}`);
         
         return {
           position_id: pos.positionId || pos.posId || `${pos.symbol}_${openTime}_open`,
@@ -471,6 +530,9 @@ export class UserController {
           opened_at: new Date(openTime).toISOString(),
           closed_at: null,
           latest_update: new Date(updateTime).toISOString(),
+          is_automatic: isAutomatic,
+          strategy_id: tradeInfo?.strategy_id || null,
+          strategy_name: tradeInfo?.strategy_name || null,
           open_orders: [],
           close_orders: [],
         };

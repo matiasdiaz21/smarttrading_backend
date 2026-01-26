@@ -154,5 +154,69 @@ export class TradeModel {
     );
     return rows as Trade[];
   }
+
+  /**
+   * Busca trades por bitget_order_id para identificar si una orden es automática
+   * Retorna información del trade si existe, incluyendo strategy_id
+   */
+  static async findByBitgetOrderId(
+    userId: number,
+    bitgetOrderId: string
+  ): Promise<{ id: number; strategy_id: number; strategy_name?: string; is_automatic: boolean } | null> {
+    const [rows] = await pool.execute(
+      `SELECT t.id, t.strategy_id, t.bitget_order_id, s.name as strategy_name
+       FROM trades t
+       LEFT JOIN strategies s ON t.strategy_id = s.id
+       WHERE t.user_id = ? AND t.bitget_order_id = ?
+       LIMIT 1`,
+      [userId, bitgetOrderId]
+    );
+    const result = rows as any[];
+    if (result.length > 0) {
+      return {
+        id: result[0].id,
+        strategy_id: result[0].strategy_id,
+        strategy_name: result[0].strategy_name || null,
+        is_automatic: true, // Si existe en trades, es automático
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Busca múltiples trades por bitget_order_ids (batch lookup)
+   * Retorna un Map con orderId -> trade info
+   */
+  static async findByBitgetOrderIds(
+    userId: number,
+    bitgetOrderIds: string[]
+  ): Promise<Map<string, { id: number; strategy_id: number; strategy_name?: string; is_automatic: boolean }>> {
+    if (bitgetOrderIds.length === 0) {
+      return new Map();
+    }
+
+    const placeholders = bitgetOrderIds.map(() => '?').join(',');
+    const [rows] = await pool.execute(
+      `SELECT t.id, t.strategy_id, t.bitget_order_id, s.name as strategy_name
+       FROM trades t
+       LEFT JOIN strategies s ON t.strategy_id = s.id
+       WHERE t.user_id = ? AND t.bitget_order_id IN (${placeholders})`,
+      [userId, ...bitgetOrderIds]
+    );
+    
+    const result = rows as any[];
+    const tradeMap = new Map<string, { id: number; strategy_id: number; strategy_name?: string; is_automatic: boolean }>();
+    
+    result.forEach((row) => {
+      tradeMap.set(row.bitget_order_id, {
+        id: row.id,
+        strategy_id: row.strategy_id,
+        strategy_name: row.strategy_name || null,
+        is_automatic: true,
+      });
+    });
+    
+    return tradeMap;
+  }
 }
 
