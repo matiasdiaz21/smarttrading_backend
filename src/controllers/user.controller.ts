@@ -266,6 +266,18 @@ export class UserController {
         const openOrders = relatedOrders.filter((o: any) => o.tradeSide?.toLowerCase() === 'open');
         const closeOrders = relatedOrders.filter((o: any) => o.tradeSide?.toLowerCase() === 'close');
         
+        // Calcular tamaño y fees desde las órdenes si están disponibles
+        const totalOpenSize = openOrders.reduce((sum: number, o: any) => 
+          sum + parseFloat(o.baseVolume || o.size || '0'), 0);
+        const totalCloseSize = closeOrders.reduce((sum: number, o: any) => 
+          sum + parseFloat(o.baseVolume || o.size || '0'), 0);
+        const totalOrderFees = [...openOrders, ...closeOrders].reduce((sum: number, o: any) => 
+          sum + Math.abs(parseFloat(o.fee || '0')), 0);
+        
+        // Usar el tamaño de la posición o el de las órdenes
+        const positionSize = pos.total || pos.openSize || totalOpenSize.toString() || '0';
+        const positionFees = parseFloat(pos.totalFee || pos.fee || '0') || totalOrderFees;
+        
         return {
           position_id: pos.posId || `${pos.symbol}_${openTime}`,
           symbol: symbol || 'N/A',
@@ -276,10 +288,10 @@ export class UserController {
           margin_mode: pos.marginMode || pos.marginCoin || null,
           open_price: pos.openPriceAvg || pos.openPrice || null,
           close_price: pos.closePriceAvg || pos.closePrice || null,
-          size: pos.total || pos.openSize || '0',
+          size: positionSize,
           total_pnl: parseFloat(pos.achievedProfits || pos.pnl || '0'),
-          total_fees: Math.abs(parseFloat(pos.totalFee || pos.fee || '0')),
-          net_pnl: parseFloat(pos.achievedProfits || pos.pnl || '0') - Math.abs(parseFloat(pos.totalFee || pos.fee || '0')),
+          total_fees: Math.abs(positionFees),
+          net_pnl: parseFloat(pos.achievedProfits || pos.pnl || '0') - Math.abs(positionFees),
           open_time: new Date(openTime).toISOString(),
           close_time: new Date(closeTime).toISOString(),
           latest_update: new Date(closeTime).toISOString(),
@@ -323,6 +335,16 @@ export class UserController {
                  orderTime <= (updateTime + 60000);  // 1 minuto después
         });
         
+        // Calcular tamaño y fees desde las órdenes si están disponibles
+        const totalOpenSize = relatedOrders.reduce((sum: number, o: any) => 
+          sum + parseFloat(o.baseVolume || o.size || '0'), 0);
+        const totalOrderFees = relatedOrders.reduce((sum: number, o: any) => 
+          sum + Math.abs(parseFloat(o.fee || '0')), 0);
+        
+        // Usar el tamaño de la posición o el de las órdenes
+        const positionSize = pos.total || pos.available || totalOpenSize.toString() || '0';
+        const positionFees = parseFloat(pos.totalFee || pos.fee || '0') || totalOrderFees;
+        
         return {
           position_id: pos.posId || `${pos.symbol}_${openTime}_open`,
           symbol: symbol || 'N/A',
@@ -333,10 +355,10 @@ export class UserController {
           margin_mode: pos.marginMode || pos.marginCoin || null,
           open_price: pos.openPriceAvg || pos.averageOpenPrice || null,
           close_price: null,
-          size: pos.total || pos.available || '0',
+          size: positionSize,
           total_pnl: parseFloat(pos.unrealizedPL || pos.upl || '0'),
-          total_fees: Math.abs(parseFloat(pos.totalFee || pos.fee || '0')),
-          net_pnl: parseFloat(pos.unrealizedPL || pos.upl || '0') - Math.abs(parseFloat(pos.totalFee || pos.fee || '0')),
+          total_fees: Math.abs(positionFees),
+          net_pnl: parseFloat(pos.unrealizedPL || pos.upl || '0') - Math.abs(positionFees),
           open_time: new Date(openTime).toISOString(),
           close_time: null,
           latest_update: new Date(updateTime).toISOString(),
