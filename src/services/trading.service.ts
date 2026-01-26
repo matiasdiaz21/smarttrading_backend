@@ -198,37 +198,13 @@ export class TradingService {
         throw new Error(`No se pudo configurar el apalancamiento a ${leverage}x: ${leverageError.message}. La operación se ha cancelado para evitar usar un leverage incorrecto.`);
       }
       
-      const orderData = {
-        symbol: symbol,
-        productType: productType,
-        marginMode: alert.marginMode || 'isolated',
-        marginCoin: alert.marginCoin || 'USDT',
-        size: calculatedSize,
-        price: entryPrice ? entryPrice.toString() : undefined,
-        side: bitgetSide,
-        tradeSide: alert.tradeSide || 'open',
-        orderType: alert.orderType || 'market',
-        force: alert.force || (alert.orderType === 'limit' ? 'gtc' : undefined),
-        clientOid: `ST_${userId}_${strategyId}_${alert.trade_id || Date.now()}`,
-      };
-
-      // Ejecutar orden en Bitget
-      console.log(`[TradeService] 🚀 Ejecutando orden en Bitget para usuario ${userId}...`);
-      console.log(`[TradeService] 📋 Datos de la orden:`, JSON.stringify(orderData, null, 2));
-      
-      const result = await this.bitgetService.placeOrder(
-        decryptedCredentials,
-        orderData
-      );
-
-      console.log(`[TradeService] ✅ Orden ejecutada en Bitget. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
-
-      // Esperar un momento para que la posición se registre en Bitget
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Obtener el tamaño real de la posición después de abrirla
+      // Verificar si ya existe una posición abierta para este símbolo
+      let existingPosition = null;
       let actualPositionSize = calculatedSize;
+      let shouldOpenPosition = true;
+      
       try {
+        console.log(`[TradeService] 🔍 Verificando si ya existe posición para ${symbol}...`);
         const positions = await this.bitgetService.getPositions(
           decryptedCredentials,
           symbol,
@@ -236,14 +212,112 @@ export class TradingService {
         );
         
         if (positions && positions.length > 0) {
-          const position = positions[0];
-          actualPositionSize = position.total || position.available || position.size || calculatedSize;
-          console.log(`[TradeService] 📊 Tamaño de posición obtenido: ${actualPositionSize} (solicitado: ${calculatedSize})`);
-        } else {
-          console.warn(`[TradeService] ⚠️ No se encontró posición abierta, usando tamaño calculado: ${calculatedSize}`);
+          const matchingPosition = positions.find((p: any) => 
+            p.symbol === symbol && 
+            p.holdSide === holdSide &&
+            parseFloat(p.total || p.available || '0') > 0
+          );
+          
+          if (matchingPosition) {
+            existingPosition = matchingPosition;
+            actualPositionSize = matchingPosition.total || matchingPosition.available || matchingPosition.size || calculatedSize;
+            shouldOpenPosition = false;
+            console.log(`[TradeService] ⚠️ Ya existe una posición ${holdSide} para ${symbol} con tamaño ${actualPositionSize}. No se abrirá nueva posición.`);
+            console.log(`[TradeService] 🎯 Se configurarán TP/SL para la posición existente.`);
+          }
         }
-      } catch (positionError: any) {
-        console.warn(`[TradeService] ⚠️ No se pudo obtener el tamaño de la posición: ${positionError.message}. Usando tamaño calculado: ${calculatedSize}`);
+      } catch (checkError: any) {
+        console.warn(`[TradeService] ⚠️ No se pudo verificar posiciones existentes: ${checkError.message}. Se intentará abrir la posición.`);
+      }
+      
+      let result: any = null;
+      
+      if (shouldOpenPosition) {
+        const orderData = {
+          symbol: symbol,
+          productType: productType,
+          marginMode: alert.marginMode || 'isolated',
+          marginCoin: alert.marginCoin || 'USDT',
+          size: calculatedSize,
+          price: entryPrice ? entryPrice.toString() : undefined,
+          side: bitgetSide,
+          tradeSide: alert.tradeSide || 'open',
+          orderType: alert.orderType || 'market',
+          force: alert.force || (alert.orderType === 'limit' ? 'gtc' : undefined),
+          clientOid: `ST_${userId}_${strategyId}_${alert.trade_id || Date.now()}`,
+        };
+
+        try {
+          // Ejecutar orden en Bitget
+          console.log(`[TradeService] 🚀 Ejecutando orden en Bitget para usuario ${userId}...`);
+          console.log(`[TradeService] 📋 Datos de la orden:`, JSON.stringify(orderData, null, 2));
+          
+          result = await this.bitgetService.placeOrder(
+            decryptedCredentials,
+            orderData
+          );
+
+          console.log(`[TradeService] ✅ Orden ejecutada en Bitget. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
+
+          // Esperar un momento para que la posición se registre en Bitget
+          await new Promise(resolve => setTimeout(resolve, 1000));
+
+          // Obtener el tamaño real de la posición después de abrirla
+          try {
+            const positions = await this.bitgetService.getPositions(
+              decryptedCredentials,
+              symbol,
+              productType
+            );
+            
+            if (positions && positions.length > 0) {
+              const position = positions[0];
+              actualPositionSize = position.total || position.available || position.size || calculatedSize;
+              console.log(`[TradeService] 📊 Tamaño de posición obtenido: ${actualPositionSize} (solicitado: ${calculatedSize})`);
+            } else {
+              console.warn(`[TradeService] ⚠️ No se encontró posición abierta, usando tamaño calculado: ${calculatedSize}`);
+            }
+          } catch (positionError: any) {
+            console.warn(`[TradeService] ⚠️ No se pudo obtener el tamaño de la posición: ${positionError.message}. Usando tamaño calculado: ${calculatedSize}`);
+          }
+        } catch (orderError: any) {
+          console.error(`[TradeService] ❌ Error al ejecutar orden: ${orderError.message}`);
+          
+          // Si el error es por clientOid duplicado, verificar si la posición existe
+          if (orderError.message && orderError.message.includes('Duplicate clientOid')) {
+            console.log(`[TradeService] 🔍 Error de clientOid duplicado. Verificando si la posición ya existe...`);
+            
+            try {
+              const positions = await this.bitgetService.getPositions(
+                decryptedCredentials,
+                symbol,
+                productType
+              );
+              
+              if (positions && positions.length > 0) {
+                const matchingPosition = positions.find((p: any) => 
+                  p.symbol === symbol && 
+                  p.holdSide === holdSide
+                );
+                
+                if (matchingPosition) {
+                  existingPosition = matchingPosition;
+                  actualPositionSize = matchingPosition.total || matchingPosition.available || calculatedSize;
+                  console.log(`[TradeService] ✅ Posición encontrada con tamaño ${actualPositionSize}. Se configurarán TP/SL.`);
+                } else {
+                  throw orderError;
+                }
+              } else {
+                throw orderError;
+              }
+            } catch (recheckError: any) {
+              console.error(`[TradeService] ❌ No se pudo verificar la posición después del error: ${recheckError.message}`);
+              throw orderError;
+            }
+          } else {
+            throw orderError;
+          }
+        }
       }
 
       // Configurar Stop Loss y Take Profit si están disponibles
@@ -303,11 +377,11 @@ export class TradingService {
       const tradeId = await TradeModel.create(
         userId,
         strategyId,
-        result.orderId,
+        result?.orderId || existingPosition?.positionId || 'N/A',
         alert.symbol,
         dbSide,
         alert.orderType || 'market',
-        orderData.size,
+        actualPositionSize,
         entryPrice ? entryPrice.toString() : null,
         'pending',
         alert.trade_id || null,
@@ -320,7 +394,7 @@ export class TradingService {
 
       console.log(`[TradeService] ✅ Trade registrado en base de datos con ID: ${tradeId}`);
 
-      return { success: true, orderId: result.orderId };
+      return { success: true, orderId: result?.orderId || existingPosition?.positionId || 'existing' };
     } catch (error: any) {
       // NO registrar trades fallidos - solo se registran los que se ejecutan exitosamente en Bitget
       console.error(`[TradeService] ❌ Error al ejecutar trade en Bitget para usuario ${userId}:`, error.message);

@@ -347,38 +347,63 @@ export class BitgetService {
   ): Promise<any> {
     try {
       const holdSide = side === 'buy' ? 'long' : 'short';
-      
       const endpoint = '/api/v2/mix/order/place-tpsl-order';
-      const payload: any = {
-        marginCoin,
+      
+      console.log(`[Bitget] 🚀 Configurando TP/SL en PARALELO para ${symbol} ${holdSide}...`);
+      
+      // Preparar ambas órdenes
+      const tpPayload: any = {
+        marginCoin: marginCoin.toUpperCase(),
         productType: productType.toLowerCase(),
-        symbol,
-        planType: 'pos_profit', // Profit plan (TP)
+        symbol: symbol.toUpperCase(),
+        planType: 'pos_profit',
         triggerPrice: takeProfitPrice.toString(),
         triggerType: 'fill_price',
         executePrice: takeProfitPrice.toString(),
         holdSide,
-        size: 'all', // Cerrar toda la posición en TP
+        size: 'all',
+        clientOid: `TP_${symbol}_${Date.now()}`,
       };
 
-      console.log(`[Bitget] 🎯 Configurando Take Profit en ${takeProfitPrice} para ${symbol} ${holdSide}`);
-      await this.makeRequest('POST', endpoint, credentials, payload);
-
-      // Configurar Stop Loss
       const slPayload: any = {
-        marginCoin,
+        marginCoin: marginCoin.toUpperCase(),
         productType: productType.toLowerCase(),
-        symbol,
-        planType: 'pos_loss', // Loss plan (SL)
+        symbol: symbol.toUpperCase(),
+        planType: 'pos_loss',
         triggerPrice: stopLossPrice.toString(),
         triggerType: 'fill_price',
         executePrice: stopLossPrice.toString(),
         holdSide,
-        size: 'all', // Cerrar toda la posición en SL
+        size: 'all',
+        clientOid: `SL_${symbol}_${Date.now() + 1}`,
       };
 
-      console.log(`[Bitget] 🛑 Configurando Stop Loss en ${stopLossPrice} para ${symbol} ${holdSide}`);
-      return await this.makeRequest('POST', endpoint, credentials, slPayload);
+      // Ejecutar AMBAS órdenes en PARALELO
+      console.log(`[Bitget] 📋 Ejecutando TP y SL simultáneamente...`);
+      console.log(`[Bitget]   - TP en ${takeProfitPrice}`);
+      console.log(`[Bitget]   - SL en ${stopLossPrice}`);
+      
+      const [tpResult, slResult] = await Promise.all([
+        this.makeRequest('POST', endpoint, credentials, tpPayload).then(result => {
+          console.log(`[Bitget] ✅ Take Profit configurado exitosamente`);
+          return { type: 'take_profit', result, success: true };
+        }).catch(error => {
+          console.error(`[Bitget] ❌ Error en Take Profit: ${error.message}`);
+          return { type: 'take_profit', error: error.message, success: false };
+        }),
+        this.makeRequest('POST', endpoint, credentials, slPayload).then(result => {
+          console.log(`[Bitget] ✅ Stop Loss configurado exitosamente`);
+          return { type: 'stop_loss', result, success: true };
+        }).catch(error => {
+          console.error(`[Bitget] ❌ Error en Stop Loss: ${error.message}`);
+          return { type: 'stop_loss', error: error.message, success: false };
+        })
+      ]);
+      
+      const successCount = [tpResult, slResult].filter(r => r.success).length;
+      console.log(`[Bitget] ✅ TP/SL configurado: ${successCount}/2 órdenes exitosas`);
+
+      return [tpResult, slResult];
     } catch (error: any) {
       throw new Error(`Error al configurar TP/SL: ${error.message}`);
     }
@@ -401,10 +426,12 @@ export class BitgetService {
       const holdSide = side === 'buy' ? 'long' : 'short';
       const endpoint = '/api/v2/mix/order/place-tpsl-order';
       
-      const results: any[] = [];
-
-      // 1. Configurar Stop Loss (cierra toda la posición)
-      console.log(`[Bitget] 🛑 Configurando Stop Loss en ${stopLossPrice} para ${symbol} ${holdSide}`);
+      console.log(`[Bitget] 🚀 Configurando TP/SL en PARALELO para ${symbol} ${holdSide}...`);
+      
+      // Preparar todas las órdenes
+      const orders: Array<{type: string; payload: any; description: string}> = [];
+      
+      // 1. Stop Loss (cierra toda la posición)
       const slPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
         productType: productType.toLowerCase(),
@@ -414,20 +441,16 @@ export class BitgetService {
         triggerType: 'fill_price',
         executePrice: stopLossPrice.toString(),
         holdSide,
-        size: 'all', // Cerrar toda la posición en SL
+        size: 'all',
         clientOid: `SL_${symbol}_${Date.now()}`,
       };
-      
-      const slResult = await this.makeRequest('POST', endpoint, credentials, slPayload);
-      results.push({ type: 'stop_loss', result: slResult });
-      console.log(`[Bitget] ✅ Stop Loss configurado exitosamente`);
+      orders.push({ type: 'stop_loss', payload: slPayload, description: `SL en ${stopLossPrice}` });
 
-      // 2. Si hay breakeven, configurar Take Profit parcial (50%) en breakeven
+      // 2. Take Profit parcial en breakeven (si existe)
       if (breakevenPrice && breakevenPrice > 0) {
         const positionSizeNum = parseFloat(positionSize);
-        const breakevenSize = (positionSizeNum * 0.5).toString(); // 50% de la posición
+        const breakevenSize = (positionSizeNum * 0.5).toString();
         
-        console.log(`[Bitget] 🎯 Configurando Take Profit PARCIAL (50% = ${breakevenSize}) en breakeven ${breakevenPrice} para ${symbol} ${holdSide}`);
         const breakevenPayload: any = {
           marginCoin: marginCoin.toUpperCase(),
           productType: productType.toLowerCase(),
@@ -437,31 +460,25 @@ export class BitgetService {
           triggerType: 'fill_price',
           executePrice: breakevenPrice.toString(),
           holdSide,
-          size: breakevenSize, // Cerrar 50% de la posición en breakeven
-          clientOid: `TP_BREAKEVEN_${symbol}_${Date.now()}`,
+          size: breakevenSize,
+          clientOid: `TP_BREAKEVEN_${symbol}_${Date.now() + 1}`,
         };
-        
-        const breakevenResult = await this.makeRequest('POST', endpoint, credentials, breakevenPayload);
-        results.push({ type: 'breakeven_tp_50', result: breakevenResult });
-        console.log(`[Bitget] ✅ Take Profit parcial (50%) en breakeven configurado exitosamente`);
+        orders.push({ type: 'breakeven_tp_50', payload: breakevenPayload, description: `TP 50% en breakeven ${breakevenPrice}` });
       }
 
-      // 3. Configurar Take Profit final (50% restante o 100% si no hay breakeven) en takeProfit
+      // 3. Take Profit final
       let finalTPSize: string;
       let finalTPDescription: string;
       
       if (breakevenPrice && breakevenPrice > 0) {
-        // Si hay breakeven, cerrar el 50% restante en takeProfit
         const positionSizeNum = parseFloat(positionSize);
-        finalTPSize = (positionSizeNum * 0.5).toString(); // 50% restante
+        finalTPSize = (positionSizeNum * 0.5).toString();
         finalTPDescription = '50% restante';
       } else {
-        // Si no hay breakeven, cerrar el 100% en takeProfit
         finalTPSize = 'all';
         finalTPDescription = '100%';
       }
       
-      console.log(`[Bitget] 🎯 Configurando Take Profit FINAL (${finalTPDescription} = ${finalTPSize}) en ${takeProfitPrice} para ${symbol} ${holdSide}`);
       const tpPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
         productType: productType.toLowerCase(),
@@ -471,13 +488,30 @@ export class BitgetService {
         triggerType: 'fill_price',
         executePrice: takeProfitPrice.toString(),
         holdSide,
-        size: finalTPSize, // Cerrar el resto de la posición en TP final
-        clientOid: `TP_FINAL_${symbol}_${Date.now()}`,
+        size: finalTPSize,
+        clientOid: `TP_FINAL_${symbol}_${Date.now() + 2}`,
       };
+      orders.push({ type: 'take_profit_final', payload: tpPayload, description: `TP ${finalTPDescription} en ${takeProfitPrice}` });
+
+      // Ejecutar TODAS las órdenes en PARALELO
+      console.log(`[Bitget] 📋 Ejecutando ${orders.length} órdenes TP/SL simultáneamente...`);
+      orders.forEach(order => console.log(`[Bitget]   - ${order.description}`));
       
-      const tpResult = await this.makeRequest('POST', endpoint, credentials, tpPayload);
-      results.push({ type: 'take_profit_final', result: tpResult });
-      console.log(`[Bitget] ✅ Take Profit final (${finalTPDescription}) configurado exitosamente`);
+      const results = await Promise.all(
+        orders.map(async (order) => {
+          try {
+            const result = await this.makeRequest('POST', endpoint, credentials, order.payload);
+            console.log(`[Bitget] ✅ ${order.description} configurado exitosamente`);
+            return { type: order.type, result, success: true };
+          } catch (error: any) {
+            console.error(`[Bitget] ❌ Error en ${order.description}: ${error.message}`);
+            return { type: order.type, error: error.message, success: false };
+          }
+        })
+      );
+      
+      const successCount = results.filter(r => r.success).length;
+      console.log(`[Bitget] ✅ TP/SL configurado: ${successCount}/${orders.length} órdenes exitosas`);
 
       return results;
     } catch (error: any) {
