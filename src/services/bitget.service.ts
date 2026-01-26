@@ -362,6 +362,11 @@ export class BitgetService {
       console.log(`[Bitget] 📊 TP: ${takeProfitPrice} → ${formattedTP}`);
       console.log(`[Bitget] 📊 SL: ${stopLossPrice} → ${formattedSL}`);
       
+      // Generar clientOids únicos para TP y SL usando timestamp de alta precisión
+      const tpslTimestamp = `${Date.now()}_${process.hrtime.bigint()}`;
+      const tpRandom = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      const slRandom = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      
       // Preparar ambas órdenes
       const tpPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
@@ -373,7 +378,7 @@ export class BitgetService {
         executePrice: formattedTP.toString(),
         holdSide,
         size: positionSize || 'all',
-        clientOid: `TP_${symbol}_${Date.now()}`,
+        clientOid: `TP_${symbol}_${tpslTimestamp}_${tpRandom}`,
       };
 
       const slPayload: any = {
@@ -386,7 +391,7 @@ export class BitgetService {
         executePrice: formattedSL.toString(),
         holdSide,
         size: positionSize || 'all',
-        clientOid: `SL_${symbol}_${Date.now() + 1}`,
+        clientOid: `SL_${symbol}_${tpslTimestamp}_${slRandom}`,
       };
 
       // Ejecutar AMBAS órdenes en PARALELO
@@ -451,10 +456,14 @@ export class BitgetService {
       if (formattedBreakeven) console.log(`[Bitget] 📊 Breakeven: ${breakevenPrice} → ${formattedBreakeven}`);
       console.log(`[Bitget] 📊 TP: ${takeProfitPrice} → ${formattedTP}`);
       
+      // Generar timestamp único de alta precisión para todas las órdenes TP/SL
+      const advancedTpslTimestamp = `${Date.now()}_${process.hrtime.bigint()}`;
+      
       // Preparar todas las órdenes
       const orders: Array<{type: string; payload: any; description: string}> = [];
       
       // 1. Stop Loss (cierra toda la posición)
+      const slRandom = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
       const slPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
         productType: productType.toLowerCase(),
@@ -465,7 +474,7 @@ export class BitgetService {
         executePrice: formattedSL.toString(),
         holdSide,
         size: positionSize,
-        clientOid: `SL_${symbol}_${Date.now()}`,
+        clientOid: `SL_${symbol}_${advancedTpslTimestamp}_${slRandom}`,
       };
       orders.push({ type: 'stop_loss', payload: slPayload, description: `SL en ${formattedSL}` });
 
@@ -473,6 +482,7 @@ export class BitgetService {
       if (formattedBreakeven && formattedBreakeven > 0) {
         const positionSizeNum = parseFloat(positionSize);
         const breakevenSize = (positionSizeNum * 0.5).toFixed(contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0);
+        const breakevenRandom = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
         
         const breakevenPayload: any = {
           marginCoin: marginCoin.toUpperCase(),
@@ -484,7 +494,7 @@ export class BitgetService {
           executePrice: formattedBreakeven.toString(),
           holdSide,
           size: breakevenSize,
-          clientOid: `TP_BREAKEVEN_${symbol}_${Date.now() + 1}`,
+          clientOid: `TP_BREAKEVEN_${symbol}_${advancedTpslTimestamp}_${breakevenRandom}`,
         };
         orders.push({ type: 'breakeven_tp_50', payload: breakevenPayload, description: `TP 50% (${breakevenSize}) en breakeven ${formattedBreakeven}` });
       }
@@ -502,6 +512,7 @@ export class BitgetService {
         finalTPDescription = `100% (${finalTPSize})`;
       }
       
+      const tpFinalRandom = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
       const tpPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
         productType: productType.toLowerCase(),
@@ -512,7 +523,7 @@ export class BitgetService {
         executePrice: formattedTP.toString(),
         holdSide,
         size: finalTPSize,
-        clientOid: `TP_FINAL_${symbol}_${Date.now() + 2}`,
+        clientOid: `TP_FINAL_${symbol}_${advancedTpslTimestamp}_${tpFinalRandom}`,
       };
       orders.push({ type: 'take_profit_final', payload: tpPayload, description: `TP ${finalTPDescription} en ${formattedTP}` });
 

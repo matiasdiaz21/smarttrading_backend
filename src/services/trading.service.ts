@@ -234,6 +234,12 @@ export class TradingService {
       let result: any = null;
       
       if (shouldOpenPosition) {
+        // Generar clientOid único usando timestamp de alta precisión y número aleatorio
+        // Esto previene errores de "Duplicate clientOid" cuando TradingView envía la misma alerta múltiples veces
+        const highPrecisionTimestamp = `${Date.now()}_${process.hrtime.bigint()}`;
+        const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+        const uniqueClientOid = `ST_${userId}_${strategyId}_${alert.trade_id || 'ENTRY'}_${highPrecisionTimestamp}_${randomSuffix}`;
+        
         const orderData = {
           symbol: symbol,
           productType: productType,
@@ -245,7 +251,7 @@ export class TradingService {
           tradeSide: alert.tradeSide || 'open',
           orderType: alert.orderType || 'market',
           force: alert.force || (alert.orderType === 'limit' ? 'gtc' : undefined),
-          clientOid: `ST_${userId}_${strategyId}_${alert.trade_id || Date.now()}`,
+          clientOid: uniqueClientOid,
         };
 
         try {
@@ -597,6 +603,11 @@ export class TradingService {
 
               console.log(`[BREAKEVEN] Cerrando 50% de la posición: ${halfSize} contratos de ${currentSize} total`);
 
+              // Generar clientOid único para la orden de breakeven
+              const breakevenTimestamp = `${Date.now()}_${process.hrtime.bigint()}`;
+              const breakevenRandom = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+              const breakevenClientOid = `ST_BREAKEVEN_${subscription.user_id}_${strategyId}_${alert.trade_id}_${breakevenTimestamp}_${breakevenRandom}`;
+              
               // Colocar orden de cierre del 50%
               await this.bitgetService.placeOrder(
                 decryptedCredentials,
@@ -609,7 +620,7 @@ export class TradingService {
                   side: closeSide,
                   tradeSide: 'close',
                   orderType: 'market',
-                  clientOid: `ST_BREAKEVEN_${subscription.user_id}_${strategyId}_${alert.trade_id}_${Date.now()}`,
+                  clientOid: breakevenClientOid,
                 }
               );
 
