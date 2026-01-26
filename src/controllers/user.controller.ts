@@ -241,6 +241,14 @@ export class UserController {
         endTime
       );
 
+      // Debug: Log para ver estructura de datos de Bitget
+      if (bitgetPositions.length > 0) {
+        console.log('[UserController] Ejemplo de posición de Bitget:', JSON.stringify(bitgetPositions[0], null, 2));
+      }
+      if (bitgetOrders.length > 0) {
+        console.log('[UserController] Ejemplo de orden de Bitget:', JSON.stringify(bitgetOrders[0], null, 2));
+      }
+
       // Mapear posiciones cerradas de Bitget a nuestro formato con cruce de órdenes
       const closedPositions = bitgetPositions.map((pos: any) => {
         const openTime = parseInt(pos.cTime || Date.now().toString());
@@ -275,8 +283,10 @@ export class UserController {
           sum + Math.abs(parseFloat(o.fee || '0')), 0);
         
         // Usar el tamaño de la posición o el de las órdenes
-        const positionSize = pos.total || pos.openSize || totalOpenSize.toString() || '0';
-        const positionFees = parseFloat(pos.totalFee || pos.fee || '0') || totalOrderFees;
+        // Probar múltiples campos posibles de Bitget
+        const positionSize = pos.total || pos.openSize || pos.openSizeUSDT || pos.openVol || 
+                            pos.positionSize || totalOpenSize.toString() || '0';
+        const positionFees = parseFloat(pos.totalFee || pos.fee || pos.openFee || pos.closeFee || '0') || totalOrderFees;
         
         return {
           position_id: pos.posId || `${pos.symbol}_${openTime}`,
@@ -286,8 +296,8 @@ export class UserController {
           side: pos.holdSide === 'long' ? 'buy' : 'sell',
           leverage: pos.leverage || null,
           margin_mode: pos.marginMode || pos.marginCoin || null,
-          open_price: pos.openPriceAvg || pos.openPrice || null,
-          close_price: pos.closePriceAvg || pos.closePrice || null,
+          open_price: pos.openPriceAvg || pos.openPrice || pos.openAvgPrice || pos.avgOpenPrice || null,
+          close_price: pos.closePriceAvg || pos.closePrice || pos.closeAvgPrice || pos.avgClosePrice || null,
           size: positionSize,
           total_pnl: parseFloat(pos.achievedProfits || pos.pnl || '0'),
           total_fees: Math.abs(positionFees),
@@ -342,8 +352,9 @@ export class UserController {
           sum + Math.abs(parseFloat(o.fee || '0')), 0);
         
         // Usar el tamaño de la posición o el de las órdenes
-        const positionSize = pos.total || pos.available || totalOpenSize.toString() || '0';
-        const positionFees = parseFloat(pos.totalFee || pos.fee || '0') || totalOrderFees;
+        const positionSize = pos.total || pos.available || pos.positionSize || pos.openSize || 
+                            totalOpenSize.toString() || '0';
+        const positionFees = parseFloat(pos.totalFee || pos.fee || pos.openFee || '0') || totalOrderFees;
         
         return {
           position_id: pos.posId || `${pos.symbol}_${openTime}_open`,
