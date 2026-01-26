@@ -20,6 +20,79 @@ export interface OrderErrorWithDetails extends OrderError {
   strategy_name: string;
 }
 
+// Función helper para parsear JSON de forma segura
+function safeJsonParse(value: any): any {
+  if (value === null || value === undefined) return null;
+  
+  // Si ya es un objeto (pero no un Buffer), retornarlo directamente
+  if (typeof value === 'object' && !Array.isArray(value) && !Buffer.isBuffer(value)) {
+    // Verificar que no sea el string "[object Object]" convertido a objeto
+    if (value.toString && value.toString() === '[object Object]') {
+      return null;
+    }
+    return value;
+  }
+  
+  // Si es un Buffer, convertirlo a string primero
+  if (Buffer.isBuffer(value)) {
+    value = value.toString('utf8');
+  }
+  
+  // Si es un string, intentar parsearlo
+  if (typeof value === 'string') {
+    // Si es "[object Object]", retornar null ya que no es JSON válido
+    if (value === '[object Object]' || value.trim() === '[object Object]') {
+      return null;
+    }
+    
+    // Si está vacío, retornar null
+    if (value.trim() === '') {
+      return null;
+    }
+    
+    try {
+      return JSON.parse(value);
+    } catch (e) {
+      // Si falla el parseo, retornar null en lugar de lanzar error
+      console.warn(`[OrderErrorModel] Error parsing JSON: ${value.substring(0, 100)}`);
+      return null;
+    }
+  }
+  
+  return value;
+}
+
+// Función helper para serializar de forma segura
+function safeJsonStringify(value: any): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  
+  // Si ya es un string, verificar si es JSON válido
+  if (typeof value === 'string') {
+    // Si es "[object Object]", retornar null
+    if (value === '[object Object]' || value.trim() === '[object Object]') {
+      return null;
+    }
+    // Si parece ser JSON válido, retornarlo
+    try {
+      JSON.parse(value);
+      return value;
+    } catch {
+      // Si no es JSON válido, serializarlo como string
+      return JSON.stringify(value);
+    }
+  }
+  
+  // Si es un objeto, serializarlo
+  try {
+    return JSON.stringify(value);
+  } catch (e) {
+    console.warn(`[OrderErrorModel] Error stringifying value:`, e);
+    return null;
+  }
+}
+
 class OrderErrorModel {
   async create(
     userId: number,
@@ -44,8 +117,8 @@ class OrderErrorModel {
         alertType,
         tradeId || null,
         errorMessage,
-        bitgetResponse ? JSON.stringify(bitgetResponse) : null,
-        alertData ? JSON.stringify(alertData) : null,
+        safeJsonStringify(bitgetResponse),
+        safeJsonStringify(alertData),
       ]
     );
     return result.insertId;
@@ -77,8 +150,8 @@ class OrderErrorModel {
 
     return rows.map((row) => ({
       ...row,
-      bitget_response: row.bitget_response ? JSON.parse(row.bitget_response) : null,
-      alert_data: row.alert_data ? JSON.parse(row.alert_data) : null,
+      bitget_response: safeJsonParse(row.bitget_response),
+      alert_data: safeJsonParse(row.alert_data),
     })) as OrderErrorWithDetails[];
   }
 
@@ -108,8 +181,8 @@ class OrderErrorModel {
 
     return rows.map((row) => ({
       ...row,
-      bitget_response: row.bitget_response ? JSON.parse(row.bitget_response) : null,
-      alert_data: row.alert_data ? JSON.parse(row.alert_data) : null,
+      bitget_response: safeJsonParse(row.bitget_response),
+      alert_data: safeJsonParse(row.alert_data),
     })) as OrderError[];
   }
 
@@ -139,8 +212,8 @@ class OrderErrorModel {
 
     return rows.map((row) => ({
       ...row,
-      bitget_response: row.bitget_response ? JSON.parse(row.bitget_response) : null,
-      alert_data: row.alert_data ? JSON.parse(row.alert_data) : null,
+      bitget_response: safeJsonParse(row.bitget_response),
+      alert_data: safeJsonParse(row.alert_data),
     })) as OrderError[];
   }
 
