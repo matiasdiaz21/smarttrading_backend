@@ -545,6 +545,82 @@ export class BitgetService {
     return await this.makeRequest('GET', endpoint, credentials);
   }
 
+  // Obtener historial de posiciones cerradas
+  async getPositionHistory(
+    credentials: BitgetCredentials,
+    productType: string = 'USDT-FUTURES',
+    startTime?: number,
+    endTime?: number,
+    pageSize: number = 100,
+    symbol?: string
+  ): Promise<any[]> {
+    try {
+      const endpoint = '/api/v2/mix/position/history-position';
+      
+      const params: any = {
+        productType: productType,
+        pageSize: pageSize.toString(),
+      };
+      
+      if (symbol) {
+        params.symbol = symbol;
+      }
+      
+      if (startTime) {
+        params.startTime = startTime.toString();
+      }
+      
+      if (endTime) {
+        params.endTime = endTime.toString();
+      }
+
+      const queryString = Object.keys(params)
+        .map(key => `${key}=${params[key]}`)
+        .join('&');
+      const requestPath = `${endpoint}?${queryString}`;
+
+      const timestamp = Date.now().toString();
+      const bodyString = '';
+
+      const signature = this.generateSignature(
+        timestamp,
+        'GET',
+        requestPath,
+        bodyString,
+        credentials.apiSecret
+      );
+
+      const headers: any = {
+        'ACCESS-KEY': credentials.apiKey,
+        'ACCESS-SIGN': signature,
+        'ACCESS-TIMESTAMP': timestamp,
+        'ACCESS-PASSPHRASE': credentials.passphrase,
+        'Content-Type': 'application/json',
+        'locale': 'en-US',
+      };
+
+      const response = await axios({
+        method: 'GET',
+        url: `${this.apiBaseUrl}${endpoint}`,
+        headers,
+        params,
+      });
+
+      if (response.data.code === '00000') {
+        const data = response.data.data;
+        if (data && data.list) {
+          return data.list;
+        }
+        return [];
+      } else {
+        throw new Error(`Bitget API Error: ${response.data.msg}`);
+      }
+    } catch (error: any) {
+      console.error(`[BitgetService] Error al obtener historial de posiciones:`, error);
+      throw new Error(`Error al obtener historial de posiciones de Bitget: ${error.response?.data?.msg || error.message}`);
+    }
+  }
+
   // Configurar apalancamiento para un símbolo
   async setLeverage(
     credentials: BitgetCredentials,

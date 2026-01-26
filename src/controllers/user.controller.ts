@@ -208,165 +208,89 @@ export class UserController {
       });
 
       const bitgetService = new BitgetService();
-      const limit = parseInt(req.query.limit as string) || 100;
+
+      const pageSize = parseInt(req.query.limit as string) || 100;
       const productType = (req.query.productType as string) || 'USDT-FUTURES';
-      
       const endTime = Date.now();
       const startTime = req.query.startTime 
-        ? parseInt(req.query.startTime as string)
+        ? parseInt(req.query.startTime as string) 
         : endTime - (30 * 24 * 60 * 60 * 1000);
 
-      const bitgetOrders = await bitgetService.getOrdersHistory(
+      // Obtener historial de posiciones cerradas desde Bitget
+      const bitgetPositions = await bitgetService.getPositionHistory(
         decryptedCredentials,
         productType,
-        limit,
         startTime,
-        endTime
+        endTime,
+        pageSize
       );
 
-      // Agrupar órdenes por símbolo y posSide (posición de Bitget)
-      // Bitget usa 'posSide' para identificar la dirección de la posición (long/short)
-      const positionsMap = new Map<string, any>();
-      let positionCounter = 0;
+      // Obtener posiciones abiertas actuales
+      const openPositionsData = await bitgetService.getPositions(
+        decryptedCredentials,
+        undefined,
+        productType
+      );
 
-      bitgetOrders.forEach((order: any) => {
-        const tradeSide = order.tradeSide?.toLowerCase();
-        const symbol = order.symbol?.toUpperCase() || 'N/A';
-        const posSide = order.posSide?.toLowerCase() || 'net'; // long, short, o net
-        const orderTime = parseInt(order.uTime || order.cTime || Date.now().toString());
+      // Mapear posiciones cerradas de Bitget a nuestro formato
+      const closedPositions = bitgetPositions.map((pos: any) => {
+        const openTime = parseInt(pos.openPriceAvg || pos.cTime || Date.now().toString());
+        const closeTime = parseInt(pos.uTime || pos.cTime || Date.now().toString());
         
-        // Crear clave única por símbolo y posSide
-        // Para órdenes de apertura, crear nueva posición
-        // Para órdenes de cierre, buscar la posición abierta más reciente del mismo símbolo/posSide
-        
-        const orderData = {
-          order_id: order.orderId,
-          client_oid: order.clientOid,
-          side: order.side?.toLowerCase() === 'sell' ? 'sell' : 'buy',
-          size: order.baseVolume || order.size || '0',
-          price: order.priceAvg || order.price || null,
-          leverage: order.leverage || null,
-          margin_mode: order.marginMode || null,
-          order_type: order.orderType?.toLowerCase() === 'limit' ? 'limit' : 'market',
-          status: order.status?.toLowerCase() || 'unknown',
-          total_profits: order.totalProfits || null,
-          fee: order.fee || null,
-          executed_at: new Date(orderTime).toISOString(),
-          pos_side: posSide,
-          trade_side: tradeSide,
-        };
-
-        if (tradeSide === 'open') {
-          // Crear nueva posición para cada orden de apertura
-          positionCounter++;
-          const key = `${symbol}_${posSide}_${positionCounter}`;
-          positionsMap.set(key, {
-            position_id: key,
-            symbol: symbol,
-            pos_side: posSide,
-            open_order: orderData,
-            close_orders: [],
-            status: 'open',
-            open_time: orderTime,
-          });
-        } else if (tradeSide === 'close') {
-          // Buscar la posición abierta más reciente del mismo símbolo y posSide
-          let matchedPosition: any = null;
-          let matchedKey: string = '';
-          
-          for (const [key, pos] of positionsMap.entries()) {
-            if (pos.symbol === symbol && pos.pos_side === posSide) {
-              // Verificar que la orden de cierre sea posterior a la apertura
-              if (pos.open_order && pos.open_time <= orderTime) {
-                // Tomar la posición más reciente que aún no esté completamente cerrada
-                if (!matchedPosition || pos.open_time > matchedPosition.open_time) {
-                  matchedPosition = pos;
-                  matchedKey = key;
-                }
-              }
-            }
-          }
-          
-          if (matchedPosition) {
-            matchedPosition.close_orders.push(orderData);
-          } else {
-            // Orden de cierre huérfana (sin apertura en el historial)
-            // Crear una posición solo con cierre
-            positionCounter++;
-            const key = `${symbol}_${posSide}_orphan_${positionCounter}`;
-            positionsMap.set(key, {
-              position_id: key,
-              symbol: symbol,
-              pos_side: posSide,
-              open_order: null,
-              close_orders: [orderData],
-              status: 'closed',
-              open_time: orderTime,
-            });
-          }
-        }
-      });
-
-      // Convertir Map a array y calcular estado y PnL total
-      const positions = Array.from(positionsMap.values()).map(position => {
-        const hasOpen = position.open_order !== null;
-        const hasClose = position.close_orders.length > 0;
-
-        // Calcular PnL total sumando todas las órdenes de cierre
-        const totalPnL = position.close_orders.reduce((sum: number, order: any) => {
-          return sum + parseFloat(order.total_profits || '0');
-        }, 0);
-
-        // Calcular fees totales
-        const totalFees = [
-          ...(position.open_order ? [position.open_order] : []),
-          ...position.close_orders
-        ].reduce((sum: number, order: any) => {
-          return sum + Math.abs(parseFloat(order.fee || '0'));
-        }, 0);
-
-        // Determinar estado de la posición
-        let status: 'open' | 'closed' | 'partial';
-        if (!hasOpen && hasClose) {
-          status = 'closed';
-        } else if (hasOpen && !hasClose) {
-          status = 'open';
-        } else if (hasOpen && hasClose) {
-          // Verificar si se cerró completamente comparando tamaños
-          const openSize = parseFloat(position.open_order.size || '0');
-          const closedSize = position.close_orders.reduce((sum: number, order: any) => {
-            return sum + parseFloat(order.size || '0');
-          }, 0);
-          status = Math.abs(openSize - closedSize) < 0.0001 ? 'closed' : 'partial';
-        } else {
-          status = 'open';
-        }
-
-        // Usar la fecha más reciente (cierre si existe, sino apertura)
-        const latestDate = hasClose 
-          ? position.close_orders[position.close_orders.length - 1].executed_at
-          : position.open_order?.executed_at || new Date().toISOString();
-
         return {
-          position_id: position.position_id,
-          symbol: position.symbol,
-          pos_side: position.pos_side,
-          status: status,
-          open_order: position.open_order,
-          close_orders: position.close_orders,
-          total_pnl: totalPnL,
-          total_fees: totalFees,
-          net_pnl: totalPnL - totalFees,
-          latest_update: latestDate,
+          position_id: pos.posId || `${pos.symbol}_${openTime}`,
+          symbol: pos.symbol?.toUpperCase() || 'N/A',
+          pos_side: pos.holdSide?.toLowerCase() || 'net',
+          status: 'closed' as const,
+          side: pos.holdSide === 'long' ? 'buy' : 'sell',
+          leverage: pos.leverage || null,
+          margin_mode: pos.marginMode || pos.marginCoin || null,
+          open_price: pos.openPriceAvg || pos.openPrice || null,
+          close_price: pos.closePriceAvg || pos.closePrice || null,
+          size: pos.total || pos.openSize || '0',
+          total_pnl: parseFloat(pos.achievedProfits || pos.pnl || '0'),
+          total_fees: Math.abs(parseFloat(pos.totalFee || pos.fee || '0')),
+          net_pnl: parseFloat(pos.achievedProfits || pos.pnl || '0') - Math.abs(parseFloat(pos.totalFee || pos.fee || '0')),
+          open_time: new Date(openTime).toISOString(),
+          close_time: new Date(closeTime).toISOString(),
+          latest_update: new Date(closeTime).toISOString(),
         };
       });
+
+      // Mapear posiciones abiertas
+      const openPositions = (openPositionsData || []).map((pos: any) => {
+        const openTime = parseInt(pos.cTime || Date.now().toString());
+        const updateTime = parseInt(pos.uTime || pos.cTime || Date.now().toString());
+        
+        return {
+          position_id: pos.posId || `${pos.symbol}_${openTime}_open`,
+          symbol: pos.symbol?.toUpperCase() || 'N/A',
+          pos_side: pos.holdSide?.toLowerCase() || 'net',
+          status: 'open' as const,
+          side: pos.holdSide === 'long' ? 'buy' : 'sell',
+          leverage: pos.leverage || null,
+          margin_mode: pos.marginMode || pos.marginCoin || null,
+          open_price: pos.openPriceAvg || pos.averageOpenPrice || null,
+          close_price: null,
+          size: pos.total || pos.available || '0',
+          total_pnl: parseFloat(pos.unrealizedPL || pos.upl || '0'),
+          total_fees: Math.abs(parseFloat(pos.totalFee || pos.fee || '0')),
+          net_pnl: parseFloat(pos.unrealizedPL || pos.upl || '0') - Math.abs(parseFloat(pos.totalFee || pos.fee || '0')),
+          open_time: new Date(openTime).toISOString(),
+          close_time: null,
+          latest_update: new Date(updateTime).toISOString(),
+        };
+      });
+
+      // Combinar posiciones abiertas y cerradas
+      const allPositions = [...openPositions, ...closedPositions];
 
       // Ordenar por fecha más reciente
-      positions.sort((a, b) => {
+      allPositions.sort((a, b) => {
         return new Date(b.latest_update).getTime() - new Date(a.latest_update).getTime();
       });
 
-      res.json(positions);
+      res.json(allPositions);
     } catch (error: any) {
       console.error('[UserController] Error al obtener posiciones:', error);
       res.status(500).json({ error: error.message || 'Error al obtener posiciones' });
