@@ -41,6 +41,7 @@ import { NOWPaymentsCredentialsController } from '../src/controllers/nowpayments
 import { NOWPaymentsController } from '../src/controllers/nowpayments.controller';
 import { AdminController } from '../src/controllers/admin.controller';
 import { StatsController } from '../src/controllers/stats.controller';
+import { TermsAndConditionsController } from '../src/controllers/termsAndConditions.controller';
 import { authenticate, requireAdmin } from '../src/middleware/auth';
 import { authLimiter, webhookLimiter } from '../src/middleware/rateLimit';
 
@@ -146,6 +147,9 @@ app.get('/api/health', (req: Request, res: Response) => {
 // Public stats route (sin autenticación)
 app.get('/api/public/stats', StatsController.getPublicStats);
 
+// Terms and Conditions routes (público para obtener activos)
+app.get('/api/public/terms-and-conditions', TermsAndConditionsController.getActive);
+
 // Auth routes
 app.post('/api/auth/register', authLimiter, AuthController.register);
 app.post('/api/auth/login', authLimiter, AuthController.login);
@@ -214,6 +218,14 @@ app.get('/api/admin/users', authenticate, requireAdmin, AdminController.getUsers
 app.get('/api/admin/webhook-logs', authenticate, requireAdmin, AdminController.getWebhookLogs);
 app.get('/api/admin/order-errors', authenticate, requireAdmin, AdminController.getOrderErrors);
 app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats);
+
+// Terms and Conditions admin routes
+app.get('/api/admin/terms-and-conditions', authenticate, requireAdmin, TermsAndConditionsController.getAll);
+app.get('/api/admin/terms-and-conditions/:id', authenticate, requireAdmin, TermsAndConditionsController.getById);
+app.post('/api/admin/terms-and-conditions', authenticate, requireAdmin, TermsAndConditionsController.create);
+app.put('/api/admin/terms-and-conditions/:id', authenticate, requireAdmin, TermsAndConditionsController.update);
+app.post('/api/admin/terms-and-conditions/:id/activate', authenticate, requireAdmin, TermsAndConditionsController.setActive);
+app.delete('/api/admin/terms-and-conditions/:id', authenticate, requireAdmin, TermsAndConditionsController.delete);
 
 // Error handler
 app.use((err: any, req: Request, res: Response, next: any) => {
