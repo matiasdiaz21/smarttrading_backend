@@ -542,7 +542,15 @@ export class BitgetService {
       endpoint += `&symbol=${symbol}`;
     }
     
-    return await this.makeRequest('GET', endpoint, credentials);
+    const result = await this.makeRequest('GET', endpoint, credentials);
+    
+    // Log para ver estructura de posiciones abiertas
+    if (result && result.length > 0) {
+      console.log('[BitgetService] Open position fields:', Object.keys(result[0]));
+      console.log('[BitgetService] Open position example:', JSON.stringify(result[0], null, 2));
+    }
+    
+    return result;
   }
 
   // Obtener historial de posiciones cerradas

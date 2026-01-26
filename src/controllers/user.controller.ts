@@ -242,21 +242,16 @@ export class UserController {
       );
 
       // Debug: Log para ver estructura de datos de Bitget
+      console.log('[UserController] ===== POSITION DATA SUMMARY =====');
       console.log('[UserController] Total posiciones cerradas:', bitgetPositions.length);
       console.log('[UserController] Total órdenes:', bitgetOrders.length);
-      if (bitgetPositions.length > 0) {
-        console.log('[UserController] Campos disponibles en posición:', Object.keys(bitgetPositions[0]));
-        console.log('[UserController] Ejemplo completo de posición:', JSON.stringify(bitgetPositions[0], null, 2));
-      }
-      if (bitgetOrders.length > 0) {
-        console.log('[UserController] Campos disponibles en orden:', Object.keys(bitgetOrders[0]));
-        console.log('[UserController] Ejemplo completo de orden:', JSON.stringify(bitgetOrders[0], null, 2));
-      }
+      console.log('[UserController] ================================');
 
       // Mapear posiciones cerradas de Bitget a nuestro formato con cruce de órdenes
       const closedPositions = bitgetPositions.map((pos: any) => {
-        const openTime = parseInt(pos.cTime || Date.now().toString());
-        const closeTime = parseInt(pos.uTime || pos.cTime || Date.now().toString());
+        // Bitget devuelve timestamps en milisegundos como strings
+        const openTime = parseInt(pos.cTime || '0') || Date.now();
+        const closeTime = parseInt(pos.uTime || pos.cTime || '0') || Date.now();
         const symbol = pos.symbol?.toUpperCase();
         const posSide = pos.holdSide?.toLowerCase();
         
@@ -267,12 +262,16 @@ export class UserController {
           const orderTime = parseInt(order.uTime || order.cTime || '0');
           
           // Verificar que sea el mismo símbolo y posSide
-          // Y que la orden esté dentro del rango de tiempo de la posición
-          return orderSymbol === symbol && 
-                 orderPosSide === posSide &&
-                 orderTime >= (openTime - 60000) && // 1 minuto antes de apertura
-                 orderTime <= (closeTime + 60000);   // 1 minuto después de cierre
+          // Ampliar el rango de tiempo para asegurar que capturamos las órdenes
+          const matches = orderSymbol === symbol && 
+                         orderPosSide === posSide &&
+                         orderTime >= (openTime - 300000) && // 5 minutos antes
+                         orderTime <= (closeTime + 300000);   // 5 minutos después
+          
+          return matches;
         });
+        
+        console.log(`[UserController] ${symbol} ${posSide}: Found ${relatedOrders.length} related orders (openTime: ${new Date(openTime).toISOString()}, closeTime: ${new Date(closeTime).toISOString()})`);
         
         // Separar órdenes de apertura y cierre
         const openOrders = relatedOrders.filter((o: any) => o.tradeSide?.toLowerCase() === 'open');
@@ -299,11 +298,19 @@ export class UserController {
         const totalFees = openFee + closeFee || totalOrderFees;
         const netPnl = parseFloat(pos.netProfit || '0'); // Bitget ya calcula el neto
         
-        // Obtener leverage de las órdenes relacionadas
-        const leverage = openOrders.length > 0 ? (openOrders[0].leverage || '1') : 
-                        closeOrders.length > 0 ? (closeOrders[0].leverage || '1') : '1';
+        // Obtener leverage de las órdenes relacionadas (priorizar órdenes de apertura)
+        let leverage = '1';
+        if (openOrders.length > 0 && openOrders[0].leverage) {
+          leverage = openOrders[0].leverage;
+        } else if (closeOrders.length > 0 && closeOrders[0].leverage) {
+          leverage = closeOrders[0].leverage;
+        } else if (relatedOrders.length > 0 && relatedOrders[0].leverage) {
+          leverage = relatedOrders[0].leverage;
+        }
         
-        console.log(`[UserController] ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, close=${closePrice}, leverage=${leverage}x, grossPnL=${grossPnl}, fees=${totalFees}, netPnL=${netPnl}`);
+        console.log(`[UserController] ${symbol} leverage from orders: ${leverage} (openOrders: ${openOrders.length}, closeOrders: ${closeOrders.length})`);
+        
+        console.log(`[UserController] ✓ ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, close=${closePrice}, leverage=${leverage}x, grossPnL=${grossPnl}, fees=${totalFees}, netPnL=${netPnl}`);
         
         return {
           position_id: pos.positionId || pos.posId || `${pos.symbol}_${openTime}`,
@@ -343,8 +350,9 @@ export class UserController {
 
       // Mapear posiciones abiertas con cruce de órdenes
       const openPositions = (openPositionsData || []).map((pos: any) => {
-        const openTime = parseInt(pos.cTime || Date.now().toString());
-        const updateTime = parseInt(pos.uTime || pos.cTime || Date.now().toString());
+        // Bitget devuelve timestamps en milisegundos como strings
+        const openTime = parseInt(pos.cTime || '0') || Date.now();
+        const updateTime = parseInt(pos.uTime || pos.cTime || '0') || Date.now();
         const symbol = pos.symbol?.toUpperCase();
         const posSide = pos.holdSide?.toLowerCase();
         
@@ -378,11 +386,17 @@ export class UserController {
         const totalFees = Math.abs(parseFloat(pos.totalFee || pos.fee || '0')) || totalOrderFees;
         const netPnl = unrealizedPnl - totalFees;
         
-        // Obtener leverage de las órdenes relacionadas o de la posición
-        const leverage = pos.leverage || 
-                        (relatedOrders.length > 0 ? (relatedOrders[0].leverage || '1') : '1');
+        // Obtener leverage de la posición abierta o de las órdenes
+        let leverage = '1';
+        if (pos.leverage) {
+          leverage = pos.leverage;
+        } else if (relatedOrders.length > 0 && relatedOrders[0].leverage) {
+          leverage = relatedOrders[0].leverage;
+        }
         
-        console.log(`[UserController] OPEN ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, leverage=${leverage}x, unrealizedPnL=${unrealizedPnl}, fees=${totalFees}`);
+        console.log(`[UserController] OPEN ${symbol} leverage: ${leverage} (from position: ${pos.leverage || 'N/A'}, from orders: ${relatedOrders.length > 0 ? relatedOrders[0].leverage : 'N/A'})`);
+        
+        console.log(`[UserController] ✓ OPEN ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, leverage=${leverage}x, unrealizedPnL=${unrealizedPnl}, fees=${totalFees}`);
         
         return {
           position_id: pos.positionId || pos.posId || `${pos.symbol}_${openTime}_open`,
