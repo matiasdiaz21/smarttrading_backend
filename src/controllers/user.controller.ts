@@ -249,9 +249,9 @@ export class UserController {
 
       // Mapear posiciones cerradas de Bitget a nuestro formato con cruce de órdenes
       const closedPositions = bitgetPositions.map((pos: any) => {
-        // Bitget devuelve timestamps en milisegundos como strings
-        const openTime = parseInt(pos.cTime || '0') || Date.now();
-        const closeTime = parseInt(pos.uTime || pos.cTime || '0') || Date.now();
+        // Bitget devuelve timestamps en milisegundos como strings - parsear correctamente
+        const openTime = pos.cTime ? parseInt(pos.cTime) : Date.now();
+        const closeTime = pos.uTime ? parseInt(pos.uTime) : (pos.cTime ? parseInt(pos.cTime) : Date.now());
         const symbol = pos.symbol?.toUpperCase();
         const posSide = pos.holdSide?.toLowerCase();
         
@@ -259,7 +259,7 @@ export class UserController {
         const relatedOrders = bitgetOrders.filter((order: any) => {
           const orderSymbol = order.symbol?.toUpperCase();
           const orderPosSide = order.posSide?.toLowerCase();
-          const orderTime = parseInt(order.uTime || order.cTime || '0');
+          const orderTime = order.uTime ? parseInt(order.uTime) : (order.cTime ? parseInt(order.cTime) : 0);
           
           // Verificar que sea el mismo símbolo y posSide
           // Ampliar el rango de tiempo para asegurar que capturamos las órdenes
@@ -350,9 +350,9 @@ export class UserController {
 
       // Mapear posiciones abiertas con cruce de órdenes
       const openPositions = (openPositionsData || []).map((pos: any) => {
-        // Bitget devuelve timestamps en milisegundos como strings
-        const openTime = parseInt(pos.cTime || '0') || Date.now();
-        const updateTime = parseInt(pos.uTime || pos.cTime || '0') || Date.now();
+        // Bitget devuelve timestamps en milisegundos como strings - parsear correctamente
+        const openTime = pos.cTime ? parseInt(pos.cTime) : Date.now();
+        const updateTime = pos.uTime ? parseInt(pos.uTime) : (pos.cTime ? parseInt(pos.cTime) : Date.now());
         const symbol = pos.symbol?.toUpperCase();
         const posSide = pos.holdSide?.toLowerCase();
         
@@ -360,7 +360,7 @@ export class UserController {
         const relatedOrders = bitgetOrders.filter((order: any) => {
           const orderSymbol = order.symbol?.toUpperCase();
           const orderPosSide = order.posSide?.toLowerCase();
-          const orderTime = parseInt(order.uTime || order.cTime || '0');
+          const orderTime = order.uTime ? parseInt(order.uTime) : (order.cTime ? parseInt(order.cTime) : 0);
           const tradeSide = order.tradeSide?.toLowerCase();
           
           return orderSymbol === symbol && 
