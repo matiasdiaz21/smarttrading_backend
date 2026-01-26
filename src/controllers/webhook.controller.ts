@@ -168,6 +168,11 @@ export class WebhookController {
       console.log(`[Webhook] Estrategia validada: ${strategy.name} (ID: ${strategy.id})`);
 
       // Parsear alerta de TradingView
+      // Normalizar alertType primero (antes de crear el objeto alert)
+      let rawAlertType = req.body.alertType || req.body.alert_type || 'ENTRY';
+      // Normalizar a mayúsculas para comparaciones consistentes
+      rawAlertType = String(rawAlertType).toUpperCase().trim();
+      
       const alert: TradingViewAlert = {
         symbol: req.body.symbol || req.body.ticker,
         side: req.body.side || (req.body.action === 'buy' ? 'buy' : 'sell'),
@@ -179,7 +184,7 @@ export class WebhookController {
         marginCoin: req.body.marginCoin || 'USDT',
         tradeSide: req.body.tradeSide || 'open',
         force: req.body.force,
-        alertType: req.body.alertType || req.body.alert_type || 'ENTRY',
+        alertType: rawAlertType as 'ENTRY' | 'BREAKEVEN' | 'STOP_LOSS' | 'TAKE_PROFIT',
         entryPrice: req.body.entryPrice || req.body.entry_price,
         stopLoss: req.body.stopLoss || req.body.stop_loss,
         takeProfit: req.body.takeProfit || req.body.take_profit,
@@ -189,6 +194,9 @@ export class WebhookController {
         timeframe: req.body.timeframe,
         ...req.body,
       };
+      
+      // Asegurar que alertType no se sobrescriba por req.body
+      alert.alertType = rawAlertType as 'ENTRY' | 'BREAKEVEN' | 'STOP_LOSS' | 'TAKE_PROFIT';
 
       // Normalizar side (LONG/SHORT a buy/sell)
       if (alert.side === 'LONG') {
@@ -196,6 +204,8 @@ export class WebhookController {
       } else if (alert.side === 'SHORT') {
         alert.side = 'sell';
       }
+      
+      console.log(`[Webhook] 📋 AlertType normalizado: "${alert.alertType}" (original: "${req.body.alertType || req.body.alert_type || 'N/A'}")`);
 
       // Validar datos mínimos según el tipo de alerta
       if (!alert.symbol) {
@@ -247,7 +257,9 @@ export class WebhookController {
           strategy.id,
           alert
         );
-      } else if (alert.alertType === 'STOP_LOSS' || alert.alertType === 'TAKE_PROFIT') {
+      } else if (alert.alertType === 'STOP_LOSS' || alert.alertType === 'TAKE_PROFIT' || 
+                 String(alert.alertType || '').toUpperCase() === 'STOP_LOSS' || 
+                 String(alert.alertType || '').toUpperCase() === 'TAKE_PROFIT') {
         // Verificar si hay ENTRY previo antes de procesar
         // Buscar primero en webhook_logs (donde se registran todos los ENTRY)
         // y luego en trades (donde se registran solo los trades ejecutados)
@@ -345,10 +357,40 @@ export class WebhookController {
         }
       } else {
         // Por defecto, tratar como ENTRY (compatibilidad hacia atrás)
-        result = await tradingService.processStrategyAlert(
-          strategy.id,
-          alert
-        );
+        // PERO: Si es TAKE_PROFIT o STOP_LOSS, NO ejecutar órdenes
+        const alertTypeUpper = String(alert.alertType || '').toUpperCase();
+        if (alertTypeUpper === 'TAKE_PROFIT' || alertTypeUpper === 'STOP_LOSS') {
+          console.warn(`[Webhook] ⚠️ AlertType "${alert.alertType}" detectado en caso por defecto. No se ejecutarán órdenes para este tipo de alerta.`);
+          console.warn(`[Webhook] ⚠️ Esta alerta solo debe ser informativa. Verificando si hay ENTRY previo...`);
+          
+          // Verificar si hay ENTRY previo
+          let hasEntry = false;
+          if (alert.trade_id) {
+            hasEntry = await WebhookLogModel.hasEntryForTradeId(strategy.id, alert.trade_id);
+          }
+          if (!hasEntry && alert.symbol) {
+            hasEntry = await WebhookLogModel.hasEntryForSymbol(strategy.id, alert.symbol);
+          }
+          
+          if (hasEntry) {
+            console.log(`[Webhook] ✅ ENTRY previo encontrado. Procesando como alerta informativa.`);
+            result = await tradingService.processInfoAlert(strategy.id, alert);
+          } else {
+            console.warn(`[Webhook] ⚠️ No se encontró ENTRY previo. La alerta será ignorada.`);
+            result = {
+              processed: 0,
+              successful: 0,
+              failed: 0,
+            };
+          }
+        } else {
+          // Solo ejecutar órdenes para ENTRY o tipos desconocidos (compatibilidad hacia atrás)
+          console.log(`[Webhook] 📊 Procesando como ENTRY (tipo: ${alert.alertType || 'desconocido'})`);
+          result = await tradingService.processStrategyAlert(
+            strategy.id,
+            alert
+          );
+        }
       }
 
       res.json({
