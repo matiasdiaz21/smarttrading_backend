@@ -609,6 +609,11 @@ export class BitgetService {
       if (response.data.code === '00000') {
         const data = response.data.data;
         if (data && data.list) {
+          console.log('[BitgetService] Position history response - Total positions:', data.list.length);
+          if (data.list.length > 0) {
+            console.log('[BitgetService] First position fields:', Object.keys(data.list[0]));
+            console.log('[BitgetService] First position data:', JSON.stringify(data.list[0], null, 2));
+          }
           return data.list;
         }
         return [];

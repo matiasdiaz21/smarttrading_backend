@@ -286,25 +286,19 @@ export class UserController {
         const totalOrderFees = [...openOrders, ...closeOrders].reduce((sum: number, o: any) => 
           sum + Math.abs(parseFloat(o.fee || '0')), 0);
         
-        // Calcular tamaño: priorizar órdenes sobre posición si están disponibles
-        let positionSize = '0';
-        if (totalOpenSize > 0) {
-          positionSize = totalOpenSize.toString();
-        } else {
-          // Intentar todos los campos posibles de Bitget
-          positionSize = pos.total || pos.openSize || pos.openSizeUSDT || pos.openVol || 
-                        pos.positionSize || pos.size || pos.amount || pos.qty || '0';
-        }
+        // Extraer datos de Bitget con los nombres de campo correctos
+        const positionSize = pos.total || totalOpenSize.toString() || '0';
+        const openPrice = pos.openPriceAvg || null;
+        const closePrice = pos.closePriceAvg || null;
+        const leverage = pos.leverage || '1';
+        const marginMode = pos.marginMode || pos.marginCoin || 'crossed';
         
-        // Calcular fees: priorizar órdenes sobre posición
-        let positionFees = 0;
-        if (totalOrderFees > 0) {
-          positionFees = totalOrderFees;
-        } else {
-          positionFees = parseFloat(pos.totalFee || pos.fee || pos.openFee || pos.closeFee || '0');
-        }
+        // PnL y fees
+        const grossPnl = parseFloat(pos.achievedProfits || '0');
+        const totalFees = Math.abs(parseFloat(pos.totalFee || '0')) || totalOrderFees;
+        const netPnl = grossPnl - totalFees;
         
-        console.log(`[UserController] Posición ${symbol}: size=${positionSize}, fees=${positionFees}, openOrders=${openOrders.length}, closeOrders=${closeOrders.length}`);
+        console.log(`[UserController] ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, close=${closePrice}, leverage=${leverage}x, grossPnL=${grossPnl}, fees=${totalFees}, netPnL=${netPnl}`);
         
         return {
           position_id: pos.posId || `${pos.symbol}_${openTime}`,
@@ -312,14 +306,14 @@ export class UserController {
           pos_side: posSide || 'net',
           status: 'closed' as const,
           side: pos.holdSide === 'long' ? 'buy' : 'sell',
-          leverage: pos.leverage || null,
-          margin_mode: pos.marginMode || pos.marginCoin || null,
-          open_price: pos.openPriceAvg || pos.openPrice || pos.openAvgPrice || pos.avgOpenPrice || null,
-          close_price: pos.closePriceAvg || pos.closePrice || pos.closeAvgPrice || pos.avgClosePrice || null,
+          leverage: leverage,
+          margin_mode: marginMode,
+          open_price: openPrice,
+          close_price: closePrice,
           size: positionSize,
-          total_pnl: parseFloat(pos.achievedProfits || pos.pnl || pos.profit || pos.realizedPL || '0'),
-          total_fees: Math.abs(positionFees),
-          net_pnl: parseFloat(pos.achievedProfits || pos.pnl || pos.profit || pos.realizedPL || '0') - Math.abs(positionFees),
+          total_pnl: grossPnl,
+          total_fees: totalFees,
+          net_pnl: netPnl,
           open_time: new Date(openTime).toISOString(),
           close_time: new Date(closeTime).toISOString(),
           latest_update: new Date(closeTime).toISOString(),
@@ -369,24 +363,18 @@ export class UserController {
         const totalOrderFees = relatedOrders.reduce((sum: number, o: any) => 
           sum + Math.abs(parseFloat(o.fee || '0')), 0);
         
-        // Calcular tamaño: priorizar órdenes sobre posición si están disponibles
-        let positionSize = '0';
-        if (totalOpenSize > 0) {
-          positionSize = totalOpenSize.toString();
-        } else {
-          positionSize = pos.total || pos.available || pos.positionSize || pos.openSize || 
-                        pos.size || pos.amount || pos.qty || '0';
-        }
+        // Extraer datos de posición abierta
+        const positionSize = pos.total || pos.available || totalOpenSize.toString() || '0';
+        const openPrice = pos.openPriceAvg || pos.averageOpenPrice || null;
+        const leverage = pos.leverage || '1';
+        const marginMode = pos.marginMode || pos.marginCoin || 'crossed';
         
-        // Calcular fees: priorizar órdenes sobre posición
-        let positionFees = 0;
-        if (totalOrderFees > 0) {
-          positionFees = totalOrderFees;
-        } else {
-          positionFees = parseFloat(pos.totalFee || pos.fee || pos.openFee || '0');
-        }
+        // PnL no realizado y fees
+        const unrealizedPnl = parseFloat(pos.unrealizedPL || pos.upl || '0');
+        const totalFees = Math.abs(parseFloat(pos.totalFee || pos.fee || '0')) || totalOrderFees;
+        const netPnl = unrealizedPnl - totalFees;
         
-        console.log(`[UserController] Posición abierta ${symbol}: size=${positionSize}, fees=${positionFees}, openOrders=${relatedOrders.length}`);
+        console.log(`[UserController] OPEN ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, leverage=${leverage}x, unrealizedPnL=${unrealizedPnl}, fees=${totalFees}`);
         
         return {
           position_id: pos.posId || `${pos.symbol}_${openTime}_open`,
@@ -394,14 +382,14 @@ export class UserController {
           pos_side: posSide || 'net',
           status: 'open' as const,
           side: pos.holdSide === 'long' ? 'buy' : 'sell',
-          leverage: pos.leverage || null,
-          margin_mode: pos.marginMode || pos.marginCoin || null,
-          open_price: pos.openPriceAvg || pos.averageOpenPrice || null,
+          leverage: leverage,
+          margin_mode: marginMode,
+          open_price: openPrice,
           close_price: null,
           size: positionSize,
-          total_pnl: parseFloat(pos.unrealizedPL || pos.upl || '0'),
-          total_fees: Math.abs(positionFees),
-          net_pnl: parseFloat(pos.unrealizedPL || pos.upl || '0') - Math.abs(positionFees),
+          total_pnl: unrealizedPnl,
+          total_fees: totalFees,
+          net_pnl: netPnl,
           open_time: new Date(openTime).toISOString(),
           close_time: null,
           latest_update: new Date(updateTime).toISOString(),
