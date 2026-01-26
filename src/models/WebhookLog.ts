@@ -202,5 +202,50 @@ export class WebhookLogModel {
     );
     return rows as WebhookLog[];
   }
+
+  /**
+   * Busca un webhook log por trade_id (alertData.id) y symbol
+   * Útil para encontrar el payload original del webhook cuando hay un error
+   */
+  static async findByTradeIdAndSymbol(
+    strategyId: number,
+    tradeId: number | string | null,
+    symbol: string
+  ): Promise<WebhookLog | null> {
+    const strategyIdInt = parseInt(String(strategyId), 10);
+    
+    if (isNaN(strategyIdInt) || !Number.isInteger(strategyIdInt)) {
+      return null;
+    }
+
+    let query: string;
+    let params: any[];
+
+    // Si hay trade_id, buscar por trade_id y symbol (más preciso)
+    if (tradeId !== null && tradeId !== undefined) {
+      const tradeIdStr = String(tradeId);
+      query = `SELECT * FROM webhook_logs 
+               WHERE strategy_id = ? 
+                 AND JSON_EXTRACT(payload, '$.alertData.id') = ?
+                 AND JSON_EXTRACT(payload, '$.symbol') = ?
+               ORDER BY processed_at DESC, id DESC 
+               LIMIT 1`;
+      params = [strategyIdInt, tradeIdStr, symbol];
+    } else {
+      // Si no hay trade_id, buscar solo por symbol (menos preciso)
+      query = `SELECT * FROM webhook_logs 
+               WHERE strategy_id = ? 
+                 AND JSON_EXTRACT(payload, '$.symbol') = ?
+                 AND JSON_EXTRACT(payload, '$.alertType') = 'ENTRY'
+               ORDER BY processed_at DESC, id DESC 
+               LIMIT 1`;
+      params = [strategyIdInt, symbol];
+    }
+
+    const [rows] = await pool.execute(query, params);
+    const result = rows as WebhookLog[];
+    
+    return result.length > 0 ? result[0] : null;
+  }
 }
 

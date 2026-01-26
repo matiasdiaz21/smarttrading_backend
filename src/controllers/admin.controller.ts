@@ -80,7 +80,49 @@ export class AdminController {
       }
 
       const errors = await OrderErrorModel.getAll(limit);
-      res.json(errors);
+      
+      // Para cada error, intentar obtener el payload del webhook log si no está en alert_data
+      const errorsWithWebhookData = await Promise.all(
+        errors.map(async (error) => {
+          // Si ya tiene alert_data, no buscar en webhook_logs
+          if (error.alert_data) {
+            return error;
+          }
+
+          // Buscar el webhook log por trade_id y symbol
+          try {
+            const webhookLog = await WebhookLogModel.findByTradeIdAndSymbol(
+              error.strategy_id,
+              error.trade_id,
+              error.symbol
+            );
+
+            if (webhookLog && webhookLog.payload) {
+              // Parsear el payload del webhook log
+              try {
+                const payload = typeof webhookLog.payload === 'string' 
+                  ? JSON.parse(webhookLog.payload) 
+                  : webhookLog.payload;
+                
+                // Agregar el payload como alert_data si no existe
+                return {
+                  ...error,
+                  alert_data: payload,
+                };
+              } catch (parseError) {
+                console.error(`[AdminController] Error parsing webhook payload for error ${error.id}:`, parseError);
+                return error;
+              }
+            }
+          } catch (webhookError) {
+            console.error(`[AdminController] Error fetching webhook log for error ${error.id}:`, webhookError);
+          }
+
+          return error;
+        })
+      );
+
+      res.json(errorsWithWebhookData);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
