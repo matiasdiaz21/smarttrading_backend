@@ -1,4 +1,4 @@
--- Base de datos para Smart Trading SaaS
+-- Base de datos para SyncTrade SaaS
 -- MySQL Schema
 
 CREATE DATABASE IF NOT EXISTS smarttrading CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

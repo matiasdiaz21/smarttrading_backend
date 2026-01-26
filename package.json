@@ -1,5 +1,5 @@
 {
-  "name": "smarttrading-backend",
+  "name": "synctrade-backend",
   "version": "1.0.12",
   "description": "Backend API para SaaS de Copy Trading en Bitget",
   "main": "api/index.js",

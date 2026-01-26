@@ -1,4 +1,4 @@
-# Smart Trading Backend
+# SyncTrade Backend
 
 Backend API para el SaaS de Copy Trading en Bitget.
 

@@ -8,7 +8,7 @@
 
 1. Ve a [Vercel Dashboard](https://vercel.com/dashboard)
 2. Haz clic en **"Add New Project"**
-3. Selecciona tu repositorio de GitHub (`smarttrading_backend`)
+3. Selecciona tu repositorio de GitHub (`synctrade_backend`)
 4. Vercel detectará automáticamente la configuración
 
 #### Paso 2: Configuración del Proyecto
@@ -56,7 +56,7 @@ NODE_ENV=production
 1. Haz clic en **"Deploy"**
 2. Vercel construirá y desplegará tu aplicación automáticamente
 3. El proceso tomará unos minutos
-4. Una vez completado, obtendrás una URL como: `https://smarttrading-backend.vercel.app`
+4. Una vez completado, obtendrás una URL como: `https://synctrade-backend.vercel.app`
 
 #### Paso 5: Actualizar Variables de Entorno
 

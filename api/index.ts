@@ -67,7 +67,7 @@ app.use('/api', (req: Request, res: Response, next: any) => {
 // Root route
 app.get('/', (req: Request, res: Response) => {
   res.json({
-    name: 'Smart Trading Backend API',
+    name: 'SyncTrade Backend API',
     version: '1.0.0',
     status: 'online',
     timestamp: new Date().toISOString(),

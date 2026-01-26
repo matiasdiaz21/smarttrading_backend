@@ -12,7 +12,7 @@
 
 1. Navega al directorio del backend:
 ```bash
-cd smarttrading_backend
+cd synctrade_backend
 ```
 
 2. Instala las dependencias:
@@ -49,7 +49,7 @@ npm run dev
 
 1. Navega al directorio del frontend:
 ```bash
-cd smarttrading_frontend
+cd synctrade_frontend
 ```
 
 2. Instala las dependencias:

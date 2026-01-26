@@ -13,7 +13,7 @@
 
 1. Ve a [Vercel Dashboard](https://vercel.com/dashboard)
 2. Inicia sesión con tu cuenta
-3. Selecciona tu proyecto: **smarttrading-backend**
+3. Selecciona tu proyecto: **synctrade-backend**
 
 ### 2. Ir a Environment Variables
 
@@ -112,7 +112,7 @@ Después de agregar todas las variables, deberías ver una lista como esta:
 
 1. Ve a **Deployments** > [último deployment] > **Functions**
 2. Haz clic en `api/index.ts`
-3. Haz un request a: `https://smarttrading-backend.vercel.app/api/env-check`
+3. Haz un request a: `https://synctrade-backend.vercel.app/api/env-check`
 4. Deberías ver en los logs:
 
 ```
@@ -127,7 +127,7 @@ Después de agregar todas las variables, deberías ver una lista como esta:
 Puedes verificar que las variables estén configuradas accediendo a:
 
 ```
-https://smarttrading-backend.vercel.app/api/env-check
+https://synctrade-backend.vercel.app/api/env-check
 ```
 
 Este endpoint mostrará:

@@ -7,7 +7,7 @@
 Asegúrate de que tu código esté en GitHub y actualizado:
 
 ```bash
-cd D:\xamp\htdocs\smarttrading_backend
+cd D:\xamp\htdocs\synctrade_backend
 git add .
 git commit -m "Preparar para despliegue en Vercel"
 git push origin main
@@ -17,7 +17,7 @@ git push origin main
 
 1. Ve a [Vercel Dashboard](https://vercel.com/dashboard)
 2. Haz clic en **"Add New Project"**
-3. Selecciona tu repositorio de GitHub (`smarttrading_backend`)
+3. Selecciona tu repositorio de GitHub (`synctrade_backend`)
 4. Si no está conectado, autoriza a Vercel a acceder a tu repositorio
 
 ### 3. Configurar el Proyecto
@@ -95,7 +95,7 @@ FRONTEND_URL=https://tu-frontend.vercel.app
 
 1. Haz clic en **"Deploy"**
 2. Espera a que Vercel construya y despliegue tu aplicación
-3. Una vez completado, obtendrás una URL como: `https://smarttrading-backend-xxxxx.vercel.app`
+3. Una vez completado, obtendrás una URL como: `https://synctrade-backend-xxxxx.vercel.app`
 
 ### 6. Verificar el Despliegue
 
@@ -124,7 +124,7 @@ Para ver los logs:
 Después del primer despliegue:
 
 1. Ve a **Settings** > **Environment Variables**
-2. Actualiza `APP_URL` con la URL real de tu backend (ej: `https://smarttrading-backend-xxxxx.vercel.app`)
+2. Actualiza `APP_URL` con la URL real de tu backend (ej: `https://synctrade-backend-xxxxx.vercel.app`)
 3. Actualiza `FRONTEND_URL` con la URL real de tu frontend
 4. Ve a **Deployments** y haz clic en **"Redeploy"** en el último deployment
 
