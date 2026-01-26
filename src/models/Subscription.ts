@@ -53,6 +53,13 @@ export class SubscriptionModel {
     );
   }
 
+  static async updatePositionSize(userId: number, strategyId: number, positionSize: number | null): Promise<void> {
+    await pool.execute(
+      'UPDATE user_strategy_subscriptions SET position_size = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',
+      [positionSize, userId, strategyId]
+    );
+  }
+
   static async delete(userId: number, strategyId: number): Promise<void> {
     await pool.execute(
       'DELETE FROM user_strategy_subscriptions WHERE user_id = ? AND strategy_id = ?',

@@ -38,6 +38,7 @@ export interface UserStrategySubscription {
   strategy_id: number;
   is_enabled: boolean;
   leverage: number | null;
+  position_size: number | null; // Tamaño de posición en USDT
   created_at: Date;
   updated_at: Date;
 }

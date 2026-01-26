@@ -48,6 +48,7 @@ export class UserController {
           subscription_id: subscription?.id || null,
           user_leverage: userLeverage,
           default_leverage: strategy.leverage || 10,
+          user_position_size: subscription?.position_size || null,
         };
       });
 
@@ -179,6 +180,63 @@ export class UserController {
       res.json({
         message: 'Leverage updated successfully',
         leverage: leverageValue,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async updatePositionSize(
+    req: AuthRequest,
+    res: Response
+  ): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const { id } = req.params;
+      const { position_size } = req.body;
+
+      // position_size puede ser null para usar el tamaño automático
+      if (position_size !== null && position_size !== undefined) {
+        // Validar position_size (debe ser un número positivo)
+        const positionSizeValue = parseFloat(String(position_size));
+        if (isNaN(positionSizeValue) || positionSizeValue <= 0) {
+          res.status(400).json({ error: 'position_size must be a positive number or null' });
+          return;
+        }
+
+        // Validar mínimo (al menos 5 USDT, que es el mínimo típico de Bitget)
+        if (positionSizeValue < 5) {
+          res.status(400).json({ error: 'position_size must be at least 5 USDT' });
+          return;
+        }
+      }
+
+      // Verificar que existe la suscripción
+      const subscription = await SubscriptionModel.findById(
+        req.user.userId,
+        parseInt(id)
+      );
+
+      if (!subscription) {
+        res.status(404).json({
+          error: 'Not subscribed to this strategy',
+        });
+        return;
+      }
+
+      const positionSizeToSave = position_size === null || position_size === undefined 
+        ? null 
+        : parseFloat(String(position_size));
+
+      await SubscriptionModel.updatePositionSize(req.user.userId, parseInt(id), positionSizeToSave);
+
+      res.json({
+        message: 'Position size updated successfully',
+        position_size: positionSizeToSave,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

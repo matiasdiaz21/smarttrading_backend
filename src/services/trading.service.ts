@@ -128,10 +128,20 @@ export class TradingService {
       }
 
       // Calcular el tamaño correcto de la orden basado en el valor mínimo en USDT
-      // Si se proporciona un tamaño, usarlo; sino, calcular basándose en minTradeUSDT
+      // PRIORIDAD: 1. position_size personalizado del usuario, 2. alert.size, 3. minTradeUSDT calculado
       let requestedSize = alert.size;
+      let positionSizeSource = 'alerta (alert.size)';
       
-      if (!requestedSize && entryPrice) {
+      // Verificar si el usuario tiene position_size personalizado configurado
+      const userPositionSize = strategySubscription.position_size;
+      if (userPositionSize !== null && userPositionSize !== undefined && userPositionSize > 0 && entryPrice) {
+        // Usar position_size personalizado del usuario (en USDT)
+        // Convertir USDT a contratos: position_size / precio
+        const price = parseFloat(entryPrice.toString());
+        requestedSize = (userPositionSize / price).toString();
+        positionSizeSource = `personalizado del usuario (${userPositionSize} USDT)`;
+        console.log(`[TradeService] ✅ Usando position_size personalizado: ${userPositionSize} USDT / ${price} = ${requestedSize} contratos`);
+      } else if (!requestedSize && entryPrice) {
         // Calcular el tamaño mínimo basado en minTradeUSDT y el precio de entrada
         const minUSDT = parseFloat(contractInfo.minTradeUSDT);
         const price = parseFloat(entryPrice.toString());
@@ -139,10 +149,14 @@ export class TradingService {
         // Tamaño mínimo = minTradeUSDT / precio
         // Añadir un pequeño margen (5%) para asegurar que se cumpla el mínimo
         requestedSize = ((minUSDT * 1.05) / price).toString();
+        positionSizeSource = 'calculado automáticamente (minTradeUSDT)';
         console.log(`[TradeService] 📊 Calculando tamaño basado en minTradeUSDT: ${minUSDT} USDT / ${price} = ${requestedSize} contratos`);
       } else if (!requestedSize) {
         requestedSize = contractInfo.minTradeNum;
+        positionSizeSource = 'mínimo del contrato (minTradeNum)';
       }
+      
+      console.log(`[TradeService] 📊 Tamaño de posición seleccionado: ${requestedSize} contratos (${positionSizeSource})`);
       
       let calculatedSize = this.bitgetService.calculateOrderSize(
         requestedSize,
@@ -162,6 +176,7 @@ export class TradingService {
         if (notionalValue < minUSDT) {
           console.warn(`[TradeService] ⚠️ Valor notional (${notionalValue.toFixed(2)} USDT) es menor al mínimo (${minUSDT} USDT). Ajustando tamaño...`);
           // Recalcular el tamaño para cumplir con el mínimo
+          // Si el usuario configuró un position_size personalizado pero es menor al mínimo, usar el mínimo
           const adjustedSize = ((minUSDT * 1.05) / parseFloat(entryPrice.toString())).toString();
           calculatedSize = this.bitgetService.calculateOrderSize(
             adjustedSize,
@@ -169,6 +184,7 @@ export class TradingService {
             contractInfo.sizeMultiplier
           );
           console.log(`[TradeService] ✅ Tamaño ajustado: ${calculatedSize} contratos, Valor notional ajustado: ${(parseFloat(calculatedSize) * parseFloat(entryPrice.toString())).toFixed(2)} USDT`);
+          console.log(`[TradeService] ⚠️ Nota: El position_size configurado era menor al mínimo requerido, se usó el mínimo`);
         }
       } else {
         console.log(`[TradeService] 📏 Tamaño solicitado: ${requestedSize}, Tamaño calculado: ${calculatedSize}`);
