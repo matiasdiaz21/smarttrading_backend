@@ -342,7 +342,8 @@ export class TradingService {
               alert.takeProfit,
               actualPositionSize,
               productType,
-              alert.marginCoin || 'USDT'
+              alert.marginCoin || 'USDT',
+              contractInfo
             );
           } else {
             // Si no hay breakeven, usar el método básico (TP 100% en takeProfit)
@@ -355,7 +356,9 @@ export class TradingService {
               alert.stopLoss,
               alert.takeProfit,
               productType,
-              alert.marginCoin || 'USDT'
+              alert.marginCoin || 'USDT',
+              actualPositionSize,
+              contractInfo
             );
           }
           

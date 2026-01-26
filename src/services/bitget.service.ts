@@ -343,7 +343,9 @@ export class BitgetService {
     stopLossPrice: number,
     takeProfitPrice: number,
     productType: string = 'USDT-FUTURES',
-    marginCoin: string = 'USDT'
+    marginCoin: string = 'USDT',
+    positionSize?: string,
+    contractInfo?: any
   ): Promise<any> {
     try {
       const holdSide = side === 'buy' ? 'long' : 'short';
@@ -351,17 +353,26 @@ export class BitgetService {
       
       console.log(`[Bitget] 🚀 Configurando TP/SL en PARALELO para ${symbol} ${holdSide}...`);
       
+      // Aplicar precisión de precio según contractInfo
+      const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
+      const formattedTP = parseFloat(takeProfitPrice.toFixed(pricePlace));
+      const formattedSL = parseFloat(stopLossPrice.toFixed(pricePlace));
+      
+      console.log(`[Bitget] 📊 Precisión de precio: ${pricePlace} decimales`);
+      console.log(`[Bitget] 📊 TP: ${takeProfitPrice} → ${formattedTP}`);
+      console.log(`[Bitget] 📊 SL: ${stopLossPrice} → ${formattedSL}`);
+      
       // Preparar ambas órdenes
       const tpPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
         productType: productType.toLowerCase(),
         symbol: symbol.toUpperCase(),
         planType: 'pos_profit',
-        triggerPrice: takeProfitPrice.toString(),
+        triggerPrice: formattedTP.toString(),
         triggerType: 'fill_price',
-        executePrice: takeProfitPrice.toString(),
+        executePrice: formattedTP.toString(),
         holdSide,
-        size: 'all',
+        size: positionSize || 'all',
         clientOid: `TP_${symbol}_${Date.now()}`,
       };
 
@@ -370,11 +381,11 @@ export class BitgetService {
         productType: productType.toLowerCase(),
         symbol: symbol.toUpperCase(),
         planType: 'pos_loss',
-        triggerPrice: stopLossPrice.toString(),
+        triggerPrice: formattedSL.toString(),
         triggerType: 'fill_price',
-        executePrice: stopLossPrice.toString(),
+        executePrice: formattedSL.toString(),
         holdSide,
-        size: 'all',
+        size: positionSize || 'all',
         clientOid: `SL_${symbol}_${Date.now() + 1}`,
       };
 
@@ -420,13 +431,25 @@ export class BitgetService {
     takeProfitPrice: number,
     positionSize: string, // Tamaño total de la posición
     productType: string = 'USDT-FUTURES',
-    marginCoin: string = 'USDT'
+    marginCoin: string = 'USDT',
+    contractInfo?: any
   ): Promise<any> {
     try {
       const holdSide = side === 'buy' ? 'long' : 'short';
       const endpoint = '/api/v2/mix/order/place-tpsl-order';
       
       console.log(`[Bitget] 🚀 Configurando TP/SL en PARALELO para ${symbol} ${holdSide}...`);
+      
+      // Aplicar precisión de precio según contractInfo
+      const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
+      const formattedSL = parseFloat(stopLossPrice.toFixed(pricePlace));
+      const formattedBreakeven = breakevenPrice ? parseFloat(breakevenPrice.toFixed(pricePlace)) : null;
+      const formattedTP = parseFloat(takeProfitPrice.toFixed(pricePlace));
+      
+      console.log(`[Bitget] 📊 Precisión de precio: ${pricePlace} decimales`);
+      console.log(`[Bitget] 📊 SL: ${stopLossPrice} → ${formattedSL}`);
+      if (formattedBreakeven) console.log(`[Bitget] 📊 Breakeven: ${breakevenPrice} → ${formattedBreakeven}`);
+      console.log(`[Bitget] 📊 TP: ${takeProfitPrice} → ${formattedTP}`);
       
       // Preparar todas las órdenes
       const orders: Array<{type: string; payload: any; description: string}> = [];
@@ -437,46 +460,46 @@ export class BitgetService {
         productType: productType.toLowerCase(),
         symbol: symbol.toUpperCase(),
         planType: 'pos_loss',
-        triggerPrice: stopLossPrice.toString(),
+        triggerPrice: formattedSL.toString(),
         triggerType: 'fill_price',
-        executePrice: stopLossPrice.toString(),
+        executePrice: formattedSL.toString(),
         holdSide,
-        size: 'all',
+        size: positionSize,
         clientOid: `SL_${symbol}_${Date.now()}`,
       };
-      orders.push({ type: 'stop_loss', payload: slPayload, description: `SL en ${stopLossPrice}` });
+      orders.push({ type: 'stop_loss', payload: slPayload, description: `SL en ${formattedSL}` });
 
       // 2. Take Profit parcial en breakeven (si existe)
-      if (breakevenPrice && breakevenPrice > 0) {
+      if (formattedBreakeven && formattedBreakeven > 0) {
         const positionSizeNum = parseFloat(positionSize);
-        const breakevenSize = (positionSizeNum * 0.5).toString();
+        const breakevenSize = (positionSizeNum * 0.5).toFixed(contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0);
         
         const breakevenPayload: any = {
           marginCoin: marginCoin.toUpperCase(),
           productType: productType.toLowerCase(),
           symbol: symbol.toUpperCase(),
           planType: 'pos_profit',
-          triggerPrice: breakevenPrice.toString(),
+          triggerPrice: formattedBreakeven.toString(),
           triggerType: 'fill_price',
-          executePrice: breakevenPrice.toString(),
+          executePrice: formattedBreakeven.toString(),
           holdSide,
           size: breakevenSize,
           clientOid: `TP_BREAKEVEN_${symbol}_${Date.now() + 1}`,
         };
-        orders.push({ type: 'breakeven_tp_50', payload: breakevenPayload, description: `TP 50% en breakeven ${breakevenPrice}` });
+        orders.push({ type: 'breakeven_tp_50', payload: breakevenPayload, description: `TP 50% (${breakevenSize}) en breakeven ${formattedBreakeven}` });
       }
 
       // 3. Take Profit final
       let finalTPSize: string;
       let finalTPDescription: string;
       
-      if (breakevenPrice && breakevenPrice > 0) {
+      if (formattedBreakeven && formattedBreakeven > 0) {
         const positionSizeNum = parseFloat(positionSize);
-        finalTPSize = (positionSizeNum * 0.5).toString();
-        finalTPDescription = '50% restante';
+        finalTPSize = (positionSizeNum * 0.5).toFixed(contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0);
+        finalTPDescription = `50% restante (${finalTPSize})`;
       } else {
-        finalTPSize = 'all';
-        finalTPDescription = '100%';
+        finalTPSize = positionSize;
+        finalTPDescription = `100% (${finalTPSize})`;
       }
       
       const tpPayload: any = {
@@ -484,14 +507,14 @@ export class BitgetService {
         productType: productType.toLowerCase(),
         symbol: symbol.toUpperCase(),
         planType: 'pos_profit',
-        triggerPrice: takeProfitPrice.toString(),
+        triggerPrice: formattedTP.toString(),
         triggerType: 'fill_price',
-        executePrice: takeProfitPrice.toString(),
+        executePrice: formattedTP.toString(),
         holdSide,
         size: finalTPSize,
         clientOid: `TP_FINAL_${symbol}_${Date.now() + 2}`,
       };
-      orders.push({ type: 'take_profit_final', payload: tpPayload, description: `TP ${finalTPDescription} en ${takeProfitPrice}` });
+      orders.push({ type: 'take_profit_final', payload: tpPayload, description: `TP ${finalTPDescription} en ${formattedTP}` });
 
       // Ejecutar TODAS las órdenes en PARALELO
       console.log(`[Bitget] 📋 Ejecutando ${orders.length} órdenes TP/SL simultáneamente...`);
