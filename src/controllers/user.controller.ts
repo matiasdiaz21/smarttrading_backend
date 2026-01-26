@@ -242,11 +242,15 @@ export class UserController {
       );
 
       // Debug: Log para ver estructura de datos de Bitget
+      console.log('[UserController] Total posiciones cerradas:', bitgetPositions.length);
+      console.log('[UserController] Total órdenes:', bitgetOrders.length);
       if (bitgetPositions.length > 0) {
-        console.log('[UserController] Ejemplo de posición de Bitget:', JSON.stringify(bitgetPositions[0], null, 2));
+        console.log('[UserController] Campos disponibles en posición:', Object.keys(bitgetPositions[0]));
+        console.log('[UserController] Ejemplo completo de posición:', JSON.stringify(bitgetPositions[0], null, 2));
       }
       if (bitgetOrders.length > 0) {
-        console.log('[UserController] Ejemplo de orden de Bitget:', JSON.stringify(bitgetOrders[0], null, 2));
+        console.log('[UserController] Campos disponibles en orden:', Object.keys(bitgetOrders[0]));
+        console.log('[UserController] Ejemplo completo de orden:', JSON.stringify(bitgetOrders[0], null, 2));
       }
 
       // Mapear posiciones cerradas de Bitget a nuestro formato con cruce de órdenes
@@ -282,11 +286,25 @@ export class UserController {
         const totalOrderFees = [...openOrders, ...closeOrders].reduce((sum: number, o: any) => 
           sum + Math.abs(parseFloat(o.fee || '0')), 0);
         
-        // Usar el tamaño de la posición o el de las órdenes
-        // Probar múltiples campos posibles de Bitget
-        const positionSize = pos.total || pos.openSize || pos.openSizeUSDT || pos.openVol || 
-                            pos.positionSize || totalOpenSize.toString() || '0';
-        const positionFees = parseFloat(pos.totalFee || pos.fee || pos.openFee || pos.closeFee || '0') || totalOrderFees;
+        // Calcular tamaño: priorizar órdenes sobre posición si están disponibles
+        let positionSize = '0';
+        if (totalOpenSize > 0) {
+          positionSize = totalOpenSize.toString();
+        } else {
+          // Intentar todos los campos posibles de Bitget
+          positionSize = pos.total || pos.openSize || pos.openSizeUSDT || pos.openVol || 
+                        pos.positionSize || pos.size || pos.amount || pos.qty || '0';
+        }
+        
+        // Calcular fees: priorizar órdenes sobre posición
+        let positionFees = 0;
+        if (totalOrderFees > 0) {
+          positionFees = totalOrderFees;
+        } else {
+          positionFees = parseFloat(pos.totalFee || pos.fee || pos.openFee || pos.closeFee || '0');
+        }
+        
+        console.log(`[UserController] Posición ${symbol}: size=${positionSize}, fees=${positionFees}, openOrders=${openOrders.length}, closeOrders=${closeOrders.length}`);
         
         return {
           position_id: pos.posId || `${pos.symbol}_${openTime}`,
@@ -299,9 +317,9 @@ export class UserController {
           open_price: pos.openPriceAvg || pos.openPrice || pos.openAvgPrice || pos.avgOpenPrice || null,
           close_price: pos.closePriceAvg || pos.closePrice || pos.closeAvgPrice || pos.avgClosePrice || null,
           size: positionSize,
-          total_pnl: parseFloat(pos.achievedProfits || pos.pnl || '0'),
+          total_pnl: parseFloat(pos.achievedProfits || pos.pnl || pos.profit || pos.realizedPL || '0'),
           total_fees: Math.abs(positionFees),
-          net_pnl: parseFloat(pos.achievedProfits || pos.pnl || '0') - Math.abs(positionFees),
+          net_pnl: parseFloat(pos.achievedProfits || pos.pnl || pos.profit || pos.realizedPL || '0') - Math.abs(positionFees),
           open_time: new Date(openTime).toISOString(),
           close_time: new Date(closeTime).toISOString(),
           latest_update: new Date(closeTime).toISOString(),
@@ -351,10 +369,24 @@ export class UserController {
         const totalOrderFees = relatedOrders.reduce((sum: number, o: any) => 
           sum + Math.abs(parseFloat(o.fee || '0')), 0);
         
-        // Usar el tamaño de la posición o el de las órdenes
-        const positionSize = pos.total || pos.available || pos.positionSize || pos.openSize || 
-                            totalOpenSize.toString() || '0';
-        const positionFees = parseFloat(pos.totalFee || pos.fee || pos.openFee || '0') || totalOrderFees;
+        // Calcular tamaño: priorizar órdenes sobre posición si están disponibles
+        let positionSize = '0';
+        if (totalOpenSize > 0) {
+          positionSize = totalOpenSize.toString();
+        } else {
+          positionSize = pos.total || pos.available || pos.positionSize || pos.openSize || 
+                        pos.size || pos.amount || pos.qty || '0';
+        }
+        
+        // Calcular fees: priorizar órdenes sobre posición
+        let positionFees = 0;
+        if (totalOrderFees > 0) {
+          positionFees = totalOrderFees;
+        } else {
+          positionFees = parseFloat(pos.totalFee || pos.fee || pos.openFee || '0');
+        }
+        
+        console.log(`[UserController] Posición abierta ${symbol}: size=${positionSize}, fees=${positionFees}, openOrders=${relatedOrders.length}`);
         
         return {
           position_id: pos.posId || `${pos.symbol}_${openTime}_open`,
