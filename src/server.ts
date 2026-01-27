@@ -132,7 +132,10 @@ app.get('/api/admin/nowpayments/currencies', authenticate, requireAdmin, NOWPaym
 app.get('/api/admin/users', authenticate, requireAdmin, AdminController.getUsers);
 app.get('/api/admin/webhook-logs', authenticate, requireAdmin, AdminController.getWebhookLogs);
 app.get('/api/admin/order-errors', authenticate, requireAdmin, AdminController.getOrderErrors);
-app.get('/api/admin/bitget-operation-logs', authenticate, requireAdmin, AdminController.getBitgetOperationLogs);
+// Endpoint público para logs de operaciones Bitget
+app.get('/api/admin/bitget-operation-logs', AdminController.getBitgetOperationLogs);
+app.post('/api/admin/bitget-operation-logs/:id/review', AdminController.markLogAsReviewed);
+app.post('/api/admin/bitget-operation-logs/:id/unreview', AdminController.markLogAsUnreviewed);
 app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats);
 
 // Error handler

@@ -142,11 +142,7 @@ export class AdminController {
 
   static async getBitgetOperationLogs(req: AuthRequest, res: Response): Promise<void> {
     try {
-      if (!req.user || req.user.role !== 'admin') {
-        res.status(403).json({ error: 'Forbidden: Admin access required' });
-        return;
-      }
-
+      // Endpoint público - sin autenticación requerida
       const limitParam = req.query.limit as string;
       const limit = limitParam ? parseInt(limitParam, 10) : 100;
       
@@ -156,15 +152,56 @@ export class AdminController {
       }
 
       const symbol = req.query.symbol as string | undefined;
+      const reviewedParam = req.query.reviewed as string | undefined; // Filtrar por revisado/no revisado
+      
+      // Convertir el parámetro reviewed a boolean si está presente
+      let reviewed: boolean | undefined = undefined;
+      if (reviewedParam !== undefined) {
+        reviewed = reviewedParam === 'true' || reviewedParam === '1';
+      }
       
       let logs;
       if (symbol) {
-        logs = await BitgetOperationLogModel.getBySymbol(symbol, limit);
+        logs = await BitgetOperationLogModel.getBySymbol(symbol, limit, reviewed);
       } else {
-        logs = await BitgetOperationLogModel.getAll(limit);
+        logs = await BitgetOperationLogModel.getAll(limit, reviewed);
       }
 
       res.json(logs);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async markLogAsReviewed(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      // Endpoint público - sin autenticación requerida
+      const logId = parseInt(req.params.id, 10);
+      
+      if (isNaN(logId) || logId < 1) {
+        res.status(400).json({ error: 'Invalid log ID' });
+        return;
+      }
+
+      await BitgetOperationLogModel.markAsReviewed(logId);
+      res.json({ success: true, message: 'Log marcado como revisado' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async markLogAsUnreviewed(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      // Endpoint público - sin autenticación requerida
+      const logId = parseInt(req.params.id, 10);
+      
+      if (isNaN(logId) || logId < 1) {
+        res.status(400).json({ error: 'Invalid log ID' });
+        return;
+      }
+
+      await BitgetOperationLogModel.markAsUnreviewed(logId);
+      res.json({ success: true, message: 'Log marcado como no revisado' });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

@@ -15,6 +15,7 @@ export interface BitgetOperationLog {
   response_data: any;
   response_status: number | null;
   success: boolean;
+  is_reviewed: boolean;
   error_message: string | null;
   order_id: string | null;
   client_oid: string | null;
@@ -132,24 +133,31 @@ class BitgetOperationLogModel {
     return result.insertId;
   }
 
-  async getAll(limit: number = 100): Promise<BitgetOperationLogWithDetails[]> {
+  async getAll(limit: number = 100, reviewed?: boolean): Promise<BitgetOperationLogWithDetails[]> {
     const limitInt = Math.max(1, Math.min(1000, parseInt(String(limit), 10) || 100));
     
     if (!Number.isInteger(limitInt) || limitInt < 1 || limitInt > 1000) {
       throw new Error('Invalid limit value');
     }
     
-    const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT 
+    let query = `SELECT 
         bol.*,
         u.email as user_email,
         s.name as strategy_name
        FROM bitget_operation_logs bol
        LEFT JOIN users u ON bol.user_id = u.id
-       LEFT JOIN strategies s ON bol.strategy_id = s.id
-       ORDER BY bol.created_at DESC
-       LIMIT ${limitInt}`
-    );
+       LEFT JOIN strategies s ON bol.strategy_id = s.id`;
+    
+    const params: any[] = [];
+    
+    if (reviewed !== undefined) {
+      query += ` WHERE bol.is_reviewed = ?`;
+      params.push(reviewed ? 1 : 0);
+    }
+    
+    query += ` ORDER BY bol.created_at DESC LIMIT ${limitInt}`;
+    
+    const [rows] = await pool.execute<RowDataPacket[]>(query, params);
 
     return rows.map((row) => ({
       ...row,
@@ -159,22 +167,28 @@ class BitgetOperationLogModel {
     })) as BitgetOperationLogWithDetails[];
   }
 
-  async getBySymbol(symbol: string, limit: number = 50): Promise<BitgetOperationLogWithDetails[]> {
+  async getBySymbol(symbol: string, limit: number = 50, reviewed?: boolean): Promise<BitgetOperationLogWithDetails[]> {
     const limitInt = Math.max(1, Math.min(1000, parseInt(String(limit), 10) || 50));
     
-    const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT 
+    let query = `SELECT 
         bol.*,
         u.email as user_email,
         s.name as strategy_name
        FROM bitget_operation_logs bol
        LEFT JOIN users u ON bol.user_id = u.id
        LEFT JOIN strategies s ON bol.strategy_id = s.id
-       WHERE bol.symbol = ?
-       ORDER BY bol.created_at DESC
-       LIMIT ${limitInt}`,
-      [symbol]
-    );
+       WHERE bol.symbol = ?`;
+    
+    const params: any[] = [symbol];
+    
+    if (reviewed !== undefined) {
+      query += ` AND bol.is_reviewed = ?`;
+      params.push(reviewed ? 1 : 0);
+    }
+    
+    query += ` ORDER BY bol.created_at DESC LIMIT ${limitInt}`;
+    
+    const [rows] = await pool.execute<RowDataPacket[]>(query, params);
 
     return rows.map((row) => ({
       ...row,
@@ -201,6 +215,20 @@ class BitgetOperationLogModel {
       request_headers: safeJsonParse(row.request_headers),
       response_data: safeJsonParse(row.response_data),
     })) as BitgetOperationLog[];
+  }
+
+  async markAsReviewed(id: number): Promise<void> {
+    await pool.execute(
+      'UPDATE bitget_operation_logs SET is_reviewed = true WHERE id = ?',
+      [id]
+    );
+  }
+
+  async markAsUnreviewed(id: number): Promise<void> {
+    await pool.execute(
+      'UPDATE bitget_operation_logs SET is_reviewed = false WHERE id = ?',
+      [id]
+    );
   }
 }
 
