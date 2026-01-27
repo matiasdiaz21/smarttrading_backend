@@ -106,12 +106,15 @@ class BitgetOperationLogModel {
     orderId: string | null = null,
     clientOid: string | null = null
   ): Promise<number> {
+    // Marcar automáticamente como revisado si la operación fue exitosa (200 y success=true)
+    const isReviewed = responseStatus === 200 && success === true;
+    
     const [result] = await pool.execute<ResultSetHeader>(
       `INSERT INTO bitget_operation_logs 
        (user_id, strategy_id, symbol, operation_type, http_method, endpoint, full_url, 
         request_payload, request_headers, response_data, response_status, success, 
-        error_message, order_id, client_oid)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        is_reviewed, error_message, order_id, client_oid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         strategyId || null,
@@ -125,6 +128,7 @@ class BitgetOperationLogModel {
         safeJsonStringify(responseData),
         responseStatus || null,
         success,
+        isReviewed ? 1 : 0, // Marcar como revisado automáticamente si es exitoso
         errorMessage || null,
         orderId || null,
         clientOid || null,
