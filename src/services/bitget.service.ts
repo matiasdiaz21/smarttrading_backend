@@ -622,14 +622,18 @@ export class BitgetService {
       console.log(`[Bitget] 📊 TP: ${takeProfitPrice} → ${formattedTP}`);
       
       // Obtener precio actual para validar TP
-      let currentPrice: number;
+      let currentPrice: number | null = null;
       try {
         const tickerPrice = await this.getTickerPrice(symbol, productType);
-        currentPrice = parseFloat(tickerPrice);
-        console.log(`[Bitget] 📊 Precio actual de ${symbol}: ${currentPrice}`);
+        const parsedPrice = parseFloat(tickerPrice);
+        if (!isNaN(parsedPrice) && parsedPrice > 0) {
+          currentPrice = parsedPrice;
+          console.log(`[Bitget] 📊 Precio actual de ${symbol}: ${currentPrice}`);
+        } else {
+          console.error(`[Bitget] ❌ Precio inválido obtenido: "${tickerPrice}". No se validará TP.`);
+        }
       } catch (priceError: any) {
-        console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual: ${priceError.message}. Continuando sin validación.`);
-        currentPrice = 0; // No validar si no se puede obtener el precio
+        console.error(`[Bitget] ❌ Error al obtener precio actual: ${priceError.message}. No se validará TP.`);
       }
       
       // Generar timestamp único más corto (solo timestamp + random, sin hrtime)
@@ -659,14 +663,20 @@ export class BitgetService {
       // 2. Take Profit parcial en breakeven (si existe)
       if (formattedBreakeven && formattedBreakeven > 0) {
         // Validar que breakeven sea mayor que el precio actual para long, o menor para short
-        // Si no se pudo obtener el precio actual, configurar de todas formas (asumir que es válido)
-        const isValidBreakeven = currentPrice === null || 
-          (holdSide === 'long' && formattedBreakeven > currentPrice) ||
-          (holdSide === 'short' && formattedBreakeven < currentPrice);
+        // Solo incluir breakeven si se pudo validar correctamente
+        let isValidBreakeven = false;
+        if (currentPrice !== null) {
+          isValidBreakeven = (holdSide === 'long' && formattedBreakeven > currentPrice) ||
+                             (holdSide === 'short' && formattedBreakeven < currentPrice);
+        }
         
-        if (currentPrice !== null && !isValidBreakeven) {
+        if (currentPrice === null) {
+          console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se omitirá TP breakeven para evitar errores.`);
+        } else if (!isValidBreakeven) {
           console.warn(`[Bitget] ⚠️ Breakeven (${formattedBreakeven}) no es válido para posición ${holdSide} con precio actual ${currentPrice}. Se omitirá.`);
-        } else {
+        }
+        
+        if (currentPrice !== null && isValidBreakeven) {
           const positionSizeNum = parseFloat(positionSize);
           const breakevenSize = (positionSizeNum * 0.5).toFixed(contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0);
           const breakevenRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
@@ -702,14 +712,20 @@ export class BitgetService {
       }
       
       // Validar que TP sea mayor que el precio actual para long, o menor para short
-      // Si no se pudo obtener el precio actual, configurar de todas formas (asumir que es válido)
-      const isValidTP = currentPrice === null || 
-        (holdSide === 'long' && formattedTP > currentPrice) ||
-        (holdSide === 'short' && formattedTP < currentPrice);
+      // Solo incluir TP si se pudo validar correctamente
+      let isValidTP = false;
+      if (currentPrice !== null) {
+        isValidTP = (holdSide === 'long' && formattedTP > currentPrice) ||
+                     (holdSide === 'short' && formattedTP < currentPrice);
+      }
       
-      if (currentPrice !== null && !isValidTP) {
+      if (currentPrice === null) {
+        console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se omitirá TP final para evitar errores.`);
+      } else if (!isValidTP) {
         console.warn(`[Bitget] ⚠️ Take Profit (${formattedTP}) no es válido para posición ${holdSide} con precio actual ${currentPrice}. Se omitirá.`);
-      } else {
+      }
+      
+      if (currentPrice !== null && isValidTP) {
         const tpFinalRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
         const tpFinalClientOid = `TP_F_${symbol.substring(0, 8)}_${baseId}_${tpFinalRandom}`.substring(0, 64);
         const tpPayload: any = {
@@ -830,14 +846,20 @@ export class BitgetService {
         // Validar que TP sea correcto según el tipo de posición
         // Para LONG: TP debe ser > precio actual
         // Para SHORT: TP debe ser < precio actual
-        // Si no se pudo obtener el precio actual, incluir de todas formas (asumir válido)
-        const isValidTP = currentPrice === null || 
-          (holdSide === 'long' && formattedTakeProfit > currentPrice) ||
-          (holdSide === 'short' && formattedTakeProfit < currentPrice);
+        // Solo incluir TP si se pudo validar correctamente
+        let isValidTP = false;
+        if (currentPrice !== null) {
+          isValidTP = (holdSide === 'long' && formattedTakeProfit > currentPrice) ||
+                       (holdSide === 'short' && formattedTakeProfit < currentPrice);
+        }
         
-        if (currentPrice !== null && !isValidTP) {
+        if (currentPrice === null) {
+          console.warn(`[BitgetService] ⚠️ No se pudo obtener precio actual. Se omitirá TP para evitar errores.`);
+        } else if (!isValidTP) {
           console.warn(`[BitgetService] ⚠️ Take Profit (${formattedTakeProfit}) no es válido para posición ${holdSide} con precio actual ${currentPrice}. Se omitirá TP.`);
-        } else {
+        }
+        
+        if (currentPrice !== null && isValidTP) {
           payload.stopSurplusTriggerPrice = formattedTakeProfit.toString();
           payload.stopSurplusTriggerType = 'fill_price';
           payload.stopSurplusExecutePrice = formattedTakeProfit.toString();
