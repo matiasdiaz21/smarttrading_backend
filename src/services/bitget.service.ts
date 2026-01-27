@@ -417,7 +417,12 @@ export class BitgetService {
     productType: string = 'USDT-FUTURES',
     marginCoin: string = 'USDT',
     positionSize?: string,
-    contractInfo?: any
+    contractInfo?: any,
+    logContext?: {
+      userId: number;
+      strategyId: number | null;
+      orderId?: string;
+    }
   ): Promise<any> {
     try {
       const holdSide = side === 'buy' ? 'long' : 'short';
@@ -472,14 +477,28 @@ export class BitgetService {
       console.log(`[Bitget]   - SL en ${stopLossPrice}`);
       
       const [tpResult, slResult] = await Promise.all([
-        this.makeRequest('POST', endpoint, credentials, tpPayload).then(result => {
+        this.makeRequest('POST', endpoint, credentials, tpPayload, logContext ? {
+          userId: logContext.userId,
+          strategyId: logContext.strategyId,
+          symbol: symbol,
+          operationType: 'setTakeProfit',
+          orderId: logContext.orderId,
+          clientOid: tpPayload.clientOid,
+        } : undefined).then(result => {
           console.log(`[Bitget] ✅ Take Profit configurado exitosamente`);
           return { type: 'take_profit', result, success: true };
         }).catch(error => {
           console.error(`[Bitget] ❌ Error en Take Profit: ${error.message}`);
           return { type: 'take_profit', error: error.message, success: false };
         }),
-        this.makeRequest('POST', endpoint, credentials, slPayload).then(result => {
+        this.makeRequest('POST', endpoint, credentials, slPayload, logContext ? {
+          userId: logContext.userId,
+          strategyId: logContext.strategyId,
+          symbol: symbol,
+          operationType: 'setStopLoss',
+          orderId: logContext.orderId,
+          clientOid: slPayload.clientOid,
+        } : undefined).then(result => {
           console.log(`[Bitget] ✅ Stop Loss configurado exitosamente`);
           return { type: 'stop_loss', result, success: true };
         }).catch(error => {
@@ -509,7 +528,12 @@ export class BitgetService {
     positionSize: string, // Tamaño total de la posición
     productType: string = 'USDT-FUTURES',
     marginCoin: string = 'USDT',
-    contractInfo?: any
+    contractInfo?: any,
+    logContext?: {
+      userId: number;
+      strategyId: number | null;
+      orderId?: string;
+    }
   ): Promise<any> {
     try {
       const holdSide = side === 'buy' ? 'long' : 'short';
@@ -606,7 +630,14 @@ export class BitgetService {
       const results = await Promise.all(
         orders.map(async (order) => {
           try {
-            const result = await this.makeRequest('POST', endpoint, credentials, order.payload);
+            const result = await this.makeRequest('POST', endpoint, credentials, order.payload, logContext ? {
+              userId: logContext.userId,
+              strategyId: logContext.strategyId,
+              symbol: symbol,
+              operationType: order.type,
+              orderId: logContext.orderId,
+              clientOid: order.payload.clientOid,
+            } : undefined);
             console.log(`[Bitget] ✅ ${order.description} configurado exitosamente`);
             return { type: order.type, result, success: true };
           } catch (error: any) {
@@ -634,7 +665,12 @@ export class BitgetService {
     stopLossPrice: number,
     productType: string = 'USDT-FUTURES',
     marginCoin: string = 'USDT',
-    takeProfitPrice?: number
+    takeProfitPrice?: number,
+    logContext?: {
+      userId: number;
+      strategyId: number | null;
+      orderId?: string;
+    }
   ): Promise<any> {
     try {
       // Obtener la posición para determinar holdSide y tamaño
@@ -665,7 +701,13 @@ export class BitgetService {
         payload.stopSurplusExecutePrice = takeProfitPrice.toString();
       }
 
-      return await this.makeRequest('POST', endpoint, credentials, payload);
+      return await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
+        userId: logContext.userId,
+        strategyId: logContext.strategyId,
+        symbol: symbol,
+        operationType: 'modifyStopLoss',
+        orderId: logContext.orderId,
+      } : undefined);
     } catch (error: any) {
       throw new Error(`Error al modificar stop loss: ${error.message}`);
     }
@@ -781,7 +823,12 @@ export class BitgetService {
     leverage: number,
     productType: string = 'USDT-FUTURES',
     marginCoin: string = 'USDT',
-    holdSide?: 'long' | 'short'
+    holdSide?: 'long' | 'short',
+    logContext?: {
+      userId: number;
+      strategyId: number | null;
+      orderId?: string;
+    }
   ): Promise<any> {
     const endpoint = '/api/v2/mix/account/set-leverage';
     
@@ -803,7 +850,13 @@ export class BitgetService {
     console.log(`[BitgetService] 🔧 Configurando leverage a ${leverage}x para ${symbol} (${normalizedProductType}, ${marginCoin.toUpperCase()}, holdSide: ${holdSide || 'N/A'})`);
     
     try {
-      const result = await this.makeRequest('POST', endpoint, credentials, payload);
+      const result = await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
+        userId: logContext.userId,
+        strategyId: logContext.strategyId,
+        symbol: symbol,
+        operationType: 'setLeverage',
+        orderId: logContext.orderId,
+      } : undefined);
       console.log(`[BitgetService] ✅ Leverage configurado exitosamente:`, result);
       return result;
     } catch (error: any) {

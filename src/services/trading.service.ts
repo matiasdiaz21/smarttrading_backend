@@ -202,7 +202,11 @@ export class TradingService {
           leverage,
           productType,
           alert.marginCoin || 'USDT',
-          holdSide
+          holdSide,
+          {
+            userId,
+            strategyId,
+          }
         );
         console.log(`[TradeService] ✅ Apalancamiento configurado exitosamente a ${leverage}x para ${symbol}`);
         
@@ -370,7 +374,12 @@ export class TradingService {
               actualPositionSize,
               productType,
               alert.marginCoin || 'USDT',
-              contractInfo
+              contractInfo,
+              {
+                userId,
+                strategyId,
+                orderId: result?.orderId,
+              }
             );
           } else {
             // Si no hay breakeven, usar el método básico (TP 100% en takeProfit)
@@ -385,7 +394,12 @@ export class TradingService {
               productType,
               alert.marginCoin || 'USDT',
               actualPositionSize,
-              contractInfo
+              contractInfo,
+              {
+                userId,
+                strategyId,
+                orderId: result?.orderId,
+              }
             );
           }
           
@@ -647,6 +661,7 @@ export class TradingService {
                 {
                   userId: subscription.user_id,
                   strategyId: strategyId,
+                  orderId: trade.bitget_order_id || undefined,
                 }
               );
 
@@ -674,7 +689,12 @@ export class TradingService {
             newStopLoss,
             productType,
             marginCoin,
-            trade.take_profit ? parseFloat(trade.take_profit.toString()) : undefined
+            trade.take_profit ? parseFloat(trade.take_profit.toString()) : undefined,
+            {
+              userId: subscription.user_id,
+              strategyId: strategyId,
+              orderId: trade.bitget_order_id || undefined,
+            }
           );
 
           console.log(`[BREAKEVEN] ✅ Stop loss movido a breakeven exitosamente`);
