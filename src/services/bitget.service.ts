@@ -793,6 +793,23 @@ export class BitgetService {
       console.log(`[BitgetService] 📊 Precisión de precio: ${pricePlace} decimales`);
       console.log(`[BitgetService] 📊 Stop Loss: ${stopLossPrice} → ${formattedStopLoss}`);
 
+      // Obtener precio actual para validar take profit si se proporciona
+      let currentPrice: number | null = null;
+      if (takeProfitPrice) {
+        try {
+          const tickerPrice = await this.getTickerPrice(symbol, productType);
+          const parsedPrice = parseFloat(tickerPrice);
+          if (!isNaN(parsedPrice) && parsedPrice > 0) {
+            currentPrice = parsedPrice;
+            console.log(`[BitgetService] 📊 Precio actual de ${symbol}: ${currentPrice}`);
+          } else {
+            console.error(`[BitgetService] ❌ Precio inválido obtenido: "${tickerPrice}". No se validará TP.`);
+          }
+        } catch (priceError: any) {
+          console.error(`[BitgetService] ❌ Error al obtener precio actual: ${priceError.message}. No se validará TP.`);
+        }
+      }
+
       // Usar el endpoint place-pos-tpsl para establecer/modificar stop loss
       const endpoint = '/api/v2/mix/order/place-pos-tpsl';
       const payload: any = {
@@ -805,13 +822,27 @@ export class BitgetService {
         stopLossExecutePrice: formattedStopLoss.toString(), // Precio de ejecución igual al trigger
       };
 
-      // Si hay take profit, incluirlo también con la precisión correcta
+      // Si hay take profit, validarlo y incluirlo solo si es válido
       if (takeProfitPrice) {
         const formattedTakeProfit = parseFloat(takeProfitPrice.toFixed(pricePlace));
         console.log(`[BitgetService] 📊 Take Profit: ${takeProfitPrice} → ${formattedTakeProfit}`);
-        payload.stopSurplusTriggerPrice = formattedTakeProfit.toString();
-        payload.stopSurplusTriggerType = 'fill_price';
-        payload.stopSurplusExecutePrice = formattedTakeProfit.toString();
+        
+        // Validar que TP sea correcto según el tipo de posición
+        // Para LONG: TP debe ser > precio actual
+        // Para SHORT: TP debe ser < precio actual
+        // Si no se pudo obtener el precio actual, incluir de todas formas (asumir válido)
+        const isValidTP = currentPrice === null || 
+          (holdSide === 'long' && formattedTakeProfit > currentPrice) ||
+          (holdSide === 'short' && formattedTakeProfit < currentPrice);
+        
+        if (currentPrice !== null && !isValidTP) {
+          console.warn(`[BitgetService] ⚠️ Take Profit (${formattedTakeProfit}) no es válido para posición ${holdSide} con precio actual ${currentPrice}. Se omitirá TP.`);
+        } else {
+          payload.stopSurplusTriggerPrice = formattedTakeProfit.toString();
+          payload.stopSurplusTriggerType = 'fill_price';
+          payload.stopSurplusExecutePrice = formattedTakeProfit.toString();
+          console.log(`[BitgetService] ✅ Take Profit incluido en la modificación: ${formattedTakeProfit}`);
+        }
       }
 
       return await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
