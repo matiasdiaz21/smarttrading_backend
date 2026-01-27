@@ -245,6 +245,10 @@ export class TradingService {
             shouldOpenPosition = false;
             console.log(`[TradeService] ⚠️ Ya existe una posición ${holdSide} para ${symbol} con tamaño ${actualPositionSize}. No se abrirá nueva posición.`);
             console.log(`[TradeService] 🎯 Se configurarán TP/SL para la posición existente.`);
+            // Usar el positionId de la posición existente como orderId para los logs
+            if (matchingPosition.positionId || matchingPosition.id) {
+              result = { orderId: matchingPosition.positionId || matchingPosition.id };
+            }
           }
         }
       } catch (checkError: any) {
@@ -335,6 +339,10 @@ export class TradingService {
                   existingPosition = matchingPosition;
                   actualPositionSize = matchingPosition.total || matchingPosition.available || calculatedSize;
                   console.log(`[TradeService] ✅ Posición encontrada con tamaño ${actualPositionSize}. Se configurarán TP/SL.`);
+                  // Usar el positionId de la posición existente como orderId para los logs
+                  if (matchingPosition.positionId || matchingPosition.id) {
+                    result = { orderId: matchingPosition.positionId || matchingPosition.id };
+                  }
                 } else {
                   throw orderError;
                 }
