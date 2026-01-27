@@ -182,11 +182,17 @@ export class BitgetService {
       );
 
       if (response.data.code === '00000' && response.data.data) {
-        const price = response.data.data.last;
+        // La respuesta puede tener diferentes estructuras según el endpoint
+        // Intentar obtener el precio de diferentes campos posibles
+        const price = response.data.data.last || 
+                     response.data.data.close || 
+                     response.data.data.price ||
+                     (Array.isArray(response.data.data) && response.data.data[0]?.last);
         
         // Validar que el precio sea válido
         if (!price || price === '' || isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
           console.error(`[BitgetService] ❌ Precio inválido recibido de Bitget: ${price}`);
+          console.error(`[BitgetService] Estructura de respuesta:`, JSON.stringify(response.data.data, null, 2));
           throw new Error(`Invalid price received from Bitget: ${price}`);
         }
         
@@ -795,7 +801,7 @@ export class BitgetService {
   ): Promise<any> {
     try {
       // Obtener la posición para determinar holdSide y tamaño
-      const positions = await this.getPositions(credentials, symbol, productType);
+      const positions = await this.getPositions(credentials, symbol, productType, logContext);
       if (!positions || positions.length === 0) {
         throw new Error('No se encontró posición abierta para el símbolo');
       }
@@ -883,14 +889,25 @@ export class BitgetService {
   async getPositions(
     credentials: BitgetCredentials,
     symbol?: string,
-    productType: string = 'USDT-FUTURES'
+    productType: string = 'USDT-FUTURES',
+    logContext?: {
+      userId: number;
+      strategyId: number | null;
+      orderId?: string;
+    }
   ): Promise<any> {
     let endpoint = `/api/v2/mix/position/all-position?productType=${productType}`;
     if (symbol) {
       endpoint += `&symbol=${symbol}`;
     }
     
-    const result = await this.makeRequest('GET', endpoint, credentials);
+    const result = await this.makeRequest('GET', endpoint, credentials, null, logContext ? {
+      userId: logContext.userId,
+      strategyId: logContext.strategyId,
+      symbol: symbol || '',
+      operationType: 'getPositions',
+      orderId: logContext.orderId,
+    } : undefined);
     
     // Log para ver estructura de posiciones abiertas
     if (result && result.length > 0) {
