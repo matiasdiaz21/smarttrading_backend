@@ -427,12 +427,14 @@ export class TradingService {
       
       try {
         const tradeId = alert.trade_id ? (typeof alert.trade_id === 'string' ? parseInt(alert.trade_id) : alert.trade_id) : null;
+        // Siempre usar 'ENTRY' como alert_type cuando se está procesando un ENTRY
+        // (executeTradeForUser solo se llama desde processStrategyAlert para ENTRY)
         await OrderErrorModel.create(
           userId,
           strategyId,
           alert.symbol,
           alert.side,
-          alert.alertType || 'ENTRY',
+          'ENTRY', // Siempre ENTRY porque executeTradeForUser solo se llama para procesar ENTRY
           error.message || 'Unknown error',
           tradeId,
           error.response?.data || null,
