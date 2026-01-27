@@ -4,6 +4,7 @@ import { UserModel } from '../models/User';
 import { WebhookLogModel } from '../models/WebhookLog';
 import { TradeModel } from '../models/Trade';
 import OrderErrorModel from '../models/orderError.model';
+import BitgetOperationLogModel from '../models/BitgetOperationLog';
 
 export class AdminController {
   static async getUsers(req: AuthRequest, res: Response): Promise<void> {
@@ -134,6 +135,36 @@ export class AdminController {
       );
 
       res.json(errorsWithWebhookData);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async getBitgetOperationLogs(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+
+      const limitParam = req.query.limit as string;
+      const limit = limitParam ? parseInt(limitParam, 10) : 100;
+      
+      if (isNaN(limit) || limit < 1) {
+        res.status(400).json({ error: 'Invalid limit parameter' });
+        return;
+      }
+
+      const symbol = req.query.symbol as string | undefined;
+      
+      let logs;
+      if (symbol) {
+        logs = await BitgetOperationLogModel.getBySymbol(symbol, limit);
+      } else {
+        logs = await BitgetOperationLogModel.getAll(limit);
+      }
+
+      res.json(logs);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

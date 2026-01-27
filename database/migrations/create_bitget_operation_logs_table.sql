@@ -1,0 +1,28 @@
+-- Tabla para registrar todos los logs de operaciones a Bitget
+CREATE TABLE IF NOT EXISTS bitget_operation_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  strategy_id INT,
+  symbol VARCHAR(50) NOT NULL,
+  operation_type VARCHAR(50) NOT NULL COMMENT 'placeOrder, setTPSL, cancelOrder, etc.',
+  http_method VARCHAR(10) NOT NULL COMMENT 'GET, POST, etc.',
+  endpoint VARCHAR(255) NOT NULL,
+  full_url TEXT NOT NULL,
+  request_payload JSON,
+  request_headers JSON,
+  response_data JSON,
+  response_status INT,
+  success BOOLEAN DEFAULT false,
+  error_message TEXT,
+  order_id VARCHAR(100),
+  client_oid VARCHAR(100),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user_id (user_id),
+  INDEX idx_strategy_id (strategy_id),
+  INDEX idx_symbol (symbol),
+  INDEX idx_operation_type (operation_type),
+  INDEX idx_created_at (created_at),
+  INDEX idx_success (success),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

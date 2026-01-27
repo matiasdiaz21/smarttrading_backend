@@ -277,7 +277,11 @@ export class TradingService {
           
           result = await this.bitgetService.placeOrder(
             decryptedCredentials,
-            orderData
+            orderData,
+            {
+              userId,
+              strategyId,
+            }
           );
 
           console.log(`[TradeService] ✅ Orden ejecutada en Bitget. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
@@ -639,6 +643,10 @@ export class TradingService {
                   tradeSide: 'close',
                   orderType: 'market',
                   clientOid: breakevenClientOid,
+                },
+                {
+                  userId: subscription.user_id,
+                  strategyId: strategyId,
                 }
               );
 

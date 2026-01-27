@@ -2,6 +2,7 @@ import axios, { AxiosInstance } from 'axios';
 import crypto from 'crypto';
 import { config } from '../config';
 import { decrypt } from '../utils/encryption';
+import BitgetOperationLogModel from '../models/BitgetOperationLog';
 
 interface BitgetCredentials {
   apiKey: string;
@@ -42,7 +43,15 @@ export class BitgetService {
     method: 'GET' | 'POST',
     endpoint: string,
     credentials: BitgetCredentials,
-    body?: any
+    body?: any,
+    logContext?: {
+      userId: number;
+      strategyId: number | null;
+      symbol: string;
+      operationType: string;
+      orderId?: string;
+      clientOid?: string;
+    }
   ): Promise<any> {
     const timestamp = Date.now().toString();
     const requestPath = endpoint;
@@ -65,23 +74,65 @@ export class BitgetService {
       'locale': 'en-US',
     };
 
+    const fullUrl = `${this.apiBaseUrl}${endpoint}`;
+    let response: any = null;
+    let success = false;
+    let errorMessage: string | null = null;
+    let responseStatus: number | null = null;
+    let responseData: any = null;
+
     try {
-      const response = await axios({
+      response = await axios({
         method,
-        url: `${this.apiBaseUrl}${endpoint}`,
+        url: fullUrl,
         headers,
         data: body,
       });
 
+      responseStatus = response.status;
+      responseData = response.data;
+
       if (response.data.code === '00000') {
+        success = true;
         return response.data.data;
       } else {
-        throw new Error(`Bitget API Error: ${response.data.msg}`);
+        errorMessage = `Bitget API Error: ${response.data.msg}`;
+        throw new Error(errorMessage);
       }
     } catch (error: any) {
+      responseStatus = error.response?.status || null;
+      responseData = error.response?.data || null;
+      errorMessage = error.response?.data?.msg || error.message;
+      
       throw new Error(
-        `Bitget API Request Failed: ${error.response?.data?.msg || error.message}`
+        `Bitget API Request Failed: ${errorMessage}`
       );
+    } finally {
+      // Guardar log si se proporcionó contexto
+      if (logContext) {
+        try {
+          await BitgetOperationLogModel.create(
+            logContext.userId,
+            logContext.strategyId,
+            logContext.symbol,
+            logContext.operationType,
+            method,
+            endpoint,
+            fullUrl,
+            body || null,
+            headers,
+            responseData,
+            responseStatus,
+            success,
+            errorMessage,
+            logContext.orderId || null,
+            logContext.clientOid || null
+          );
+        } catch (logError: any) {
+          // No fallar la operación principal si falla el log
+          console.error('[BitgetService] Error al guardar log de operación:', logError.message);
+        }
+      }
     }
   }
 
@@ -205,6 +256,11 @@ export class BitgetService {
       orderType: 'limit' | 'market';
       force?: string;
       clientOid?: string;
+    },
+    logContext?: {
+      userId: number;
+      strategyId: number | null;
+      orderId?: string;
     }
   ): Promise<{ orderId: string; clientOid: string }> {
     const endpoint = '/api/v2/mix/order/place-order';
@@ -237,11 +293,27 @@ export class BitgetService {
       orderPayload.clientOid = orderData.clientOid;
     }
 
-    const result = await this.makeRequest('POST', endpoint, credentials, orderPayload);
+    const result = await this.makeRequest(
+      'POST', 
+      endpoint, 
+      credentials, 
+      orderPayload,
+      logContext ? {
+        userId: logContext.userId,
+        strategyId: logContext.strategyId,
+        symbol: orderData.symbol,
+        operationType: 'placeOrder',
+        orderId: logContext.orderId,
+        clientOid: orderData.clientOid,
+      } : undefined
+    );
+    
+    const orderId = result.orderId || result.clientOid;
+    const clientOid = result.clientOid || orderData.clientOid || '';
     
     return {
-      orderId: result.orderId || result.clientOid,
-      clientOid: result.clientOid || orderData.clientOid || '',
+      orderId,
+      clientOid,
     };
   }
 
