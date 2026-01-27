@@ -1,23 +1,6 @@
--- Migración: Crear tabla de términos y condiciones
--- Fecha: 2026-01-26
--- Descripción: Permite almacenar y gestionar los términos y condiciones del sitio
+-- SQL para insertar términos y condiciones actualizados
+-- Ejecutar este script después de crear la tabla terms_and_conditions
 
-CREATE TABLE IF NOT EXISTS terms_and_conditions (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(255) NOT NULL DEFAULT 'Términos y Condiciones',
-    content TEXT NOT NULL,
-    version INT NOT NULL DEFAULT 1,
-    is_active BOOLEAN NOT NULL DEFAULT true,
-    created_by INT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT,
-    INDEX idx_active (is_active),
-    INDEX idx_version (version),
-    INDEX idx_created_by (created_by)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Insertar términos y condiciones iniciales (si no existen)
 INSERT INTO terms_and_conditions (title, content, version, is_active, created_by)
 SELECT 
     'Términos y Condiciones de Uso',

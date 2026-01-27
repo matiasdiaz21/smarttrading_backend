@@ -64,9 +64,10 @@ export class StatsController {
       const bestTrades = StatsController.getBestTrades(groupedBySymbol, symbolStats).slice(0, 5);
 
       // Estadísticas generales
-      const totalTrades = Object.values(symbolStats).reduce((sum, stats) => sum + stats.total, 0);
+      // totalTrades solo cuenta operaciones cerradas (won + lost), no pendientes
       const totalWon = Object.values(symbolStats).reduce((sum, stats) => sum + stats.won, 0);
       const totalLost = Object.values(symbolStats).reduce((sum, stats) => sum + stats.lost, 0);
+      const totalTrades = totalWon + totalLost; // Solo trades cerrados
       const overallWinrate = totalWon + totalLost > 0 
         ? (totalWon / (totalWon + totalLost)) * 100 
         : 0;
