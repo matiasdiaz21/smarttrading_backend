@@ -756,6 +756,7 @@ export class BitgetService {
     productType: string = 'USDT-FUTURES',
     marginCoin: string = 'USDT',
     takeProfitPrice?: number,
+    contractInfo?: any,
     logContext?: {
       userId: number;
       strategyId: number | null;
@@ -772,6 +773,12 @@ export class BitgetService {
       const position = positions[0];
       const holdSide = position.holdSide || (parseFloat(position.size) > 0 ? 'long' : 'short');
 
+      // Aplicar precisión de precio según contractInfo
+      const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
+      const formattedStopLoss = parseFloat(stopLossPrice.toFixed(pricePlace));
+      console.log(`[BitgetService] 📊 Precisión de precio: ${pricePlace} decimales`);
+      console.log(`[BitgetService] 📊 Stop Loss: ${stopLossPrice} → ${formattedStopLoss}`);
+
       // Usar el endpoint place-pos-tpsl para establecer/modificar stop loss
       const endpoint = '/api/v2/mix/order/place-pos-tpsl';
       const payload: any = {
@@ -779,16 +786,18 @@ export class BitgetService {
         productType: productType.toLowerCase(), // Bitget requiere lowercase
         symbol,
         holdSide,
-        stopLossTriggerPrice: stopLossPrice.toString(),
+        stopLossTriggerPrice: formattedStopLoss.toString(),
         stopLossTriggerType: 'fill_price', // Usar fill_price para activación precisa
-        stopLossExecutePrice: stopLossPrice.toString(), // Precio de ejecución igual al trigger
+        stopLossExecutePrice: formattedStopLoss.toString(), // Precio de ejecución igual al trigger
       };
 
-      // Si hay take profit, incluirlo también
+      // Si hay take profit, incluirlo también con la precisión correcta
       if (takeProfitPrice) {
-        payload.stopSurplusTriggerPrice = takeProfitPrice.toString();
+        const formattedTakeProfit = parseFloat(takeProfitPrice.toFixed(pricePlace));
+        console.log(`[BitgetService] 📊 Take Profit: ${takeProfitPrice} → ${formattedTakeProfit}`);
+        payload.stopSurplusTriggerPrice = formattedTakeProfit.toString();
         payload.stopSurplusTriggerType = 'fill_price';
-        payload.stopSurplusExecutePrice = takeProfitPrice.toString();
+        payload.stopSurplusExecutePrice = formattedTakeProfit.toString();
       }
 
       return await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {

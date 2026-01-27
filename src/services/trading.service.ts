@@ -624,6 +624,22 @@ export class TradingService {
         console.log(`[BREAKEVEN] Procesando breakeven para usuario ${subscription.user_id}, symbol ${symbol}, trade_id ${alert.trade_id}`);
         console.log(`[BREAKEVEN] Precio de breakeven: ${breakevenPrice}`);
 
+        // Obtener información del contrato para validar el tamaño mínimo
+        let contractInfo;
+        try {
+          contractInfo = await this.bitgetService.getContractInfo(symbol, productType);
+          console.log(`[BREAKEVEN] 📊 Información del contrato para ${symbol}:`, contractInfo);
+        } catch (error: any) {
+          console.warn(`[BREAKEVEN] ⚠️ No se pudo obtener información del contrato: ${error.message}. Usando valores por defecto.`);
+          contractInfo = {
+            minTradeNum: '0.01',
+            sizeMultiplier: '0.01',
+            minTradeUSDT: '5',
+            volumePlace: '2',
+            pricePlace: '1',
+          };
+        }
+
         // 1. Cerrar 50% de la posición al precio de breakeven
         try {
           // Obtener la posición actual para saber el tamaño
@@ -639,41 +655,58 @@ export class TradingService {
             
             if (currentSize > 0) {
               // Calcular 50% del tamaño de la posición
-              const halfSize = (currentSize / 2).toString();
-              const holdSide = position.holdSide || (trade.side === 'buy' ? 'long' : 'short');
+              let halfSize = currentSize / 2;
+              const minTradeNum = parseFloat(contractInfo.minTradeNum);
+              const sizeMultiplier = parseFloat(contractInfo.sizeMultiplier);
               
-              // Determinar el side de cierre (opuesto al de apertura)
-              const closeSide: 'buy' | 'sell' = trade.side === 'buy' ? 'sell' : 'buy';
+              // Validar que el tamaño sea mayor o igual al mínimo
+              if (halfSize < minTradeNum) {
+                console.warn(`[BREAKEVEN] ⚠️ El tamaño calculado (${halfSize}) es menor que el mínimo (${minTradeNum}). No se puede cerrar parcialmente.`);
+                console.warn(`[BREAKEVEN] ⚠️ Se omitirá el cierre parcial y solo se moverá el stop loss.`);
+              } else {
+                // Asegurar que el tamaño sea múltiplo de sizeMultiplier
+                halfSize = Math.ceil(halfSize / sizeMultiplier) * sizeMultiplier;
+                
+                // Aplicar precisión según volumePlace
+                const volumePlace = contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 2;
+                const halfSizeStr = halfSize.toFixed(volumePlace).replace(/\.?0+$/, '');
+                
+                const holdSide = position.holdSide || (trade.side === 'buy' ? 'long' : 'short');
+                
+                // Determinar el side de cierre (opuesto al de apertura)
+                const closeSide: 'buy' | 'sell' = trade.side === 'buy' ? 'sell' : 'buy';
 
-              console.log(`[BREAKEVEN] Cerrando 50% de la posición: ${halfSize} contratos de ${currentSize} total`);
+                console.log(`[BREAKEVEN] Cerrando 50% de la posición: ${halfSizeStr} contratos de ${currentSize} total`);
 
-              // Generar clientOid único para la orden de breakeven
-              const breakevenTimestamp = `${Date.now()}_${process.hrtime.bigint()}`;
-              const breakevenRandom = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-              const breakevenClientOid = `ST_BREAKEVEN_${subscription.user_id}_${strategyId}_${alert.trade_id}_${breakevenTimestamp}_${breakevenRandom}`;
-              
-              // Colocar orden de cierre del 50%
-              await this.bitgetService.placeOrder(
-                decryptedCredentials,
-                {
-                  symbol: symbol,
-                  productType: productType,
-                  marginMode: 'isolated',
-                  marginCoin: marginCoin,
-                  size: halfSize,
-                  side: closeSide,
-                  tradeSide: 'close',
-                  orderType: 'market',
-                  clientOid: breakevenClientOid,
-                },
-                {
-                  userId: subscription.user_id,
-                  strategyId: strategyId,
-                  orderId: trade.bitget_order_id || undefined,
-                }
-              );
+                // Generar clientOid único más corto para la orden de breakeven
+                const timestamp = Date.now();
+                const baseId = `${timestamp}${Math.floor(Math.random() * 1000)}`;
+                const breakevenRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+                const breakevenClientOid = `ST_BE_${symbol.substring(0, 8)}_${baseId}_${breakevenRandom}`.substring(0, 64);
+                
+                // Colocar orden de cierre del 50%
+                await this.bitgetService.placeOrder(
+                  decryptedCredentials,
+                  {
+                    symbol: symbol,
+                    productType: productType,
+                    marginMode: 'isolated',
+                    marginCoin: marginCoin,
+                    size: halfSizeStr,
+                    side: closeSide,
+                    tradeSide: 'close',
+                    orderType: 'market',
+                    clientOid: breakevenClientOid,
+                  },
+                  {
+                    userId: subscription.user_id,
+                    strategyId: strategyId,
+                    orderId: trade.bitget_order_id || undefined,
+                  }
+                );
 
-              console.log(`[BREAKEVEN] ✅ 50% de la posición cerrada exitosamente`);
+                console.log(`[BREAKEVEN] ✅ 50% de la posición cerrada exitosamente`);
+              }
             } else {
               console.warn(`[BREAKEVEN] ⚠️ No se encontró tamaño de posición válido para cerrar`);
             }
@@ -689,15 +722,26 @@ export class TradingService {
         try {
           const newStopLoss = alert.entryPrice || breakevenPrice;
           
-          console.log(`[BREAKEVEN] Moviendo stop loss a precio de entrada: ${newStopLoss}`);
+          // Aplicar precisión de precio según contractInfo
+          const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
+          const formattedStopLoss = parseFloat(newStopLoss.toFixed(pricePlace));
+          
+          console.log(`[BREAKEVEN] Moviendo stop loss a precio de entrada: ${newStopLoss} → ${formattedStopLoss} (precisión: ${pricePlace} decimales)`);
+          
+          // Formatear take profit si existe
+          let formattedTakeProfit: number | undefined;
+          if (trade.take_profit) {
+            formattedTakeProfit = parseFloat(parseFloat(trade.take_profit.toString()).toFixed(pricePlace));
+          }
           
           await this.bitgetService.modifyPositionStopLoss(
             decryptedCredentials,
             symbol,
-            newStopLoss,
+            formattedStopLoss,
             productType,
             marginCoin,
-            trade.take_profit ? parseFloat(trade.take_profit.toString()) : undefined,
+            formattedTakeProfit,
+            contractInfo,
             {
               userId: subscription.user_id,
               strategyId: strategyId,
