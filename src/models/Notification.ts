@@ -73,11 +73,18 @@ export class NotificationModel {
       const [rows] = await pool.execute(query, params);
       const notifications = rows as Notification[];
       
-      // Parse metadata JSON
-      return notifications.map(n => ({
-        ...n,
-        metadata: n.metadata ? JSON.parse(n.metadata as any) : null
-      }));
+      // Parse metadata JSON solo si viene como string (MySQL JSON puede devolverlo ya como objeto)
+      return notifications.map(n => {
+        let metadata = n.metadata;
+        if (metadata != null && typeof metadata === 'string') {
+          try {
+            metadata = JSON.parse(metadata);
+          } catch {
+            metadata = null;
+          }
+        }
+        return { ...n, metadata: metadata ?? null };
+      });
     } catch (error: any) {
       console.error(`[NotificationModel] ❌ Error al obtener notificaciones:`, error);
       throw error;
