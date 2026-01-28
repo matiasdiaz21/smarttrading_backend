@@ -181,14 +181,38 @@ export class BitgetService {
         }
       );
 
+      console.log(`[BitgetService] 🔍 Ticker response COMPLETO para ${symbol}:`, JSON.stringify(response.data, null, 2));
+
       if (response.data.code === '00000' && response.data.data) {
-        const price = response.data.data.last;
+        // La API v2 de Bitget devuelve un array en data, no un objeto directo
+        const tickerData = Array.isArray(response.data.data) ? response.data.data[0] : response.data.data;
+        
+        console.log(`[BitgetService] 🔍 Ticker data extraído:`, JSON.stringify(tickerData, null, 2));
+        console.log(`[BitgetService] 🔍 Tipo de tickerData:`, typeof tickerData);
+        console.log(`[BitgetService] 🔍 Es array:`, Array.isArray(tickerData));
+        
+        if (tickerData) {
+          console.log(`[BitgetService] 🔍 Campos disponibles en tickerData:`, Object.keys(tickerData));
+          console.log(`[BitgetService] 🔍 Valores de campos de precio:`);
+          console.log(`[BitgetService]   - lastPr: ${tickerData.lastPr} (tipo: ${typeof tickerData.lastPr})`);
+          console.log(`[BitgetService]   - last: ${tickerData.last} (tipo: ${typeof tickerData.last})`);
+          console.log(`[BitgetService]   - close: ${tickerData.close} (tipo: ${typeof tickerData.close})`);
+          console.log(`[BitgetService]   - bestAsk: ${tickerData.bestAsk} (tipo: ${typeof tickerData.bestAsk})`);
+          console.log(`[BitgetService]   - bestBid: ${tickerData.bestBid} (tipo: ${typeof tickerData.bestBid})`);
+        }
+        
+        // Intentar obtener el precio de diferentes campos posibles
+        const price = tickerData?.lastPr || tickerData?.last || tickerData?.close;
         
         // Validar que el precio sea válido
         if (!price || price === '' || isNaN(parseFloat(price)) || parseFloat(price) <= 0) {
           console.error(`[BitgetService] ❌ Precio inválido recibido de Bitget: ${price}`);
+          console.error(`[BitgetService] ❌ Estructura completa de tickerData:`, tickerData);
+          console.error(`[BitgetService] ❌ Response.data completo:`, response.data);
           throw new Error(`Invalid price received from Bitget: ${price}`);
         }
+        
+        console.log(`[BitgetService] ✅ Precio obtenido exitosamente: ${price} (campo usado: ${tickerData?.lastPr ? 'lastPr' : tickerData?.last ? 'last' : 'close'})`);
         
         // Actualizar cache
         priceCache[cacheKey] = {
@@ -198,10 +222,14 @@ export class BitgetService {
         
         return price;
       } else {
+        console.error(`[BitgetService] ❌ Respuesta inválida de Bitget:`, response.data);
         throw new Error(`Failed to get ticker price: ${response.data?.msg || 'Unknown error'}`);
       }
     } catch (error: any) {
       console.error(`[BitgetService] ❌ Error al obtener precio de ticker para ${symbol}:`, error.message);
+      if (error.response) {
+        console.error(`[BitgetService] ❌ Response data:`, error.response.data);
+      }
       throw new Error(
         `Failed to get ticker price: ${error.response?.data?.msg || error.message}`
       );
@@ -519,40 +547,43 @@ export class BitgetService {
       };
       
       // Validar que TP sea mayor que el precio actual para long, o menor para short
-      // Si no se pudo obtener el precio actual, configurar de todas formas (asumir que es válido)
-      const isValidTP = currentPrice === null || 
-        (holdSide === 'long' && formattedTP > currentPrice) ||
-        (holdSide === 'short' && formattedTP < currentPrice);
+      // SIEMPRE configurar el TP, solo mostrar advertencia si parece inválido
+      let isValidTP = true;
+      if (currentPrice !== null) {
+        isValidTP = (holdSide === 'long' && formattedTP > currentPrice) ||
+                     (holdSide === 'short' && formattedTP < currentPrice);
+        
+        if (!isValidTP) {
+          console.warn(`[Bitget] ⚠️ ADVERTENCIA: Take Profit (${formattedTP}) podría no ser válido para posición ${holdSide} con precio actual ${currentPrice}. Se configurará de todas formas.`);
+        }
+      } else {
+        console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se configurará TP sin validación.`);
+      }
       
       // Ejecutar órdenes en PARALELO
       console.log(`[Bitget] 📋 Ejecutando TP y SL simultáneamente...`);
-      console.log(`[Bitget]   - TP en ${takeProfitPrice}${currentPrice !== null && !isValidTP ? ' (⚠️ omitido - precio inválido)' : ''}`);
+      console.log(`[Bitget]   - TP en ${takeProfitPrice}`);
       console.log(`[Bitget]   - SL en ${stopLossPrice}`);
       
       const promises: Promise<any>[] = [];
       
-      // Agregar TP solo si es válido (o si no se pudo obtener el precio, configurar de todas formas)
-      if (isValidTP) {
-        promises.push(
-          this.makeRequest('POST', endpoint, credentials, tpPayload, logContext ? {
-            userId: logContext.userId,
-            strategyId: logContext.strategyId,
-            symbol: symbol,
-            operationType: 'setTakeProfit',
-            orderId: logContext.orderId,
-            clientOid: tpPayload.clientOid,
-          } : undefined).then(result => {
-            console.log(`[Bitget] ✅ Take Profit configurado exitosamente`);
-            return { type: 'take_profit', result, success: true };
-          }).catch(error => {
-            console.error(`[Bitget] ❌ Error en Take Profit: ${error.message}`);
-            return { type: 'take_profit', error: error.message, success: false };
-          })
-        );
-      } else {
-        console.warn(`[Bitget] ⚠️ Take Profit (${formattedTP}) no es válido para posición ${holdSide} con precio actual ${currentPrice}. Se omitirá TP.`);
-        promises.push(Promise.resolve({ type: 'take_profit', error: `TP inválido: ${formattedTP} no es mayor que precio actual ${currentPrice}`, success: false }));
-      }
+      // SIEMPRE agregar TP
+      promises.push(
+        this.makeRequest('POST', endpoint, credentials, tpPayload, logContext ? {
+          userId: logContext.userId,
+          strategyId: logContext.strategyId,
+          symbol: symbol,
+          operationType: 'setTakeProfit',
+          orderId: logContext.orderId,
+          clientOid: tpPayload.clientOid,
+        } : undefined).then(result => {
+          console.log(`[Bitget] ✅ Take Profit configurado exitosamente`);
+          return { type: 'take_profit', result, success: true };
+        }).catch(error => {
+          console.error(`[Bitget] ❌ Error en Take Profit: ${error.message}`);
+          return { type: 'take_profit', error: error.message, success: false };
+        })
+      );
       
       // Siempre agregar SL
       promises.push(
@@ -663,39 +694,38 @@ export class BitgetService {
       // 2. Take Profit parcial en breakeven (si existe)
       if (formattedBreakeven && formattedBreakeven > 0) {
         // Validar que breakeven sea mayor que el precio actual para long, o menor para short
-        // Solo incluir breakeven si se pudo validar correctamente
-        let isValidBreakeven = false;
+        // Si no se puede validar, CONFIGURAR DE TODAS FORMAS (es mejor tener protección que no tenerla)
+        let isValidBreakeven = true; // Por defecto, asumir válido
+        
         if (currentPrice !== null) {
           isValidBreakeven = (holdSide === 'long' && formattedBreakeven > currentPrice) ||
                              (holdSide === 'short' && formattedBreakeven < currentPrice);
-        }
-        
-        if (currentPrice === null) {
-          console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se omitirá TP breakeven para evitar errores.`);
-        } else if (!isValidBreakeven) {
-          console.warn(`[Bitget] ⚠️ Breakeven (${formattedBreakeven}) no es válido para posición ${holdSide} con precio actual ${currentPrice}. Se omitirá.`);
-        }
-        
-        if (currentPrice !== null && isValidBreakeven) {
-          const positionSizeNum = parseFloat(positionSize);
-          const breakevenSize = (positionSizeNum * 0.5).toFixed(contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0);
-          const breakevenRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
           
-          const breakevenClientOid = `TP_BE_${symbol.substring(0, 8)}_${baseId}_${breakevenRandom}`.substring(0, 64);
-          const breakevenPayload: any = {
-            marginCoin: marginCoin.toUpperCase(),
-            productType: productType.toLowerCase(),
-            symbol: symbol.toUpperCase(),
-            planType: 'pos_profit',
-            triggerPrice: formattedBreakeven.toString(),
-            triggerType: 'fill_price',
-            executePrice: formattedBreakeven.toString(),
-            holdSide,
-            size: breakevenSize,
-            clientOid: breakevenClientOid,
-          };
-          orders.push({ type: 'breakeven_tp_50', payload: breakevenPayload, description: `TP 50% (${breakevenSize}) en breakeven ${formattedBreakeven}` });
+          if (!isValidBreakeven) {
+            console.warn(`[Bitget] ⚠️ ADVERTENCIA: Breakeven (${formattedBreakeven}) podría no ser válido para posición ${holdSide} con precio actual ${currentPrice}. Se configurará de todas formas.`);
+          }
+        } else {
+          console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se configurará TP breakeven sin validación.`);
         }
+        
+        const positionSizeNum = parseFloat(positionSize);
+        const breakevenSize = (positionSizeNum * 0.5).toFixed(contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0);
+        const breakevenRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+        
+        const breakevenClientOid = `TP_BE_${symbol.substring(0, 8)}_${baseId}_${breakevenRandom}`.substring(0, 64);
+        const breakevenPayload: any = {
+          marginCoin: marginCoin.toUpperCase(),
+          productType: productType.toLowerCase(),
+          symbol: symbol.toUpperCase(),
+          planType: 'pos_profit',
+          triggerPrice: formattedBreakeven.toString(),
+          triggerType: 'fill_price',
+          executePrice: formattedBreakeven.toString(),
+          holdSide,
+          size: breakevenSize,
+          clientOid: breakevenClientOid,
+        };
+        orders.push({ type: 'breakeven_tp_50', payload: breakevenPayload, description: `TP 50% (${breakevenSize}) en breakeven ${formattedBreakeven}` });
       }
 
       // 3. Take Profit final
@@ -712,36 +742,35 @@ export class BitgetService {
       }
       
       // Validar que TP sea mayor que el precio actual para long, o menor para short
-      // Solo incluir TP si se pudo validar correctamente
-      let isValidTP = false;
+      // Si no se puede validar, CONFIGURAR DE TODAS FORMAS (es mejor tener protección que no tenerla)
+      let isValidTP = true; // Por defecto, asumir válido
+      
       if (currentPrice !== null) {
         isValidTP = (holdSide === 'long' && formattedTP > currentPrice) ||
                      (holdSide === 'short' && formattedTP < currentPrice);
+        
+        if (!isValidTP) {
+          console.warn(`[Bitget] ⚠️ ADVERTENCIA: Take Profit (${formattedTP}) podría no ser válido para posición ${holdSide} con precio actual ${currentPrice}. Se configurará de todas formas.`);
+        }
+      } else {
+        console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se configurará TP final sin validación.`);
       }
       
-      if (currentPrice === null) {
-        console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se omitirá TP final para evitar errores.`);
-      } else if (!isValidTP) {
-        console.warn(`[Bitget] ⚠️ Take Profit (${formattedTP}) no es válido para posición ${holdSide} con precio actual ${currentPrice}. Se omitirá.`);
-      }
-      
-      if (currentPrice !== null && isValidTP) {
-        const tpFinalRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-        const tpFinalClientOid = `TP_F_${symbol.substring(0, 8)}_${baseId}_${tpFinalRandom}`.substring(0, 64);
-        const tpPayload: any = {
-          marginCoin: marginCoin.toUpperCase(),
-          productType: productType.toLowerCase(),
-          symbol: symbol.toUpperCase(),
-          planType: 'pos_profit',
-          triggerPrice: formattedTP.toString(),
-          triggerType: 'fill_price',
-          executePrice: formattedTP.toString(),
-          holdSide,
-          size: finalTPSize,
-          clientOid: tpFinalClientOid,
-        };
-        orders.push({ type: 'take_profit_final', payload: tpPayload, description: `TP ${finalTPDescription} en ${formattedTP}` });
-      }
+      const tpFinalRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      const tpFinalClientOid = `TP_F_${symbol.substring(0, 8)}_${baseId}_${tpFinalRandom}`.substring(0, 64);
+      const tpPayload: any = {
+        marginCoin: marginCoin.toUpperCase(),
+        productType: productType.toLowerCase(),
+        symbol: symbol.toUpperCase(),
+        planType: 'pos_profit',
+        triggerPrice: formattedTP.toString(),
+        triggerType: 'fill_price',
+        executePrice: formattedTP.toString(),
+        holdSide,
+        size: finalTPSize,
+        clientOid: tpFinalClientOid,
+      };
+      orders.push({ type: 'take_profit_final', payload: tpPayload, description: `TP ${finalTPDescription} en ${formattedTP}` });
 
       // Ejecutar TODAS las órdenes en PARALELO
       console.log(`[Bitget] 📋 Ejecutando ${orders.length} órdenes TP/SL simultáneamente...`);
