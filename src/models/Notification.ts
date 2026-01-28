@@ -55,6 +55,10 @@ export class NotificationModel {
     unreadOnly: boolean = false
   ): Promise<Notification[]> {
     try {
+      // Asegurar que limit y offset sean enteros
+      const limitInt = Math.max(1, Math.floor(limit));
+      const offsetInt = Math.max(0, Math.floor(offset));
+      
       let query = 'SELECT * FROM notifications WHERE user_id = ?';
       const params: any[] = [userId];
       
@@ -62,8 +66,9 @@ export class NotificationModel {
         query += ' AND is_read = false';
       }
       
-      query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-      params.push(limit, offset);
+      // Usar valores literales para LIMIT y OFFSET en lugar de parámetros preparados
+      // Esto evita el error "Incorrect arguments to mysqld_stmt_execute"
+      query += ` ORDER BY created_at DESC LIMIT ${limitInt} OFFSET ${offsetInt}`;
       
       const [rows] = await pool.execute(query, params);
       const notifications = rows as Notification[];
