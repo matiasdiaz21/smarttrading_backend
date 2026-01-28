@@ -134,3 +134,27 @@ export interface TradingViewAlert {
   timeframe?: string;
   [key: string]: any;
 }
+
+export type NotificationType = 
+  | 'trade_executed' 
+  | 'trade_failed' 
+  | 'tp_failed' 
+  | 'sl_failed' 
+  | 'tp_sl_failed' 
+  | 'position_warning' 
+  | 'system';
+
+export type NotificationSeverity = 'info' | 'warning' | 'error' | 'critical';
+
+export interface Notification {
+  id: number;
+  user_id: number;
+  type: NotificationType;
+  title: string;
+  message: string;
+  severity: NotificationSeverity;
+  is_read: boolean;
+  metadata: any;
+  created_at: Date;
+  read_at: Date | null;
+}

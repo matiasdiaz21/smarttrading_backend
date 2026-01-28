@@ -26,6 +26,7 @@ import { NOWPaymentsCredentialsController } from './controllers/nowpaymentsCrede
 import { NOWPaymentsController } from './controllers/nowpayments.controller';
 import { AdminController } from './controllers/admin.controller';
 import { StatsController } from './controllers/stats.controller';
+import { NotificationsController } from './controllers/notifications.controller';
 import { authenticate, requireAdmin } from './middleware/auth';
 import { authLimiter, webhookLimiter } from './middleware/rateLimit';
 import { config } from './config';
@@ -96,6 +97,12 @@ app.get('/api/user/subscription', authenticate, UserController.getSubscriptionSt
 app.get('/api/user/pending-payment', authenticate, UserController.getPendingPayment);
 app.post('/api/user/trading-terms/accept', authenticate, UserController.acceptTradingTerms);
 app.get('/api/user/trading-terms/status', authenticate, UserController.getTradingTermsStatus);
+
+// Notifications routes
+app.get('/api/notifications', authenticate, NotificationsController.getNotifications);
+app.get('/api/notifications/unread-count', authenticate, NotificationsController.getUnreadCount);
+app.post('/api/notifications/:id/read', authenticate, NotificationsController.markAsRead);
+app.post('/api/notifications/read-all', authenticate, NotificationsController.markAllAsRead);
 
 // Webhook routes (público, pero con verificación HMAC)
 app.get('/api/webhooks/tradingview/test', WebhookController.test); // Endpoint de prueba

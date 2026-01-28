@@ -4,6 +4,7 @@ import { SubscriptionModel } from '../models/Subscription';
 import { TradeModel } from '../models/Trade';
 import { UserModel } from '../models/User';
 import { PaymentSubscriptionModel } from '../models/PaymentSubscription';
+import { NotificationModel } from '../models/Notification';
 import { TradingViewAlert } from '../types';
 import { decrypt } from '../utils/encryption';
 import OrderErrorModel from '../models/orderError.model';
@@ -373,6 +374,9 @@ export class TradingService {
       }
 
       // Configurar Stop Loss y Take Profit si están disponibles
+      let tpslConfigured = false;
+      let tpslError: any = null;
+      
       if (alert.stopLoss && alert.takeProfit) {
         try {
           console.log(`[TradeService] 📊 Configurando órdenes TP/SL avanzadas para ${symbol}...`);
@@ -381,11 +385,13 @@ export class TradingService {
           console.log(`[TradeService]   Take Profit: ${alert.takeProfit}`);
           console.log(`[TradeService]   Tamaño de posición: ${actualPositionSize}`);
           
+          let tpslResults: any;
+          
           // Si hay breakeven, usar el método avanzado que configura múltiples órdenes
           if (alert.breakeven && alert.breakeven > 0) {
             console.log(`[TradeService] 🎯 Configurando estrategia con breakeven (TP 50% en breakeven, TP 50% en takeProfit)`);
             
-            await this.bitgetService.setAdvancedPositionTPSL(
+            tpslResults = await this.bitgetService.setAdvancedPositionTPSL(
               decryptedCredentials,
               symbol,
               bitgetSide,
@@ -406,7 +412,7 @@ export class TradingService {
             // Si no hay breakeven, usar el método básico (TP 100% en takeProfit)
             console.log(`[TradeService] 🎯 Configurando estrategia básica (TP 100% en takeProfit, sin breakeven)`);
             
-            await this.bitgetService.setPositionTPSL(
+            tpslResults = await this.bitgetService.setPositionTPSL(
               decryptedCredentials,
               symbol,
               bitgetSide,
@@ -424,12 +430,27 @@ export class TradingService {
             );
           }
           
-          console.log(`[TradeService] ✅ Todas las órdenes TP/SL configuradas exitosamente en Bitget`);
-        } catch (tpslError: any) {
-          console.error(`[TradeService] ⚠️ Error al configurar TP/SL: ${tpslError.message}`);
-          // No fallar la operación si el TP/SL falla, la orden ya fue ejecutada
-          // Pero registrar el error para debugging
-          console.error(`[TradeService] Stack trace:`, tpslError.stack);
+          // Verificar si TP y SL se configuraron exitosamente
+          const slSuccess = Array.isArray(tpslResults) ? tpslResults.some(r => r.type === 'stop_loss' && r.success) : false;
+          const tpSuccess = Array.isArray(tpslResults) ? tpslResults.some(r => (r.type === 'take_profit' || r.type === 'take_profit_final') && r.success) : false;
+          
+          if (slSuccess && tpSuccess) {
+            console.log(`[TradeService] ✅ Todas las órdenes TP/SL configuradas exitosamente en Bitget`);
+            tpslConfigured = true;
+          } else if (!slSuccess && !tpSuccess) {
+            console.error(`[TradeService] ❌ CRÍTICO: Ni TP ni SL se pudieron configurar`);
+            tpslError = { type: 'tp_sl_failed', slSuccess, tpSuccess, results: tpslResults };
+          } else if (!slSuccess) {
+            console.error(`[TradeService] ❌ CRÍTICO: Stop Loss no se pudo configurar`);
+            tpslError = { type: 'sl_failed', slSuccess, tpSuccess, results: tpslResults };
+          } else if (!tpSuccess) {
+            console.error(`[TradeService] ⚠️ ADVERTENCIA: Take Profit no se pudo configurar`);
+            tpslError = { type: 'tp_failed', slSuccess, tpSuccess, results: tpslResults };
+          }
+        } catch (error: any) {
+          console.error(`[TradeService] ⚠️ Error al configurar TP/SL: ${error.message}`);
+          console.error(`[TradeService] Stack trace:`, error.stack);
+          tpslError = { type: 'tp_sl_failed', error: error.message };
         }
       } else {
         console.warn(`[TradeService] ⚠️ No se configuró TP/SL: stopLoss=${alert.stopLoss}, takeProfit=${alert.takeProfit}`);
@@ -458,6 +479,72 @@ export class TradingService {
       );
 
       console.log(`[TradeService] ✅ Trade registrado en base de datos con ID: ${tradeId}`);
+
+      // Crear notificación para el usuario
+      try {
+        if (tpslConfigured) {
+          // Trade ejecutado exitosamente con TP/SL
+          await NotificationModel.create(
+            userId,
+            'trade_executed',
+            `Trade ejecutado: ${symbol}`,
+            `Posición ${bitgetSide === 'buy' ? 'LONG' : 'SHORT'} abierta en ${symbol} con ${actualPositionSize} contratos. TP y SL configurados correctamente.`,
+            'info',
+            {
+              symbol,
+              side: bitgetSide,
+              size: actualPositionSize,
+              entryPrice: alert.entryPrice,
+              stopLoss: alert.stopLoss,
+              takeProfit: alert.takeProfit,
+              orderId: result?.orderId,
+              tradeId
+            }
+          );
+        } else if (tpslError) {
+          // Trade ejecutado pero con problemas en TP/SL - NOTIFICACIÓN CRÍTICA
+          const notifType = tpslError.type || 'tp_sl_failed';
+          let title = '';
+          let message = '';
+          let severity: 'warning' | 'error' | 'critical' = 'critical';
+          
+          if (notifType === 'tp_sl_failed') {
+            title = `⚠️ CRÍTICO: Trade sin protección - ${symbol}`;
+            message = `Posición ${bitgetSide === 'buy' ? 'LONG' : 'SHORT'} abierta en ${symbol} pero NO SE PUDO CONFIGURAR ni Take Profit ni Stop Loss. Tu posición está SIN PROTECCIÓN. Configura manualmente TP/SL en Bitget inmediatamente.`;
+            severity = 'critical';
+          } else if (notifType === 'sl_failed') {
+            title = `⚠️ CRÍTICO: Sin Stop Loss - ${symbol}`;
+            message = `Posición ${bitgetSide === 'buy' ? 'LONG' : 'SHORT'} abierta en ${symbol} pero NO SE PUDO CONFIGURAR el Stop Loss. Tu posición está sin protección contra pérdidas. Configura manualmente el SL en Bitget inmediatamente.`;
+            severity = 'critical';
+          } else if (notifType === 'tp_failed') {
+            title = `⚠️ Sin Take Profit - ${symbol}`;
+            message = `Posición ${bitgetSide === 'buy' ? 'LONG' : 'SHORT'} abierta en ${symbol} pero NO SE PUDO CONFIGURAR el Take Profit. El Stop Loss está activo. Considera configurar manualmente el TP en Bitget.`;
+            severity = 'warning';
+          }
+          
+          await NotificationModel.create(
+            userId,
+            notifType as any,
+            title,
+            message,
+            severity,
+            {
+              symbol,
+              side: bitgetSide,
+              size: actualPositionSize,
+              entryPrice: alert.entryPrice,
+              stopLoss: alert.stopLoss,
+              takeProfit: alert.takeProfit,
+              orderId: result?.orderId,
+              tradeId,
+              error: tpslError
+            }
+          );
+        }
+      } catch (notifError: any) {
+        console.error(`[TradeService] ❌ Error al crear notificación: ${notifError.message}`);
+        // No fallar la operación si la notificación falla
+      }
 
       return { success: true, orderId: result?.orderId || existingPosition?.positionId || 'existing' };
     } catch (error: any) {
