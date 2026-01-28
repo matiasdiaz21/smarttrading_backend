@@ -29,36 +29,40 @@ export interface BitgetOperationLogWithDetails extends BitgetOperationLog {
 
 // Función helper para parsear JSON de forma segura
 function safeJsonParse(value: any): any {
+  // Si es null o undefined, retornar null
   if (value === null || value === undefined) return null;
   
-  if (typeof value === 'object' && !Array.isArray(value) && !Buffer.isBuffer(value)) {
-    if (value.toString && value.toString() === '[object Object]') {
-      return null;
-    }
-    return value;
+  // Si ya es un objeto válido (MySQL puede retornar JSON ya parseado), retornarlo directamente
+  if (typeof value === 'object' && !Buffer.isBuffer(value)) {
+    // Verificar que no sea un objeto vacío inválido
+    if (Array.isArray(value)) return value;
+    if (Object.keys(value).length > 0) return value;
+    return null;
   }
   
+  // Si es un Buffer, convertir a string
   if (Buffer.isBuffer(value)) {
     value = value.toString('utf8');
   }
   
+  // Si es string, intentar parsear
   if (typeof value === 'string') {
-    if (value === '[object Object]' || value.trim() === '[object Object]') {
+    // Strings vacíos o inválidos
+    if (value.trim() === '' || value === '[object Object]' || value.trim() === '[object Object]') {
       return null;
     }
     
-    if (value.trim() === '') {
-      return null;
-    }
-    
+    // Intentar parsear el JSON
     try {
-      return JSON.parse(value);
+      const parsed = JSON.parse(value);
+      return parsed;
     } catch (e) {
-      console.warn(`[BitgetOperationLog] Error parsing JSON: ${value.substring(0, 100)}`);
+      console.warn(`[BitgetOperationLog] Error parsing JSON string: ${value.substring(0, 100)}`);
       return null;
     }
   }
   
+  // Para cualquier otro tipo, retornar el valor tal cual
   return value;
 }
 
@@ -163,12 +167,27 @@ class BitgetOperationLogModel {
     
     const [rows] = await pool.execute<RowDataPacket[]>(query, params);
 
-    return rows.map((row) => ({
-      ...row,
-      request_payload: safeJsonParse(row.request_payload),
-      request_headers: safeJsonParse(row.request_headers),
-      response_data: safeJsonParse(row.response_data),
-    })) as BitgetOperationLogWithDetails[];
+    return rows.map((row) => {
+      // Debug: ver qué tipo de datos estamos recibiendo de MySQL
+      if (row.id && !row.success) {
+        console.log(`[BitgetOperationLog.getAll] Row ${row.id}:`);
+        console.log(`  - request_payload type: ${typeof row.request_payload}, is null: ${row.request_payload === null}`);
+        console.log(`  - response_data type: ${typeof row.response_data}, is null: ${row.response_data === null}`);
+        if (row.request_payload !== null) {
+          console.log(`  - request_payload sample:`, JSON.stringify(row.request_payload).substring(0, 100));
+        }
+        if (row.response_data !== null) {
+          console.log(`  - response_data sample:`, JSON.stringify(row.response_data).substring(0, 100));
+        }
+      }
+      
+      return {
+        ...row,
+        request_payload: safeJsonParse(row.request_payload),
+        request_headers: safeJsonParse(row.request_headers),
+        response_data: safeJsonParse(row.response_data),
+      };
+    }) as BitgetOperationLogWithDetails[];
   }
 
   async getBySymbol(symbol: string, limit: number = 50, reviewed?: boolean): Promise<BitgetOperationLogWithDetails[]> {
