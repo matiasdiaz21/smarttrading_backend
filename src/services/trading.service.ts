@@ -137,10 +137,23 @@ export class TradingService {
       if (userPositionSize !== null && userPositionSize !== undefined && userPositionSize > 0 && entryPrice) {
         // Usar position_size personalizado del usuario (en USDT)
         // Convertir USDT a contratos: position_size / precio
+        // IMPORTANTE: Agregar margen de seguridad del 10% para órdenes de mercado
+        // porque el precio puede variar ligeramente y caer por debajo del mínimo
         const price = parseFloat(entryPrice.toString());
-        requestedSize = (userPositionSize / price).toString();
-        positionSizeSource = `personalizado del usuario (${userPositionSize} USDT)`;
-        console.log(`[TradeService] ✅ Usando position_size personalizado: ${userPositionSize} USDT / ${price} = ${requestedSize} contratos`);
+        const minUSDT = parseFloat(contractInfo.minTradeUSDT);
+        
+        // Si el position_size está muy cerca del mínimo, agregar margen de seguridad
+        const effectivePositionSize = userPositionSize < minUSDT * 1.5 
+          ? userPositionSize * 1.1  // Agregar 10% de margen si está cerca del mínimo
+          : userPositionSize;
+        
+        requestedSize = (effectivePositionSize / price).toString();
+        positionSizeSource = `personalizado del usuario (${userPositionSize.toFixed(2)} USDT${effectivePositionSize !== userPositionSize ? ' + 10% margen' : ''})`;
+        console.log(`[TradeService] ✅ Usando position_size personalizado: ${effectivePositionSize.toFixed(8)} USDT / ${price} = ${requestedSize} contratos`);
+        
+        if (effectivePositionSize !== userPositionSize) {
+          console.log(`[TradeService] 📊 Margen de seguridad aplicado: ${userPositionSize.toFixed(2)} USDT → ${effectivePositionSize.toFixed(2)} USDT (para evitar rechazo por precio de mercado)`);
+        }
       } else if (!requestedSize && entryPrice) {
         // Calcular el tamaño mínimo basado en minTradeUSDT y el precio de entrada
         const minUSDT = parseFloat(contractInfo.minTradeUSDT);
