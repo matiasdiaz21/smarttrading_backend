@@ -4,7 +4,6 @@ import { CredentialsModel } from '../models/Credentials';
 import { SubscriptionModel } from '../models/Subscription';
 import { encrypt } from '../utils/encryption';
 import { BitgetService } from '../services/bitget.service';
-import pool from '../config/database';
 
 export class CredentialsController {
   static async list(req: AuthRequest, res: Response): Promise<void> {
@@ -61,8 +60,7 @@ export class CredentialsController {
       const encryptedApiSecret = encrypt(api_secret);
       const encryptedPassphrase = encrypt(passphrase);
 
-      // Desactivar todas las credenciales existentes antes de crear la nueva
-      const existingCredentials = await CredentialsModel.findByUserId(req.user.userId);
+      // Desactivar todas las credenciales existentes antes de crear la nueva (por seguridad)
       for (const cred of existingCredentials) {
         if (cred.is_active) {
           await CredentialsModel.update(
