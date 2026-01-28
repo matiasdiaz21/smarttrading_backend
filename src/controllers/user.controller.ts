@@ -6,6 +6,7 @@ import { TradeModel } from '../models/Trade';
 import { PaymentSubscriptionModel } from '../models/PaymentSubscription';
 import { UserModel } from '../models/User';
 import { WebhookLogModel } from '../models/WebhookLog';
+import { RiskAcceptanceModel } from '../models/RiskAcceptance';
 
 export class UserController {
   static async getStrategies(req: AuthRequest, res: Response): Promise<void> {
@@ -107,7 +108,7 @@ export class UserController {
       }
 
       const { id } = req.params;
-      const { enabled } = req.body;
+      const { enabled, riskAcceptance } = req.body;
 
       if (typeof enabled !== 'boolean') {
         res.status(400).json({ error: 'enabled must be a boolean' });
@@ -125,6 +126,36 @@ export class UserController {
           error: 'Not subscribed to this strategy',
         });
         return;
+      }
+
+      // Si se está activando la estrategia, verificar aceptación de riesgo
+      if (enabled) {
+        const hasAccepted = await RiskAcceptanceModel.hasAccepted(req.user.userId, parseInt(id));
+        
+        if (!hasAccepted) {
+          // Si no ha aceptado antes, requiere que envíe la aceptación
+          if (!riskAcceptance || typeof riskAcceptance !== 'string') {
+            res.status(400).json({ 
+              error: 'Risk acceptance required',
+              requiresRiskAcceptance: true 
+            });
+            return;
+          }
+          
+          // Registrar la aceptación de riesgo
+          const ipAddress = req.ip || req.headers['x-forwarded-for'] as string || req.socket.remoteAddress;
+          const userAgent = req.headers['user-agent'];
+          
+          await RiskAcceptanceModel.create(
+            req.user.userId,
+            parseInt(id),
+            riskAcceptance,
+            ipAddress,
+            userAgent
+          );
+          
+          console.log(`[UserController] ✅ Aceptación de riesgo registrada para usuario ${req.user.userId}, estrategia ${id}`);
+        }
       }
 
       await SubscriptionModel.toggle(req.user.userId, parseInt(id), enabled);
