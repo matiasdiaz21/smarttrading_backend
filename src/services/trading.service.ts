@@ -142,18 +142,19 @@ export class TradingService {
         // porque el precio puede variar ligeramente y caer por debajo del mínimo
         const price = parseFloat(entryPrice.toString());
         const minUSDT = parseFloat(contractInfo.minTradeUSDT);
+        const userPositionSizeNum = parseFloat(userPositionSize.toString());
         
         // Si el position_size está muy cerca del mínimo, agregar margen de seguridad
-        const effectivePositionSize = userPositionSize < minUSDT * 1.5 
-          ? userPositionSize * 1.1  // Agregar 10% de margen si está cerca del mínimo
-          : userPositionSize;
+        const effectivePositionSize = userPositionSizeNum < minUSDT * 1.5 
+          ? userPositionSizeNum * 1.1  // Agregar 10% de margen si está cerca del mínimo
+          : userPositionSizeNum;
         
         requestedSize = (effectivePositionSize / price).toString();
-        positionSizeSource = `personalizado del usuario (${userPositionSize.toFixed(2)} USDT${effectivePositionSize !== userPositionSize ? ' + 10% margen' : ''})`;
+        positionSizeSource = `personalizado del usuario (${userPositionSizeNum.toFixed(2)} USDT${effectivePositionSize !== userPositionSizeNum ? ' + 10% margen' : ''})`;
         console.log(`[TradeService] ✅ Usando position_size personalizado: ${effectivePositionSize.toFixed(8)} USDT / ${price} = ${requestedSize} contratos`);
         
-        if (effectivePositionSize !== userPositionSize) {
-          console.log(`[TradeService] 📊 Margen de seguridad aplicado: ${userPositionSize.toFixed(2)} USDT → ${effectivePositionSize.toFixed(2)} USDT (para evitar rechazo por precio de mercado)`);
+        if (effectivePositionSize !== userPositionSizeNum) {
+          console.log(`[TradeService] 📊 Margen de seguridad aplicado: ${userPositionSizeNum.toFixed(2)} USDT → ${effectivePositionSize.toFixed(2)} USDT (para evitar rechazo por precio de mercado)`);
         }
       } else if (!requestedSize && entryPrice) {
         // Calcular el tamaño mínimo basado en minTradeUSDT y el precio de entrada
