@@ -338,6 +338,7 @@ var float tradeBreakeven            = 0.0
 var int tradeId                     = 0
 var int tradeEntryBar               = -1
 var int tradeBeBar                  = -1
+var int lastCloseBar                = -1
 var bool tpTriggered                = false
 var bool slTriggered                = false
 var bool beTriggered                = false
@@ -1002,7 +1003,7 @@ if enableTradingInput
         sigInfo := sigInfo == "" ? "BOS" : sigInfo + "+BOS"
 
     // ── OPEN LONG ──
-    if longSignal and not tradeIsOpen and longDistOk
+    if longSignal and not tradeIsOpen and longDistOk and bar_index > lastCloseBar
         tradeEntry := close
         tradeStop := longStopLevel
         tradeOriginalStop := longStopLevel
@@ -1028,7 +1029,7 @@ if enableTradingInput
         label.new(bar_index, close, text="Long\nID:" + str.tostring(tradeId) + "\n" + sigInfo, style=label.style_label_up, color=color.green, textcolor=color.white, size=tradeTextSize)
 
     // ── OPEN SHORT ──
-    if shortSignal and not tradeIsOpen and shortDistOk
+    if shortSignal and not tradeIsOpen and shortDistOk and bar_index > lastCloseBar
         tradeEntry := close
         tradeStop := shortStopLevel
         tradeOriginalStop := shortStopLevel
@@ -1125,6 +1126,7 @@ if enableTradingInput and tradeIsOpen and useCloseOnOppositeInput and bar_index 
         plotTpS := 0.0
         plotStopS := 0.0
         tradeBreakeven := 0.0
+        lastCloseBar := bar_index
         tradeIsOpen := false
         tradeType := "na"
 
@@ -1160,6 +1162,7 @@ if enableTradingInput and tradeIsOpen and useMaxDurationInput and bar_index > tr
         plotTpS := 0.0
         plotStopS := 0.0
         tradeBreakeven := 0.0
+        lastCloseBar := bar_index
         tradeIsOpen := false
         tradeType := "na"
 
@@ -1187,6 +1190,7 @@ if enableTradingInput and tradeIsOpen and bar_index > tradeEntryBar
         plotTpS := 0.0
         plotStopS := 0.0
         tradeBreakeven := 0.0
+        lastCloseBar := bar_index
         tradeIsOpen := false
         tradeType := "na"
 
@@ -1212,6 +1216,7 @@ if enableTradingInput and tradeIsOpen and bar_index > tradeEntryBar
         plotTpL := 0.0
         plotStopL := 0.0
         tradeBreakeven := 0.0
+        lastCloseBar := bar_index
         tradeIsOpen := false
         tradeType := "na"
 
@@ -1243,6 +1248,7 @@ if enableTradingInput and tradeIsOpen and bar_index > tradeEntryBar and bar_inde
         plotTpS := 0.0
         plotStopS := 0.0
         tradeBreakeven := 0.0
+        lastCloseBar := bar_index
         tradeIsOpen := false
         tradeType := "na"
 
@@ -1272,6 +1278,7 @@ if enableTradingInput and tradeIsOpen and bar_index > tradeEntryBar and bar_inde
         plotTpL := 0.0
         plotStopL := 0.0
         tradeBreakeven := 0.0
+        lastCloseBar := bar_index
         tradeIsOpen := false
         tradeType := "na"
 
