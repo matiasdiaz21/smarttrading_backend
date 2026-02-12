@@ -148,7 +148,7 @@ breakevenRatioInput             = input.float(  0.5,        'Breakeven Ratio (0-
 numOpsInput                     = input.int(    20,         'Operations for Winrate',   group = TRADING_GROUP, minval = 1)
 decimalInput                    = input.int(    5,          'Decimals',                 group = TRADING_GROUP, minval = 0, step = 1)
 
-useTrendFilterInput             = input(        false,      'Trend Alignment Filter',   group = TRADING_FILTERS_GROUP, tooltip = 'Only trade in direction of swing trend.\nLong only if swing trend is BULLISH.\nShort only if swing trend is BEARISH.')
+trendFilterModeInput            = input.string( 'Off',      'Trend Filter',             group = TRADING_FILTERS_GROUP, options = ['Off', 'Swing', 'Internal', 'Both'], tooltip = 'Off = No trend filter\nSwing = Only swing trend (slow, for 1H+)\nInternal = Only internal trend (fast, reactive)\nBoth = Both must agree (strictest, best for 5m-15m)\n\nPrevents trading against the trend.')
 useOBFilterInput                = input(        false,      'Order Block Confluence',   group = TRADING_FILTERS_GROUP, tooltip = 'Only enter near an Order Block')
 useFVGFilterInput               = input(        false,      'FVG Confluence',           group = TRADING_FILTERS_GROUP, tooltip = 'Only enter inside a Fair Value Gap')
 useZoneFilterInput              = input(        false,      'Premium/Discount Filter',  group = TRADING_FILTERS_GROUP, tooltip = 'Long in Discount, Short in Premium')
@@ -979,10 +979,16 @@ if enableTradingInput
         longSignal := hasLongCHoCH or hasLongBOS
         shortSignal := hasShortCHoCH or hasShortBOS
 
-    // Confluence filters
-    if useTrendFilterInput
+    // Trend alignment filter
+    if trendFilterModeInput == 'Swing'
         longSignal := longSignal and swingTrend.bias == BULLISH
         shortSignal := shortSignal and swingTrend.bias == BEARISH
+    else if trendFilterModeInput == 'Internal'
+        longSignal := longSignal and internalTrend.bias == BULLISH
+        shortSignal := shortSignal and internalTrend.bias == BEARISH
+    else if trendFilterModeInput == 'Both'
+        longSignal := longSignal and swingTrend.bias == BULLISH and internalTrend.bias == BULLISH
+        shortSignal := shortSignal and swingTrend.bias == BEARISH and internalTrend.bias == BEARISH
     if useOBFilterInput
         longSignal := longSignal and isNearBullishOB()
         shortSignal := shortSignal and isNearBearishOB()
@@ -1339,8 +1345,8 @@ if enableTradingInput and showTradeTableInput
 
     // Build active filters string
     string activeFilters = ""
-    if useTrendFilterInput
-        activeFilters := activeFilters + "TRD "
+    if trendFilterModeInput != 'Off'
+        activeFilters := activeFilters + "TRD:" + trendFilterModeInput + " "
     if useOBFilterInput
         activeFilters := activeFilters + "OB "
     if useFVGFilterInput
