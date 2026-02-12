@@ -152,7 +152,10 @@ useTrendFilterInput             = input(        false,      'Trend Alignment Fil
 useOBFilterInput                = input(        false,      'Order Block Confluence',   group = TRADING_FILTERS_GROUP, tooltip = 'Only enter near an Order Block')
 useFVGFilterInput               = input(        false,      'FVG Confluence',           group = TRADING_FILTERS_GROUP, tooltip = 'Only enter inside a Fair Value Gap')
 useZoneFilterInput              = input(        false,      'Premium/Discount Filter',  group = TRADING_FILTERS_GROUP, tooltip = 'Long in Discount, Short in Premium')
-useDynamicSLInput               = input(        false,      'Dynamic SL (Internal)',    group = TRADING_FILTERS_GROUP, tooltip = 'Use internal swing low/high as SL instead of swing.\nResults in tighter stops and faster trades.')
+slModeInput                     = input.string( 'Swing',    'Stop Loss Mode',          group = TRADING_FILTERS_GROUP, options = ['Swing', 'Internal', 'ATR'], tooltip = 'Swing = Last swing high/low (wide, default)\nInternal = Last internal swing (tighter)\nATR = Fixed ATR distance (tightest, best for low TF)')
+atrSLMultiplierInput            = input.float(  1.5,        'ATR SL Multiplier',       group = TRADING_FILTERS_GROUP, minval = 0.5, maxval = 5.0, step = 0.1, tooltip = 'Multiplier for ATR-based SL. Lower = tighter stop.\n1.0 = 1x ATR, 1.5 = 1.5x ATR, etc.')
+useMaxSLDistInput               = input(        true,       'Max SL Distance (ATR)',   group = TRADING_FILTERS_GROUP, tooltip = 'Reject trades where SL distance exceeds N x ATR.\nPrevents entering trades with stops too far away.')
+maxSLDistMultInput              = input.float(  3.0,        'Max SL Distance Mult',    group = TRADING_FILTERS_GROUP, minval = 1.0, maxval = 10.0, step = 0.5, tooltip = 'Maximum allowed SL distance as ATR multiple.\nTrades with SL further than this are skipped.')
 useTrailingStopInput            = input(        false,      'Trailing Stop',            group = TRADING_FILTERS_GROUP, tooltip = 'Move SL to each new internal swing high/low as the trade moves in your favor.')
 useMaxDurationInput             = input(        false,      'Max Trade Duration',       group = TRADING_FILTERS_GROUP, tooltip = 'Close trade after N bars if TP/SL not hit.')
 maxDurationBarsInput            = input.int(    50,         'Max Duration (bars)',      group = TRADING_FILTERS_GROUP, minval = 5, maxval = 500, step = 5, tooltip = 'Number of bars before forcing trade close.')
@@ -990,12 +993,33 @@ if enableTradingInput
         longSignal := longSignal and isInDiscountZone()
         shortSignal := shortSignal and isInPremiumZone()
 
-    // Stop levels - dynamic uses internal swing, normal uses swing
-    float longStopLevel = useDynamicSLInput and not na(internalLow.currentLevel) and internalLow.currentLevel < close ? internalLow.currentLevel : swingLow.currentLevel
-    float shortStopLevel = useDynamicSLInput and not na(internalHigh.currentLevel) and internalHigh.currentLevel > close ? internalHigh.currentLevel : swingHigh.currentLevel
+    // Stop levels based on SL mode
+    float longStopLevel = na
+    float shortStopLevel = na
+    float atrDist = atrMeasure * atrSLMultiplierInput
+
+    if slModeInput == 'ATR'
+        longStopLevel := close - atrDist
+        shortStopLevel := close + atrDist
+    else if slModeInput == 'Internal'
+        longStopLevel := not na(internalLow.currentLevel) and internalLow.currentLevel < close ? internalLow.currentLevel : close - atrDist
+        shortStopLevel := not na(internalHigh.currentLevel) and internalHigh.currentLevel > close ? internalHigh.currentLevel : close + atrDist
+    else
+        longStopLevel := swingLow.currentLevel
+        shortStopLevel := swingHigh.currentLevel
+
+    // Min distance check
     float minDist = atrMeasure * 0.3
     bool longDistOk = not na(longStopLevel) and math.abs(close - longStopLevel) >= minDist and close > longStopLevel
     bool shortDistOk = not na(shortStopLevel) and math.abs(shortStopLevel - close) >= minDist and close < shortStopLevel
+
+    // Max SL distance cap - reject trades with SL too far
+    if useMaxSLDistInput
+        float maxDist = atrMeasure * maxSLDistMultInput
+        if longDistOk and math.abs(close - longStopLevel) > maxDist
+            longDistOk := false
+        if shortDistOk and math.abs(shortStopLevel - close) > maxDist
+            shortDistOk := false
 
     // Signal info for labels/alerts
     string sigInfo = hasLongCHoCH or hasShortCHoCH ? "CHoCH" : ""
@@ -1323,18 +1347,19 @@ if enableTradingInput and showTradeTableInput
         activeFilters := activeFilters + "FVG "
     if useZoneFilterInput
         activeFilters := activeFilters + "P/D "
-    if useDynamicSLInput
-        activeFilters := activeFilters + "DSL "
     if useTrailingStopInput
         activeFilters := activeFilters + "TSL "
     if useMaxDurationInput
         activeFilters := activeFilters + "TMO "
     if useCloseOnOppositeInput
         activeFilters := activeFilters + "OPP "
+    if useMaxSLDistInput
+        activeFilters := activeFilters + "CAP "
     if activeFilters == ""
         activeFilters := "NONE"
 
-    string structInfo = tradingSignalInput + " | " + tradingStructureInput
+    string slInfo = slModeInput + (slModeInput == "ATR" ? " x" + str.tostring(atrSLMultiplierInput) : "")
+    string structInfo = tradingSignalInput + " | " + tradingStructureInput + " | SL:" + slInfo
     int tradeBars = tradeIsOpen ? bar_index - tradeEntryBar : 0
 
     table.cell(tradeTable, 0, 0, text="SMC Trading | " + structInfo, text_halign=text.align_center, text_size=tradeTextSize, text_color=color.white, bgcolor=color.rgb(50, 50, 70))
