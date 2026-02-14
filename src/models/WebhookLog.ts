@@ -281,24 +281,36 @@ export class WebhookLogModel {
   }
 
   /**
-   * Obtiene los símbolos distintos que han llegado en webhook_logs (desde payload.symbol).
-   * Útil para sugerir en admin al configurar "símbolos permitidos" por estrategia.
+   * Obtiene los símbolos distintos que han llegado en webhook_logs.
+   * Busca en $.symbol, $.ticker y $.alertData.symbol por compatibilidad con distintos formatos de webhook.
    * @param strategyId Opcional: filtrar por estrategia
    */
   static async getDistinctSymbols(strategyId?: number): Promise<string[]> {
-    let query = `SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')) AS symbol
-      FROM webhook_logs
-      WHERE JSON_EXTRACT(payload, '$.symbol') IS NOT NULL
-        AND TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')), '')) != ''`;
+    const strategyFilter = strategyId !== undefined && strategyId !== null ? ' AND strategy_id = ?' : '';
     const params: any[] = [];
     if (strategyId !== undefined && strategyId !== null) {
-      query += ' AND strategy_id = ?';
       params.push(strategyId);
     }
-    query += ' ORDER BY symbol ASC';
-    const [rows] = await pool.execute(query, params);
-    const list = (rows as { symbol: string }[]).map((r) => {
-      let s = (r.symbol || '').trim().replace(/\.P$/i, '');
+    const [rows] = await pool.execute(
+      `SELECT DISTINCT
+        COALESCE(
+          NULLIF(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')), '')), ''),
+          NULLIF(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.ticker')), '')), ''),
+          NULLIF(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.alertData.symbol')), '')), '')
+        ) AS symbol
+       FROM webhook_logs
+       WHERE (
+         (JSON_EXTRACT(payload, '$.symbol') IS NOT NULL AND TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')), '')) != '')
+         OR (JSON_EXTRACT(payload, '$.ticker') IS NOT NULL AND TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.ticker')), '')) != '')
+         OR (JSON_EXTRACT(payload, '$.alertData.symbol') IS NOT NULL AND TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.alertData.symbol')), '')) != '')
+       )
+       ${strategyFilter}
+       ORDER BY symbol ASC`,
+      params
+    );
+    const list = (rows as { symbol: string | null }[]).map((r) => {
+      const raw = r.symbol || '';
+      const s = raw.trim().replace(/\.P$/i, '');
       return s.toUpperCase();
     });
     return [...new Set(list)].filter(Boolean).sort();
