@@ -61,6 +61,50 @@ export class AdminController {
     }
   }
 
+  /** Elimina un webhook log por id. */
+  static async deleteWebhookLog(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        res.status(400).json({ error: 'Invalid log id' });
+        return;
+      }
+      const deleted = await WebhookLogModel.deleteById(id);
+      if (!deleted) {
+        res.status(404).json({ error: 'Webhook log not found' });
+        return;
+      }
+      res.json({ message: 'Log deleted', id });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /** Elimina todos los logs de un trade (grupo por strategy_id + symbol + trade_id). */
+  static async deleteWebhookLogGroup(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+      const strategyId = parseInt(String(req.body.strategy_id ?? req.query.strategy_id), 10);
+      const symbol = String(req.body.symbol ?? req.query.symbol ?? '').trim();
+      const tradeId = String(req.body.trade_id ?? req.query.trade_id ?? '').trim();
+      if (!Number.isInteger(strategyId) || !symbol || !tradeId) {
+        res.status(400).json({ error: 'strategy_id, symbol and trade_id are required' });
+        return;
+      }
+      const deleted = await WebhookLogModel.deleteGroup(strategyId, symbol, tradeId);
+      res.json({ message: 'Group deleted', deleted });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   static async getStats(req: AuthRequest, res: Response): Promise<void> {
     try {
       if (!req.user || req.user.role !== 'admin') {

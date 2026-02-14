@@ -315,5 +315,39 @@ export class WebhookLogModel {
     });
     return [...new Set(list)].filter(Boolean).sort();
   }
+
+  /** Elimina un log por id. */
+  static async deleteById(id: number): Promise<boolean> {
+    const idInt = parseInt(String(id), 10);
+    if (!Number.isInteger(idInt)) return false;
+    const [result] = await pool.execute('DELETE FROM webhook_logs WHERE id = ?', [idInt]);
+    return (result as any).affectedRows > 0;
+  }
+
+  /**
+   * Elimina todos los logs de un trade (mismo strategy_id, symbol y trade_id en payload).
+   * Acepta symbol en $.symbol, $.ticker o $.alertData.symbol y trade_id en $.alertData.id o $.trade_id.
+   */
+  static async deleteGroup(strategyId: number, symbol: string, tradeId: string): Promise<number> {
+    const strategyIdInt = parseInt(String(strategyId), 10);
+    if (!Number.isInteger(strategyIdInt)) return 0;
+    const symbolNorm = String(symbol).trim().toUpperCase();
+    const tradeIdStr = String(tradeId).trim();
+    const [result] = await pool.execute(
+      `DELETE FROM webhook_logs
+       WHERE strategy_id = ?
+         AND (
+           UPPER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')), ''))) = ?
+           OR UPPER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.ticker')), ''))) = ?
+           OR UPPER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.alertData.symbol')), ''))) = ?
+         )
+         AND (
+           TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.alertData.id')), '')) = ?
+           OR TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.trade_id')), '')) = ?
+         )`,
+      [strategyIdInt, symbolNorm, symbolNorm, symbolNorm, tradeIdStr, tradeIdStr]
+    );
+    return (result as any).affectedRows || 0;
+  }
 }
 
