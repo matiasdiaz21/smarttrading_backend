@@ -84,6 +84,25 @@ export class AdminController {
     }
   }
 
+  /** Elimina todos los logs de un símbolo (grupo completo del símbolo). */
+  static async deleteWebhookLogSymbolGroup(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+      const symbol = String(req.body.symbol ?? req.query.symbol ?? '').trim();
+      if (!symbol) {
+        res.status(400).json({ error: 'symbol is required' });
+        return;
+      }
+      const deleted = await WebhookLogModel.deleteBySymbol(symbol);
+      res.json({ message: 'Symbol group deleted', deleted });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   /** Elimina todos los logs de un trade (grupo por strategy_id + symbol + trade_id). */
   static async deleteWebhookLogGroup(req: AuthRequest, res: Response): Promise<void> {
     try {

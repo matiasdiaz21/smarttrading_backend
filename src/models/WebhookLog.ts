@@ -349,5 +349,23 @@ export class WebhookLogModel {
     );
     return (result as any).affectedRows || 0;
   }
+
+  /**
+   * Elimina todos los logs de un símbolo (payload con ese symbol en $.symbol, $.ticker o $.alertData.symbol).
+   */
+  static async deleteBySymbol(symbol: string): Promise<number> {
+    const symbolNorm = String(symbol).trim().toUpperCase();
+    if (!symbolNorm) return 0;
+    const [result] = await pool.execute(
+      `DELETE FROM webhook_logs
+       WHERE (
+         UPPER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')), ''))) = ?
+         OR UPPER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.ticker')), ''))) = ?
+         OR UPPER(TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.alertData.symbol')), ''))) = ?
+       )`,
+      [symbolNorm, symbolNorm, symbolNorm]
+    );
+    return (result as any).affectedRows || 0;
+  }
 }
 

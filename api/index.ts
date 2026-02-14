@@ -226,6 +226,7 @@ app.get('/api/admin/nowpayments/currencies', authenticate, requireAdmin, NOWPaym
 app.get('/api/admin/users', authenticate, requireAdmin, AdminController.getUsers);
 app.get('/api/admin/webhook-logs', authenticate, requireAdmin, AdminController.getWebhookLogs);
 app.get('/api/admin/webhook-logs/symbols', authenticate, requireAdmin, AdminController.getWebhookLogSymbols);
+app.delete('/api/admin/webhook-logs/symbol-group', authenticate, requireAdmin, AdminController.deleteWebhookLogSymbolGroup);
 app.delete('/api/admin/webhook-logs/group', authenticate, requireAdmin, AdminController.deleteWebhookLogGroup);
 app.delete('/api/admin/webhook-logs/:id', authenticate, requireAdmin, AdminController.deleteWebhookLog);
 app.get('/api/admin/order-errors', authenticate, requireAdmin, AdminController.getOrderErrors);
