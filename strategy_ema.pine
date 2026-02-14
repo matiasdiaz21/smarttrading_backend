@@ -1,0 +1,518 @@
+//@version=5
+indicator("Strategy 3 SMA Crossover 1.0.0", overlay=true, precision=4, max_bars_back=1440, max_lines_count=500, max_labels_count=500)
+
+// ═══════════════════════════════════════════════════════════════
+// 📂 CONFIGURACIÓN
+// ═══════════════════════════════════════════════════════════════
+
+// Grupo: Configuración General
+group_general = 'Configuración General'
+tema = input.string("Oscuro", title="Tema", options=["Oscuro", "Claro"], group=group_general)
+i_textSize = input.string("Small", title="Text Size", options=["Tiny", "Small", "Normal", "Large"], group=group_general)
+textSize = i_textSize == "Small" ? size.small : i_textSize == "Normal" ? size.normal : i_textSize == "Large" ? size.large : size.tiny
+DEC = input.int(5, title="Decimales", minval=0, step=1, group=group_general)
+num_ops = input.int(20, title="Número de operaciones para winrate", minval=1, group=group_general)
+tpc = input.bool(true, title="Mostrar zona de profit", group=group_general)
+
+// Grupo: Configuración de Cuenta / Riesgo
+group_cuenta = 'Configuración de Cuenta / Riesgo'
+capital = input.float(100, title="Capital inicial: USDT 💲", minval=0, step=0.05, group=group_cuenta)
+perdida_ = input.float(1, title="Riesgo asumido (% de cuenta)", minval=0, step=0.05, group=group_cuenta)
+comision = input.float(0.08, title="Comisión Apertura + Cierre (%)", minval=0.01, maxval=0.2, step=0.005, group=group_cuenta)
+
+// Grupo: Configuración de Medias Móviles
+group_sma = 'Configuración de Medias Móviles'
+sma_fast_len = input.int(5, title="SMA Rápida (Amarilla)", minval=1, group=group_sma)
+sma_mid_len = input.int(8, title="SMA Media (Gris)", minval=1, group=group_sma)
+sma_slow_len = input.int(13, title="SMA Lenta (Roja)", minval=1, group=group_sma)
+sma_fast_color = input.color(color.yellow, title="Color SMA Rápida", group=group_sma)
+sma_mid_color = input.color(color.gray, title="Color SMA Media", group=group_sma)
+sma_slow_color = input.color(color.red, title="Color SMA Lenta", group=group_sma)
+
+// Grupo: Filtros
+group_filtros = 'Filtros de Estrategia'
+use_trend_filter = input.bool(true, title="Usar SMA Lenta como filtro de tendencia", tooltip="Long solo si precio > SMA lenta, Short solo si precio < SMA lenta", group=group_filtros)
+use_atr_sl = input.bool(true, title="Usar ATR para Stop Loss", tooltip="Calcula SL basado en ATR. Si está desactivado, usa la SMA lenta como SL.", group=group_filtros)
+atr_length = input.int(14, title="Período ATR", minval=1, group=group_filtros)
+atr_sl_mult = input.float(1.5, title="Multiplicador ATR para Stop Loss", minval=0.5, step=0.1, group=group_filtros)
+exit_mode = input.string("Ratio Fijo", title="Modo de Salida", options=["Ratio Fijo", "Cruce SMA"], tooltip="Ratio Fijo: cierra en TP/SL según el ratio configurado. Cruce SMA: cierra cuando SMA rápida cruza SMA media en dirección opuesta (TP/SL siguen activos como seguridad)", group=group_filtros)
+take_profit_rr = input.float(1.7, title="Ratio Take Profit (RR)", step=0.1, minval=0.5, group=group_filtros)
+breakeven_ratio = input.float(0.5, title="Breakeven Ratio (0-1)", minval=0, maxval=1, step=0.05, group=group_filtros)
+
+// ═══════════════════════════════════════════════════════════════
+// 📈 CÁLCULOS DE INDICADORES
+// ═══════════════════════════════════════════════════════════════
+
+// 3 Medias Móviles Simples
+sma_fast = ta.sma(close, sma_fast_len)   // SMA 5 - Amarilla
+sma_mid  = ta.sma(close, sma_mid_len)    // SMA 8 - Gris
+sma_slow = ta.sma(close, sma_slow_len)   // SMA 13 - Roja
+
+// ATR para cálculo de Stop Loss
+atrValue = ta.atr(atr_length)
+
+// Plots de las 3 SMAs
+plot(sma_fast, title="SMA Rápida", color=sma_fast_color, linewidth=2)
+plot(sma_mid, title="SMA Media", color=sma_mid_color, linewidth=2)
+plot(sma_slow, title="SMA Lenta", color=sma_slow_color, linewidth=1)
+
+// ═══════════════════════════════════════════════════════════════
+// 🔄 CONDICIONES DE ENTRADA/SALIDA
+// ═══════════════════════════════════════════════════════════════
+
+// Cruces de SMA rápida (5) con SMA media (8)
+bull_cross = ta.crossover(sma_fast, sma_mid)    // SMA 5 cruza ARRIBA de SMA 8 → Compra
+bear_cross = ta.crossunder(sma_fast, sma_mid)   // SMA 5 cruza ABAJO de SMA 8 → Venta
+
+// Filtro de tendencia con SMA lenta (13)
+trend_long_ok  = not use_trend_filter or (close > sma_slow)
+trend_short_ok = not use_trend_filter or (close < sma_slow)
+
+// Condiciones finales de entrada
+longcondicion  = bull_cross and trend_long_ok
+shortcondicion = bear_cross and trend_short_ok
+
+// ═══════════════════════════════════════════════════════════════
+// 📊 LÓGICA DE ESTRATEGIA
+// ═══════════════════════════════════════════════════════════════
+
+var float limitl = 0.0
+var float stopl = 0.0
+var float tpl = 0.0
+var float limits = 0.0
+var float stops = 0.0
+var float tps = 0.0
+var float activeEntry = 0.0
+var float activeStop = 0.0
+var float originalStop = 0.0
+var float activeTp = 0.0
+var float breakevenPrice = 0.0
+var string op = "na"
+var float cien = 0
+var bool alert_take_profit_triggered = false
+var bool alert_stop_loss_triggered = false
+var bool alert_breakeven_triggered = false
+var bool alert_close_triggered = false
+var bool be_hit = false
+var int be_bar_index = -1
+var int entry_bar_index = -1
+var bool isTradeOpen = false
+var string activeTradeType = "na"
+var int trade_id = 0
+var float[] outcomes = array.new_float(0)
+var float[] normal_outcomes = array.new_float(0)
+var bool tp_hit = false
+var bool sl_hit = false
+var float normalBalance = capital
+var float breakevenBalance = capital
+var int totalWins = 0
+var int totalLosses = 0
+var int totalBreakevens = 0
+var int totalCrossExits = 0
+var float currentQty = 0.0
+
+// ═══════════════════════════════════════════════════════════════
+// 📥 ENTRADAS - Solo al cierre de barra para consistencia
+// ═══════════════════════════════════════════════════════════════
+
+if longcondicion and not isTradeOpen and barstate.isconfirmed
+    float entry = close
+    // Stop Loss: ATR o SMA lenta (el que esté más lejos del precio)
+    float sl = use_atr_sl ? (entry - atrValue * atr_sl_mult) : sma_slow
+    // Asegurarse de que el SL esté debajo de la entrada
+    if sl >= entry
+        sl := entry - atrValue * 1.0
+    float risk = math.abs(entry - sl)
+    float tp = entry + risk * take_profit_rr
+    float be = entry + (tp - entry) * breakeven_ratio
+    
+    limitl := entry
+    limits := 0.0
+    stopl := sl
+    stops := 0.0
+    tpl := tp
+    tps := 0.0
+    activeEntry := entry
+    activeStop := sl
+    originalStop := sl
+    activeTp := tp
+    breakevenPrice := be
+    activeTradeType := "LONG"
+    op := "LONG"
+    cien := 1
+    alert_take_profit_triggered := false
+    alert_stop_loss_triggered := false
+    alert_breakeven_triggered := false
+    alert_close_triggered := false
+    be_hit := false
+    be_bar_index := -1
+    entry_bar_index := bar_index
+    isTradeOpen := true
+    trade_id += 1
+    float qty = (perdida_ * normalBalance / 100) / risk
+    currentQty := qty
+
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(be) + ', "alertType": "ENTRY", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "atr": ' + str.tostring(atrValue) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+    label.new(bar_index, entry, text="Long Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(be, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+
+if shortcondicion and not isTradeOpen and barstate.isconfirmed
+    float entry = close
+    // Stop Loss: ATR o SMA lenta (el que esté más lejos del precio)
+    float sl = use_atr_sl ? (entry + atrValue * atr_sl_mult) : sma_slow
+    // Asegurarse de que el SL esté arriba de la entrada
+    if sl <= entry
+        sl := entry + atrValue * 1.0
+    float risk = math.abs(sl - entry)
+    float tp = entry - risk * take_profit_rr
+    float be = entry - (entry - tp) * breakeven_ratio
+    
+    limits := entry
+    limitl := 0.0
+    stops := sl
+    stopl := 0.0
+    tps := tp
+    tpl := 0.0
+    activeEntry := entry
+    activeStop := sl
+    originalStop := sl
+    activeTp := tp
+    breakevenPrice := be
+    activeTradeType := "SHORT"
+    op := "SHORT"
+    cien := -1
+    alert_take_profit_triggered := false
+    alert_stop_loss_triggered := false
+    alert_breakeven_triggered := false
+    alert_close_triggered := false
+    be_hit := false
+    be_bar_index := -1
+    entry_bar_index := bar_index
+    isTradeOpen := true
+    trade_id += 1
+    float qty = (perdida_ * normalBalance / 100) / risk
+    currentQty := qty
+
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(be) + ', "alertType": "ENTRY", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "atr": ' + str.tostring(atrValue) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+    label.new(bar_index, entry, text="Short Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(be, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+
+// ═══════════════════════════════════════════════════════════════
+// 🔀 BREAKEVEN - Se activa cuando el precio toca el nivel
+// ═══════════════════════════════════════════════════════════════
+
+if activeTradeType == "LONG" and high >= breakevenPrice and not alert_breakeven_triggered and isTradeOpen and bar_index > entry_bar_index
+    activeStop := activeEntry
+    stopl := activeEntry
+    be_hit := true
+    be_bar_index := bar_index
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "BREAKEVEN", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, breakevenPrice, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
+    alert_breakeven_triggered := true
+    totalBreakevens += 1
+
+if activeTradeType == "SHORT" and low <= breakevenPrice and not alert_breakeven_triggered and isTradeOpen and bar_index > entry_bar_index
+    activeStop := activeEntry
+    stops := activeEntry
+    be_hit := true
+    be_bar_index := bar_index
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "BREAKEVEN", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, breakevenPrice, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
+    alert_breakeven_triggered := true
+    totalBreakevens += 1
+
+// ═══════════════════════════════════════════════════════════════
+// 🎯 TAKE PROFIT
+// ═══════════════════════════════════════════════════════════════
+
+if high >= activeTp and activeTradeType == "LONG" and not alert_take_profit_triggered and isTradeOpen and bar_index > entry_bar_index
+    tp_hit := true
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "TAKE_PROFIT", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, high, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+    alert_take_profit_triggered := true
+    alert_stop_loss_triggered := true
+    array.push(outcomes, 1.0)
+    array.push(normal_outcomes, 1.0)
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    if array.size(normal_outcomes) > num_ops
+        array.shift(normal_outcomes)
+    // Calcular ganancia
+    float posicion_trade = activeEntry * currentQty
+    float comision_trade = (comision * posicion_trade / 100)
+    float profit = (activeTp - activeEntry) * currentQty - comision_trade
+    normalBalance += profit
+    if alert_breakeven_triggered
+        breakevenBalance += profit * (1 - breakeven_ratio)
+    else
+        breakevenBalance += profit
+    totalWins += 1
+    alert_breakeven_triggered := false
+    limitl := 0.0
+    tpl := 0.0
+    stopl := 0.0
+    op := "na"
+    breakevenPrice := 0.0
+    isTradeOpen := false
+    activeTradeType := "na"
+
+if low <= activeTp and activeTradeType == "SHORT" and not alert_take_profit_triggered and isTradeOpen and bar_index > entry_bar_index
+    tp_hit := true
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "TAKE_PROFIT", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, low, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.green, textcolor=color.white, size=textSize)
+    alert_take_profit_triggered := true
+    alert_stop_loss_triggered := true
+    array.push(outcomes, 1.0)
+    array.push(normal_outcomes, 1.0)
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    if array.size(normal_outcomes) > num_ops
+        array.shift(normal_outcomes)
+    // Calcular ganancia
+    float posicion_trade = activeEntry * currentQty
+    float comision_trade = (comision * posicion_trade / 100)
+    float profit = (activeEntry - activeTp) * currentQty - comision_trade
+    normalBalance += profit
+    if alert_breakeven_triggered
+        breakevenBalance += profit * (1 - breakeven_ratio)
+    else
+        breakevenBalance += profit
+    totalWins += 1
+    alert_breakeven_triggered := false
+    limits := 0.0
+    tps := 0.0
+    stops := 0.0
+    op := "na"
+    breakevenPrice := 0.0
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// ═══════════════════════════════════════════════════════════════
+// 🛑 STOP LOSS
+// ═══════════════════════════════════════════════════════════════
+
+// LONG SL: low toca o cae por debajo del stop (no en la misma barra que BE)
+if low <= activeStop and activeTradeType == "LONG" and not alert_stop_loss_triggered and isTradeOpen and bar_index > entry_bar_index and bar_index != be_bar_index
+    sl_hit := true
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "STOP_LOSS", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.red, textcolor=color.white, size=textSize)
+    alert_stop_loss_triggered := true
+    alert_take_profit_triggered := true
+    array.push(normal_outcomes, 0.0)
+    if alert_breakeven_triggered
+        array.push(outcomes, 0.5)
+    else
+        array.push(outcomes, 0.0)
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    if array.size(normal_outcomes) > num_ops
+        array.shift(normal_outcomes)
+    // Calcular pérdida
+    float posicion_trade_sl = activeEntry * currentQty
+    float comision_trade_sl = (comision * posicion_trade_sl / 100)
+    if alert_breakeven_triggered
+        float loss_normal = (activeEntry - originalStop) * currentQty - comision_trade_sl
+        normalBalance += loss_normal
+        float profit_be = (activeTp - activeEntry) * currentQty * 0.5 - comision_trade_sl
+        breakevenBalance += profit_be
+    else
+        float loss = (activeEntry - originalStop) * currentQty - comision_trade_sl
+        normalBalance += loss
+        breakevenBalance += loss
+    totalLosses += 1
+    alert_breakeven_triggered := false
+    limitl := 0.0
+    tpl := 0.0
+    stopl := 0.0
+    op := "na"
+    breakevenPrice := 0.0
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// SHORT SL: high toca o supera el stop (no en la misma barra que BE)
+if high >= activeStop and activeTradeType == "SHORT" and not alert_stop_loss_triggered and isTradeOpen and bar_index > entry_bar_index and bar_index != be_bar_index
+    sl_hit := true
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "STOP_LOSS", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+    alert_stop_loss_triggered := true
+    alert_take_profit_triggered := true
+    array.push(normal_outcomes, 0.0)
+    if alert_breakeven_triggered
+        array.push(outcomes, 0.5)
+    else
+        array.push(outcomes, 0.0)
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    if array.size(normal_outcomes) > num_ops
+        array.shift(normal_outcomes)
+    // Calcular pérdida
+    float posicion_trade_sl = activeEntry * currentQty
+    float comision_trade_sl = (comision * posicion_trade_sl / 100)
+    if alert_breakeven_triggered
+        float loss_normal = (originalStop - activeEntry) * currentQty - comision_trade_sl
+        normalBalance += loss_normal
+        float profit_be = (activeEntry - activeTp) * currentQty * 0.5 - comision_trade_sl
+        breakevenBalance += profit_be
+    else
+        float loss = (originalStop - activeEntry) * currentQty - comision_trade_sl
+        normalBalance += loss
+        breakevenBalance += loss
+    totalLosses += 1
+    alert_breakeven_triggered := false
+    limits := 0.0
+    tps := 0.0
+    stops := 0.0
+    op := "na"
+    breakevenPrice := 0.0
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// ═══════════════════════════════════════════════════════════════
+// 🔀 CIERRE POR CRUCE OPUESTO DE SMA (Lógica principal de la estrategia)
+// ═══════════════════════════════════════════════════════════════
+
+// LONG abierto y SMA5 cruza DEBAJO de SMA8 → cerrar
+if exit_mode == "Cruce SMA" and isTradeOpen and activeTradeType == "LONG" and bear_cross and not alert_take_profit_triggered and not alert_stop_loss_triggered and bar_index > entry_bar_index and barstate.isconfirmed
+    float exit_price = close
+    float pnl = (exit_price - activeEntry) * currentQty
+    float posicion_trade_cx = activeEntry * currentQty
+    float comision_trade_cx = (comision * posicion_trade_cx / 100)
+    pnl -= comision_trade_cx
+    
+    string exit_type = pnl >= 0 ? "TAKE_PROFIT" : "STOP_LOSS"
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(exit_price) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "' + exit_type + '", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Cierre por cruce opuesto SMA", "exit_price": ' + str.tostring(exit_price) + ', "pnl": ' + str.tostring(math.round(pnl, 4)) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+    
+    color lbl_color = pnl >= 0 ? color.green : color.red
+    string lbl_text = pnl >= 0 ? "Cierre +" : "Cierre -"
+    label.new(bar_index, exit_price, text=lbl_text + "\nID: " + str.tostring(trade_id) + "\nPnL: " + str.tostring(math.round(pnl, 2)), style=label.style_label_down, color=lbl_color, textcolor=color.white, size=textSize)
+    
+    if pnl >= 0
+        array.push(outcomes, 1.0)
+        array.push(normal_outcomes, 1.0)
+        totalWins += 1
+    else
+        array.push(outcomes, 0.0)
+        array.push(normal_outcomes, 0.0)
+        totalLosses += 1
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    if array.size(normal_outcomes) > num_ops
+        array.shift(normal_outcomes)
+    
+    normalBalance += pnl
+    breakevenBalance += pnl
+    totalCrossExits += 1
+    alert_take_profit_triggered := true
+    alert_stop_loss_triggered := true
+    alert_breakeven_triggered := false
+    limitl := 0.0
+    tpl := 0.0
+    stopl := 0.0
+    op := "na"
+    breakevenPrice := 0.0
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// SHORT abierto y SMA5 cruza ARRIBA de SMA8 → cerrar
+if exit_mode == "Cruce SMA" and isTradeOpen and activeTradeType == "SHORT" and bull_cross and not alert_take_profit_triggered and not alert_stop_loss_triggered and bar_index > entry_bar_index and barstate.isconfirmed
+    float exit_price = close
+    float pnl = (activeEntry - exit_price) * currentQty
+    float posicion_trade_cx = activeEntry * currentQty
+    float comision_trade_cx = (comision * posicion_trade_cx / 100)
+    pnl -= comision_trade_cx
+    
+    string exit_type = pnl >= 0 ? "TAKE_PROFIT" : "STOP_LOSS"
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(exit_price) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "' + exit_type + '", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Cierre por cruce opuesto SMA", "exit_price": ' + str.tostring(exit_price) + ', "pnl": ' + str.tostring(math.round(pnl, 4)) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+    
+    color lbl_color = pnl >= 0 ? color.green : color.red
+    string lbl_text = pnl >= 0 ? "Cierre +" : "Cierre -"
+    label.new(bar_index, exit_price, text=lbl_text + "\nID: " + str.tostring(trade_id) + "\nPnL: " + str.tostring(math.round(pnl, 2)), style=label.style_label_up, color=lbl_color, textcolor=color.white, size=textSize)
+    
+    if pnl >= 0
+        array.push(outcomes, 1.0)
+        array.push(normal_outcomes, 1.0)
+        totalWins += 1
+    else
+        array.push(outcomes, 0.0)
+        array.push(normal_outcomes, 0.0)
+        totalLosses += 1
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    if array.size(normal_outcomes) > num_ops
+        array.shift(normal_outcomes)
+    
+    normalBalance += pnl
+    breakevenBalance += pnl
+    totalCrossExits += 1
+    alert_take_profit_triggered := true
+    alert_stop_loss_triggered := true
+    alert_breakeven_triggered := false
+    limits := 0.0
+    tps := 0.0
+    stops := 0.0
+    op := "na"
+    breakevenPrice := 0.0
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// ═══════════════════════════════════════════════════════════════
+// 📊 VISUALIZACIÓN
+// ═══════════════════════════════════════════════════════════════
+
+// Plot breakeven
+plot(isTradeOpen ? breakevenPrice : na, "Breakeven", color=color.orange, style=plot.style_linebr, linewidth=1)
+
+// Plots de niveles de entrada, TP y SL - SHORT
+medios = plot(limits > 0.0 ? limits : na, title="Entry Point Short", style=plot.style_linebr, color=color.rgb(255, 255, 30, 50), linewidth=1)
+ganancias = plot(tpc and tps > 0.0 ? tps : na, title="TP Short", style=plot.style_linebr, color=color.rgb(17, 84, 64, 65), linewidth=1)
+perdidas = plot(tpc and stops > 0.0 ? stops : na, title="Stop Short", style=plot.style_linebr, color=color.rgb(244, 42, 42, 80), linewidth=1)
+fill(medios, ganancias, color=color.rgb(17, 84, 64, 65))
+fill(medios, perdidas, color=color.rgb(224, 42, 42, 80))
+
+// Plots de niveles de entrada, TP y SL - LONG
+mediol = plot(limitl > 0.0 ? limitl : na, title="Entry Point Long", style=plot.style_linebr, color=color.rgb(255, 255, 30, 50), linewidth=1)
+ganancial = plot(tpc and tpl > 0.0 ? tpl : na, title="TP Long", style=plot.style_linebr, color=color.rgb(17, 84, 64, 65), linewidth=1)
+perdidal = plot(tpc and stopl > 0.0 ? stopl : na, title="Stop Long", style=plot.style_linebr, color=color.rgb(244, 42, 42, 80), linewidth=1)
+fill(mediol, ganancial, color=color.rgb(17, 84, 64, 65))
+fill(mediol, perdidal, color=color.rgb(224, 42, 42, 85))
+
+// ═══════════════════════════════════════════════════════════════
+// 📋 TABLA DE INFORMACIÓN
+// ═══════════════════════════════════════════════════════════════
+
+// Gestión de riesgo (para mostrar en tabla)
+float diferencia = isTradeOpen ? math.abs(activeEntry - activeStop) : 0.0
+float PORCENTT = (isTradeOpen and activeEntry > 0 and cien != 0) ? (diferencia * 100 / activeEntry) * cien : 0.0
+float POSICION = (isTradeOpen and PORCENTT != 0) ? (100 / PORCENTT) * perdida_ : 0.0
+float LOTE = (isTradeOpen and activeEntry > 0 and POSICION > 0) ? POSICION / activeEntry : 0.0
+float COMI = (isTradeOpen and POSICION > 0) ? (comision * POSICION / 100) * -1 : 0.0
+
+mysite = "Strategy 3 SMA Crossover"
+var infoTable = table.new(position=position.bottom_right, columns=1, rows=13, bgcolor=color.rgb(208, 207, 198), border_width=2)
+table.cell(infoTable, 0, 0, text=mysite, text_halign=text.align_center, text_size=textSize, text_color=chart.bg_color, bgcolor=chart.fg_color)
+table.cell(infoTable, 0, 1, text=op + " " + syminfo.ticker + " ▐ SMA " + str.tostring(sma_fast_len) + "/" + str.tostring(sma_mid_len) + "/" + str.tostring(sma_slow_len) + " ▐ " + exit_mode, text_size=textSize, text_halign=text.align_left, text_color=color.fuchsia, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 2, text="ENTRADA : " + (isTradeOpen ? str.tostring(math.round(activeEntry, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.yellow, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 3, text="STOP : " + (isTradeOpen ? str.tostring(math.round(activeStop, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.red, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 4, text="TP : " + (isTradeOpen ? str.tostring(math.round(activeTp, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.green, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 5, text="LOTE : " + (isTradeOpen ? str.tostring(math.round(LOTE, 5)) + " ▐ $ " + str.tostring(math.round(POSICION, 2)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 6, text="COMISIÓN: ▐ " + (isTradeOpen ? str.tostring(math.round(COMI, 4)) : "---") + " ▐ ", text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 7, text="Trade ID: " + str.tostring(trade_id), text_size=textSize, text_halign=text.align_left, text_color=color.blue, bgcolor=chart.bg_color)
+
+// Balance normal
+float normalBalanceChange = normalBalance - capital
+float normalBalancePercent = capital > 0 ? (normalBalanceChange / capital) * 100 : 0.0
+table.cell(infoTable, 0, 8, text="Balance Normal: " + str.tostring(math.round(normalBalance, 2)) + " USDT (" + (normalBalanceChange >= 0 ? "+" : "") + str.tostring(math.round(normalBalancePercent, 2)) + "%)", text_size=textSize, text_halign=text.align_left, text_color=normalBalanceChange >= 0 ? color.green : color.red, bgcolor=chart.bg_color)
+
+// Balance breakeven
+float beBalanceChange = breakevenBalance - capital
+float beBalancePercent = capital > 0 ? (beBalanceChange / capital) * 100 : 0.0
+table.cell(infoTable, 0, 9, text="Balance BE: " + str.tostring(math.round(breakevenBalance, 2)) + " USDT (" + (beBalanceChange >= 0 ? "+" : "") + str.tostring(math.round(beBalancePercent, 2)) + "%)", text_size=textSize, text_halign=text.align_left, text_color=beBalanceChange >= 0 ? color.green : color.red, bgcolor=chart.bg_color)
+
+// Contador W/L/BE/CrossExits
+table.cell(infoTable, 0, 10, text="W/L/BE/CX: " + str.tostring(totalWins) + "/" + str.tostring(totalLosses) + "/" + str.tostring(totalBreakevens) + "/" + str.tostring(totalCrossExits), text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
+
+// Winrate Normal
+winrate = array.size(normal_outcomes) > 0 ? (array.sum(normal_outcomes) / array.size(normal_outcomes)) * 100 : 0.0
+table.cell(infoTable, 0, 11, text="Winrate Normal: " + str.tostring(math.round(winrate, 2)) + "%", text_size=textSize, text_halign=text.align_left, text_color=winrate >= 50 ? color.green : color.red, bgcolor=chart.bg_color)
+
+// Adjusted Winrate
+adjusted_winrate = array.size(outcomes) > 0 ? (array.sum(outcomes) / array.size(outcomes)) * 100 : 0.0
+table.cell(infoTable, 0, 12, text="Winrate Adjusted (BE=50%): " + str.tostring(math.round(adjusted_winrate, 2)) + "%", text_size=textSize, text_halign=text.align_left, text_color=adjusted_winrate >= 50 ? color.green : color.red, bgcolor=chart.bg_color)

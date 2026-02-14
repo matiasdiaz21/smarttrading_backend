@@ -175,6 +175,90 @@ export class UserController {
         return;
       }
 
+      // Si se está activando: verificar que los símbolos no choquen con otras estrategias habilitadas
+      if (enabled) {
+        const strategyId = parseInt(id);
+        const targetStrategy = await StrategyModel.findById(strategyId);
+        if (!targetStrategy) {
+          res.status(404).json({ error: 'Strategy not found' });
+          return;
+        }
+
+        // Normalizar allowed_symbols
+        const parseSymbols = (s: any): string[] | null => {
+          if (s == null) return null;
+          if (Array.isArray(s)) return s.length ? s.map((x: string) => x.toUpperCase()) : null;
+          if (typeof s === 'string') {
+            try { const p = JSON.parse(s); return Array.isArray(p) && p.length ? p.map((x: string) => x.toUpperCase()) : null; } catch { return null; }
+          }
+          return null;
+        };
+        const parseExcluded = (s: any): string[] => {
+          if (s == null) return [];
+          if (Array.isArray(s)) return s.map((x: string) => x.toUpperCase());
+          if (typeof s === 'string') {
+            try { const p = JSON.parse(s); return Array.isArray(p) ? p.map((x: string) => x.toUpperCase()) : []; } catch { return []; }
+          }
+          return [];
+        };
+
+        const targetAllowed = parseSymbols(targetStrategy.allowed_symbols);
+        const targetExcluded = parseExcluded(subscription.excluded_symbols);
+
+        // Obtener todas las suscripciones habilitadas del usuario (excepto la actual)
+        const allSubs = await SubscriptionModel.findByUserId(req.user.userId);
+        const enabledSubs = allSubs.filter(s => s.is_enabled && s.strategy_id !== strategyId);
+
+        if (enabledSubs.length > 0) {
+          const allStrategies = await StrategyModel.findAll(false);
+          const strategyMap = new Map(allStrategies.map((s: any) => [s.id, s]));
+
+          for (const otherSub of enabledSubs) {
+            const otherStrategy = strategyMap.get(otherSub.strategy_id) as any;
+            if (!otherStrategy) continue;
+
+            const otherAllowed = parseSymbols(otherStrategy.allowed_symbols);
+            const otherExcluded = parseExcluded(otherSub.excluded_symbols);
+
+            // Calcular símbolos activos de cada estrategia
+            // null = todos los símbolos (wildcard)
+            let conflictingSymbols: string[] = [];
+
+            if (targetAllowed === null && otherAllowed === null) {
+              // Ambas operan TODOS los símbolos → siempre chocan
+              res.status(400).json({
+                error: `No se puede activar: esta estrategia opera todos los símbolos y choca con "${otherStrategy.name}" que también opera todos los símbolos. Excluye símbolos en una de las dos para evitar conflictos.`,
+                symbolConflict: true,
+              });
+              return;
+            } else if (targetAllowed === null) {
+              // Target opera todos, other opera algunos → chocan en los de other (menos excluidos)
+              const otherActive = otherAllowed!.filter(s => !otherExcluded.includes(s));
+              conflictingSymbols = otherActive.filter(s => !targetExcluded.includes(s));
+            } else if (otherAllowed === null) {
+              // Target opera algunos, other opera todos → chocan en los de target (menos excluidos)
+              const targetActive = targetAllowed.filter(s => !targetExcluded.includes(s));
+              conflictingSymbols = targetActive.filter(s => !otherExcluded.includes(s));
+            } else {
+              // Ambas tienen lista específica
+              const targetActive = targetAllowed.filter(s => !targetExcluded.includes(s));
+              const otherActive = otherAllowed.filter(s => !otherExcluded.includes(s));
+              conflictingSymbols = targetActive.filter(s => otherActive.includes(s));
+            }
+
+            if (conflictingSymbols.length > 0) {
+              res.status(400).json({
+                error: `No se puede activar: los símbolos ${conflictingSymbols.join(', ')} chocan con la estrategia "${otherStrategy.name}". Excluye estos símbolos en una de las dos estrategias para poder activar ambas.`,
+                symbolConflict: true,
+                conflictingSymbols,
+                conflictingStrategy: otherStrategy.name,
+              });
+              return;
+            }
+          }
+        }
+      }
+
       // Si se está activando la estrategia, verificar aceptación de riesgo
       if (enabled) {
         const hasAccepted = await RiskAcceptanceModel.hasAccepted(req.user.userId, parseInt(id));
