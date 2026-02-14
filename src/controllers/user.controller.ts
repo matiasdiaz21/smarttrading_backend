@@ -121,10 +121,49 @@ export class UserController {
           res.status(400).json({ error: 'Credential not found or does not belong to you' });
           return;
         }
-        const inUse = await SubscriptionModel.isCredentialInUse(req.user.userId, credentialId, null);
-        if (inUse) {
-          res.status(400).json({ error: 'Esta credencial ya está asignada a otra estrategia. Cada credencial solo puede estar en una estrategia.' });
-          return;
+        // Verificar conflicto de símbolos con otras estrategias que usen esta misma credencial
+        const allSubs = await SubscriptionModel.findByUserId(req.user.userId);
+        const subsWithSameCred = allSubs.filter(s => s.credential_id === credentialId);
+        if (subsWithSameCred.length > 0) {
+          const allStrategies = await StrategyModel.findAll(false);
+          const strategyMap = new Map(allStrategies.map((s: any) => [s.id, s]));
+          const parseSymbols = (s: any): string[] | null => {
+            if (s == null) return null;
+            if (Array.isArray(s)) return s.length ? s.map((x: string) => x.toUpperCase()) : null;
+            if (typeof s === 'string') { try { const p = JSON.parse(s); return Array.isArray(p) && p.length ? p.map((x: string) => x.toUpperCase()) : null; } catch { return null; } }
+            return null;
+          };
+          const parseExcluded = (s: any): string[] => {
+            if (s == null) return [];
+            if (Array.isArray(s)) return s.map((x: string) => x.toUpperCase());
+            if (typeof s === 'string') { try { const p = JSON.parse(s); return Array.isArray(p) ? p.map((x: string) => x.toUpperCase()) : []; } catch { return []; } }
+            return [];
+          };
+          const targetAllowed = parseSymbols((strategy as any).allowed_symbols);
+          const targetExcluded: string[] = []; // nueva suscripción, sin excluded aún
+          for (const otherSub of subsWithSameCred) {
+            const otherStrat = strategyMap.get(otherSub.strategy_id) as any;
+            if (!otherStrat) continue;
+            const otherAllowed = parseSymbols(otherStrat.allowed_symbols);
+            const otherExcluded = parseExcluded(otherSub.excluded_symbols);
+            let conflicting: string[] = [];
+            if (targetAllowed === null && otherAllowed === null) {
+              res.status(400).json({ error: `No se puede usar esta credencial: ambas estrategias operan todos los símbolos. Configura símbolos específicos o usa otra credencial.` });
+              return;
+            } else if (targetAllowed === null) {
+              conflicting = otherAllowed!.filter(s => !otherExcluded.includes(s)).filter(s => !targetExcluded.includes(s));
+            } else if (otherAllowed === null) {
+              conflicting = targetAllowed.filter(s => !targetExcluded.includes(s)).filter(s => !otherExcluded.includes(s));
+            } else {
+              const targetActive = targetAllowed.filter(s => !targetExcluded.includes(s));
+              const otherActive = otherAllowed.filter(s => !otherExcluded.includes(s));
+              conflicting = targetActive.filter(s => otherActive.includes(s));
+            }
+            if (conflicting.length > 0) {
+              res.status(400).json({ error: `No se puede usar esta credencial: los símbolos ${conflicting.join(', ')} chocan con "${otherStrat.name}". Usa otra credencial o excluye esos símbolos.` });
+              return;
+            }
+          }
         }
       }
 
@@ -432,10 +471,50 @@ export class UserController {
           res.status(400).json({ error: 'Credential not found or does not belong to you' });
           return;
         }
-        const inUse = await SubscriptionModel.isCredentialInUse(req.user.userId, credentialId, strategyId);
-        if (inUse) {
-          res.status(400).json({ error: 'Esta credencial ya está asignada a otra estrategia. Cada credencial solo puede estar en una estrategia.' });
-          return;
+        // Verificar conflicto de símbolos con otras estrategias que usen esta misma credencial
+        const allSubs = await SubscriptionModel.findByUserId(req.user.userId);
+        const subsWithSameCred = allSubs.filter(s => s.credential_id === credentialId && s.strategy_id !== strategyId);
+        if (subsWithSameCred.length > 0) {
+          const targetStrategy = await StrategyModel.findById(strategyId);
+          const allStrategies = await StrategyModel.findAll(false);
+          const strategyMap = new Map(allStrategies.map((s: any) => [s.id, s]));
+          const parseSymbols = (s: any): string[] | null => {
+            if (s == null) return null;
+            if (Array.isArray(s)) return s.length ? s.map((x: string) => x.toUpperCase()) : null;
+            if (typeof s === 'string') { try { const p = JSON.parse(s); return Array.isArray(p) && p.length ? p.map((x: string) => x.toUpperCase()) : null; } catch { return null; } }
+            return null;
+          };
+          const parseExcluded = (s: any): string[] => {
+            if (s == null) return [];
+            if (Array.isArray(s)) return s.map((x: string) => x.toUpperCase());
+            if (typeof s === 'string') { try { const p = JSON.parse(s); return Array.isArray(p) ? p.map((x: string) => x.toUpperCase()) : []; } catch { return []; } }
+            return [];
+          };
+          const targetAllowed = parseSymbols((targetStrategy as any)?.allowed_symbols);
+          const targetExcluded = parseExcluded(subscription.excluded_symbols);
+          for (const otherSub of subsWithSameCred) {
+            const otherStrat = strategyMap.get(otherSub.strategy_id) as any;
+            if (!otherStrat) continue;
+            const otherAllowed = parseSymbols(otherStrat.allowed_symbols);
+            const otherExcluded = parseExcluded(otherSub.excluded_symbols);
+            let conflicting: string[] = [];
+            if (targetAllowed === null && otherAllowed === null) {
+              res.status(400).json({ error: `No se puede usar esta credencial: ambas estrategias operan todos los símbolos. Configura símbolos específicos o usa otra credencial.` });
+              return;
+            } else if (targetAllowed === null) {
+              conflicting = otherAllowed!.filter(s => !otherExcluded.includes(s)).filter(s => !targetExcluded.includes(s));
+            } else if (otherAllowed === null) {
+              conflicting = targetAllowed.filter(s => !targetExcluded.includes(s)).filter(s => !otherExcluded.includes(s));
+            } else {
+              const targetActive = targetAllowed.filter(s => !targetExcluded.includes(s));
+              const otherActive = otherAllowed.filter(s => !otherExcluded.includes(s));
+              conflicting = targetActive.filter(s => otherActive.includes(s));
+            }
+            if (conflicting.length > 0) {
+              res.status(400).json({ error: `No se puede usar esta credencial: los símbolos ${conflicting.join(', ')} chocan con "${otherStrat.name}". Usa otra credencial o excluye esos símbolos.` });
+              return;
+            }
+          }
         }
       }
 
