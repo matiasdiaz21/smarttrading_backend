@@ -89,6 +89,13 @@ export class SubscriptionModel {
     );
   }
 
+  static async updatePartialTp(userId: number, strategyId: number, usePartialTp: boolean): Promise<void> {
+    await pool.execute(
+      'UPDATE user_strategy_subscriptions SET use_partial_tp = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',
+      [usePartialTp, userId, strategyId]
+    );
+  }
+
   static async updateExcludedSymbols(userId: number, strategyId: number, excludedSymbols: string[] | null): Promise<void> {
     const json = excludedSymbols?.length ? JSON.stringify(excludedSymbols) : null;
     await pool.execute(

@@ -45,6 +45,7 @@ export interface UserStrategySubscription {
   /** Símbolos que el usuario no quiere copiar en esta estrategia. */
   excluded_symbols: string[] | null;
   credential_id: number | null; // Credencial Bitget asignada (1:1 con estrategia)
+  use_partial_tp: boolean; // Si true, usa TP parcial 50% en breakeven + 50% en TP final
   created_at: Date;
   updated_at: Date;
 }

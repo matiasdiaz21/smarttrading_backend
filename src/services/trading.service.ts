@@ -418,8 +418,11 @@ export class TradingService {
           
           let tpslResults: any;
           
-          // Si hay breakeven, usar el método avanzado que configura múltiples órdenes
-          if (alert.breakeven && alert.breakeven > 0) {
+          // Si hay breakeven Y el usuario tiene habilitado el TP parcial, usar el método avanzado
+          const usePartialTp = strategySubscription.use_partial_tp !== false; // Default true
+          console.log(`[TradeService] 📊 Partial TP habilitado: ${usePartialTp}`);
+          
+          if (alert.breakeven && alert.breakeven > 0 && usePartialTp) {
             console.log(`[TradeService] 🎯 Configurando estrategia con breakeven (TP 50% en breakeven, TP 50% en takeProfit)`);
             
             tpslResults = await this.bitgetService.setAdvancedPositionTPSL(

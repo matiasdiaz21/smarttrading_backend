@@ -78,6 +78,7 @@ export class UserController {
           user_position_size: subscription?.position_size || null,
           credential_id: subscription?.credential_id ?? null,
           excluded_symbols: subscription ? normalizeExcludedSymbols(subscription.excluded_symbols) : null,
+          use_partial_tp: subscription?.use_partial_tp !== false, // Default true
         };
       });
 
@@ -359,6 +360,40 @@ export class UserController {
       res.json({
         message: 'Credential updated successfully',
         credential_id: credentialId,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /** Activa o desactiva el take profit parcial (50% en breakeven) para esta estrategia. */
+  static async updatePartialTp(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const { id } = req.params;
+      const strategyId = parseInt(id);
+      const { use_partial_tp } = req.body;
+
+      if (typeof use_partial_tp !== 'boolean') {
+        res.status(400).json({ error: 'use_partial_tp must be a boolean' });
+        return;
+      }
+
+      const subscription = await SubscriptionModel.findById(req.user.userId, strategyId);
+      if (!subscription) {
+        res.status(404).json({ error: 'Not subscribed to this strategy' });
+        return;
+      }
+
+      await SubscriptionModel.updatePartialTp(req.user.userId, strategyId, use_partial_tp);
+
+      res.json({
+        message: 'Partial take profit setting updated successfully',
+        use_partial_tp,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
