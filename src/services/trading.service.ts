@@ -82,13 +82,17 @@ export class TradingService {
       
       console.log(`[TradeService] 📊 Apalancamiento final seleccionado: ${leverage}x (${leverageSource})`);
 
-      // Obtener credenciales activas del usuario
-      const credentials = await CredentialsModel.findActiveByUserId(userId);
-      if (!credentials) {
-        console.error(`[TradeService] ❌ Usuario ${userId} no tiene credenciales de Bitget activas`);
-        return { success: false, error: 'User does not have active Bitget credentials' };
+      // Obtener credencial asignada a esta estrategia (cada estrategia tiene una credencial 1:1)
+      if (!strategySubscription.credential_id) {
+        console.error(`[TradeService] ❌ La estrategia ${strategyId} no tiene credencial de Bitget asignada`);
+        return { success: false, error: 'This strategy has no Bitget credential assigned. Assign one in your strategy settings.' };
       }
-      console.log(`[TradeService] ✅ Usuario ${userId} tiene credenciales de Bitget activas`);
+      const credentials = await CredentialsModel.findById(strategySubscription.credential_id, userId);
+      if (!credentials) {
+        console.error(`[TradeService] ❌ Credencial ${strategySubscription.credential_id} no encontrada o no pertenece al usuario`);
+        return { success: false, error: 'Bitget credential not found or invalid' };
+      }
+      console.log(`[TradeService] ✅ Usando credencial ${strategySubscription.credential_id} para estrategia ${strategyId}`);
 
       // Desencriptar credenciales
       const decryptedCredentials = BitgetService.getDecryptedCredentials({
@@ -107,6 +111,32 @@ export class TradingService {
       if (!symbol) {
         console.error(`[TradeService] ❌ Symbol no proporcionado en la alerta`);
         return { success: false, error: 'Symbol is required' };
+      }
+
+      const symbolUpper = symbol.toUpperCase();
+      const rawAllowed = strategy?.allowed_symbols;
+      const allowedSymbols = typeof rawAllowed === 'string'
+        ? (() => { try { const a = JSON.parse(rawAllowed); return Array.isArray(a) ? a : null; } catch { return null; } })()
+        : rawAllowed;
+      if (Array.isArray(allowedSymbols) && allowedSymbols.length > 0) {
+        const allowedUpper = allowedSymbols.map((s: string) => String(s).toUpperCase());
+        if (!allowedUpper.includes(symbolUpper)) {
+          console.warn(`[TradeService] ⚠️ Símbolo ${symbolUpper} no permitido para la estrategia "${strategy?.name}". Permitidos: ${allowedUpper.join(', ')}`);
+          return { success: false, error: `Symbol ${symbolUpper} is not allowed for this strategy. Allowed: ${allowedUpper.join(', ')}` };
+        }
+        console.log(`[TradeService] ✅ Símbolo ${symbolUpper} permitido para la estrategia`);
+      }
+
+      const rawExcluded = strategySubscription.excluded_symbols;
+      const excludedSymbols = typeof rawExcluded === 'string'
+        ? (() => { try { const a = JSON.parse(rawExcluded); return Array.isArray(a) ? a : []; } catch { return []; } })()
+        : (Array.isArray(rawExcluded) ? rawExcluded : []);
+      if (excludedSymbols.length > 0) {
+        const excludedUpper = excludedSymbols.map((s: string) => String(s).toUpperCase());
+        if (excludedUpper.includes(symbolUpper)) {
+          console.warn(`[TradeService] ⚠️ Usuario excluyó el símbolo ${symbolUpper} para esta estrategia. No se copiará.`);
+          return { success: false, error: `Symbol ${symbolUpper} is excluded by you for this strategy` };
+        }
       }
 
       const productType = alert.productType || 'USDT-FUTURES';
@@ -694,10 +724,15 @@ export class TradingService {
           continue;
         }
 
-        // Obtener credenciales activas del usuario
-        const credentials = await CredentialsModel.findActiveByUserId(subscription.user_id);
+        // Obtener credencial asignada a esta estrategia
+        if (!subscription.credential_id) {
+          console.warn(`[BREAKEVEN] Usuario ${subscription.user_id} estrategia ${strategyId} no tiene credencial asignada`);
+          failed++;
+          continue;
+        }
+        const credentials = await CredentialsModel.findById(subscription.credential_id, subscription.user_id);
         if (!credentials) {
-          console.warn(`Usuario ${subscription.user_id} no tiene credenciales activas`);
+          console.warn(`[BREAKEVEN] Credencial ${subscription.credential_id} no encontrada para usuario ${subscription.user_id}`);
           failed++;
           continue;
         }

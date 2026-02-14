@@ -23,11 +23,12 @@ export class CredentialsModel {
     userId: number,
     apiKey: string,
     apiSecret: string,
-    passphrase: string
+    passphrase: string,
+    name: string | null = null
   ): Promise<number> {
     const [result] = await pool.execute(
-      'INSERT INTO user_bitget_credentials (user_id, api_key, api_secret, passphrase, is_active) VALUES (?, ?, ?, ?, true)',
-      [userId, apiKey, apiSecret, passphrase]
+      'INSERT INTO user_bitget_credentials (user_id, api_key, api_secret, passphrase, name, is_active) VALUES (?, ?, ?, ?, ?, true)',
+      [userId, apiKey, apiSecret, passphrase, name || null]
     );
     return (result as any).insertId;
   }
@@ -38,7 +39,8 @@ export class CredentialsModel {
     apiKey?: string,
     apiSecret?: string,
     passphrase?: string,
-    isActive?: boolean
+    isActive?: boolean,
+    name?: string | null
   ): Promise<void> {
     const updates: string[] = [];
     const values: any[] = [];
@@ -58,6 +60,10 @@ export class CredentialsModel {
     if (isActive !== undefined) {
       updates.push('is_active = ?');
       values.push(isActive);
+    }
+    if (name !== undefined) {
+      updates.push('name = ?');
+      values.push(name || null);
     }
 
     if (updates.length === 0) return;

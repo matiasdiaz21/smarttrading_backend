@@ -28,11 +28,15 @@ export class StrategyModel {
     warnings: string | null,
     webhookSecret: string,
     createdBy: number,
-    leverage: number = 10
+    leverage: number = 10,
+    allowedSymbols: string[] | null = null
   ): Promise<number> {
+    const allowedSymbolsJson = allowedSymbols?.length
+      ? JSON.stringify(allowedSymbols)
+      : null;
     const [result] = await pool.execute(
-      'INSERT INTO strategies (name, description, warnings, tradingview_webhook_secret, is_active, leverage, created_by) VALUES (?, ?, ?, ?, true, ?, ?)',
-      [name, description, warnings, webhookSecret, leverage, createdBy]
+      'INSERT INTO strategies (name, description, warnings, tradingview_webhook_secret, is_active, leverage, allowed_symbols, created_by) VALUES (?, ?, ?, ?, true, ?, ?, ?)',
+      [name, description, warnings, webhookSecret, leverage, allowedSymbolsJson, createdBy]
     );
     return (result as any).insertId;
   }
@@ -43,7 +47,8 @@ export class StrategyModel {
     description?: string | null,
     warnings?: string | null,
     isActive?: boolean,
-    leverage?: number
+    leverage?: number,
+    allowedSymbols?: string[] | null
   ): Promise<void> {
     const updates: string[] = [];
     const values: any[] = [];
@@ -67,6 +72,10 @@ export class StrategyModel {
     if (leverage !== undefined) {
       updates.push('leverage = ?');
       values.push(leverage);
+    }
+    if (allowedSymbols !== undefined) {
+      updates.push('allowed_symbols = ?');
+      values.push(allowedSymbols?.length ? JSON.stringify(allowedSymbols) : null);
     }
 
     if (updates.length === 0) return;

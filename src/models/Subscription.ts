@@ -31,12 +31,41 @@ export class SubscriptionModel {
     return subscriptions[0] || null;
   }
 
-  static async create(userId: number, strategyId: number, leverage: number | null = null): Promise<number> {
+  static async create(
+    userId: number,
+    strategyId: number,
+    leverage: number | null = null,
+    credentialId: number | null = null
+  ): Promise<number> {
     const [result] = await pool.execute(
-      'INSERT INTO user_strategy_subscriptions (user_id, strategy_id, is_enabled, leverage) VALUES (?, ?, false, ?)',
-      [userId, strategyId, leverage]
+      'INSERT INTO user_strategy_subscriptions (user_id, strategy_id, is_enabled, leverage, credential_id) VALUES (?, ?, false, ?, ?)',
+      [userId, strategyId, leverage, credentialId]
     );
     return (result as any).insertId;
+  }
+
+  /** Verifica si esta credencial está asignada a alguna suscripción del usuario (opcionalmente excluyendo una estrategia). */
+  static async isCredentialInUse(
+    userId: number,
+    credentialId: number,
+    excludeStrategyId: number | null = null
+  ): Promise<boolean> {
+    let query = 'SELECT 1 FROM user_strategy_subscriptions WHERE user_id = ? AND credential_id = ?';
+    const params: any[] = [userId, credentialId];
+    if (excludeStrategyId != null) {
+      query += ' AND strategy_id != ?';
+      params.push(excludeStrategyId);
+    }
+    query += ' LIMIT 1';
+    const [rows] = await pool.execute(query, params);
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
+  static async updateCredential(userId: number, strategyId: number, credentialId: number | null): Promise<void> {
+    await pool.execute(
+      'UPDATE user_strategy_subscriptions SET credential_id = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',
+      [credentialId, userId, strategyId]
+    );
   }
 
   static async toggle(userId: number, strategyId: number, enabled: boolean): Promise<void> {
@@ -57,6 +86,14 @@ export class SubscriptionModel {
     await pool.execute(
       'UPDATE user_strategy_subscriptions SET position_size = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',
       [positionSize, userId, strategyId]
+    );
+  }
+
+  static async updateExcludedSymbols(userId: number, strategyId: number, excludedSymbols: string[] | null): Promise<void> {
+    const json = excludedSymbols?.length ? JSON.stringify(excludedSymbols) : null;
+    await pool.execute(
+      'UPDATE user_strategy_subscriptions SET excluded_symbols = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',
+      [json, userId, strategyId]
     );
   }
 

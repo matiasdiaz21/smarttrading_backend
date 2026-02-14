@@ -25,14 +25,39 @@ export class UserController {
         subscriptions.map((sub) => [sub.strategy_id, sub])
       );
 
+      // Normalizar allowed_symbols (puede venir como JSON string desde MySQL)
+      const normalizeAllowedSymbols = (s: any): string[] | null => {
+        if (s == null) return null;
+        if (Array.isArray(s)) return s.length ? s : null;
+        if (typeof s === 'string') {
+          try {
+            const parsed = JSON.parse(s);
+            return Array.isArray(parsed) && parsed.length ? parsed : null;
+          } catch {
+            return null;
+          }
+        }
+        return null;
+      };
+
+      const normalizeExcludedSymbols = (s: any): string[] | null => {
+        if (s == null) return null;
+        if (Array.isArray(s)) return s.length ? s : null;
+        if (typeof s === 'string') {
+          try {
+            const parsed = JSON.parse(s);
+            return Array.isArray(parsed) && parsed.length ? parsed : null;
+          } catch {
+            return null;
+          }
+        }
+        return null;
+      };
+
       // Combinar estrategias con estado de suscripción
-      const result = strategies.map((strategy) => {
+      const result = strategies.map((strategy: any) => {
         const subscription = subscriptionMap.get(strategy.id);
         
-        // Determinar el leverage a usar:
-        // 1. Si el usuario tiene leverage personalizado (no null), usarlo
-        // 2. Si no, usar el leverage de la estrategia
-        // 3. Si la estrategia no tiene leverage, usar 10 por defecto
         let userLeverage: number;
         if (subscription?.leverage !== null && subscription?.leverage !== undefined) {
           userLeverage = subscription.leverage;
@@ -44,12 +69,15 @@ export class UserController {
         
         return {
           ...strategy,
+          allowed_symbols: normalizeAllowedSymbols(strategy.allowed_symbols),
           subscribed: !!subscription,
           is_enabled: subscription?.is_enabled || false,
           subscription_id: subscription?.id || null,
           user_leverage: userLeverage,
           default_leverage: strategy.leverage || 10,
           user_position_size: subscription?.position_size || null,
+          credential_id: subscription?.credential_id ?? null,
+          excluded_symbols: subscription ? normalizeExcludedSymbols(subscription.excluded_symbols) : null,
         };
       });
 
@@ -70,26 +98,36 @@ export class UserController {
       }
 
       const { id } = req.params;
+      const strategyId = parseInt(id);
 
-      // Verificar que la estrategia existe
-      const strategy = await StrategyModel.findById(parseInt(id));
+      const strategy = await StrategyModel.findById(strategyId);
       if (!strategy) {
         res.status(404).json({ error: 'Strategy not found' });
         return;
       }
 
-      // Verificar si ya está suscrito
-      const existing = await SubscriptionModel.findById(
-        req.user.userId,
-        parseInt(id)
-      );
-
+      const existing = await SubscriptionModel.findById(req.user.userId, strategyId);
       if (existing) {
         res.status(409).json({ error: 'Already subscribed to this strategy' });
         return;
       }
 
-      await SubscriptionModel.create(req.user.userId, parseInt(id));
+      const credentialId = req.body.credential_id != null ? parseInt(String(req.body.credential_id), 10) : null;
+      if (credentialId != null) {
+        const { CredentialsModel } = await import('../models/Credentials');
+        const cred = await CredentialsModel.findById(credentialId, req.user.userId);
+        if (!cred) {
+          res.status(400).json({ error: 'Credential not found or does not belong to you' });
+          return;
+        }
+        const inUse = await SubscriptionModel.isCredentialInUse(req.user.userId, credentialId, null);
+        if (inUse) {
+          res.status(400).json({ error: 'Esta credencial ya está asignada a otra estrategia. Cada credencial solo puede estar en una estrategia.' });
+          return;
+        }
+      }
+
+      await SubscriptionModel.create(req.user.userId, strategyId, null, credentialId);
 
       res.status(201).json({ message: 'Subscribed to strategy successfully' });
     } catch (error: any) {
@@ -124,6 +162,14 @@ export class UserController {
       if (!subscription) {
         res.status(404).json({
           error: 'Not subscribed to this strategy',
+        });
+        return;
+      }
+
+      // Si se está activando: la estrategia debe tener una credencial asignada (1:1)
+      if (enabled && !subscription.credential_id) {
+        res.status(400).json({
+          error: 'Asigna una credencial de Bitget a esta estrategia antes de activarla. Ve a la página de Estrategias y selecciona una credencial.',
         });
         return;
       }
@@ -268,6 +314,83 @@ export class UserController {
       res.json({
         message: 'Position size updated successfully',
         position_size: positionSizeToSave,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /** Asigna o cambia la credencial de Bitget para una estrategia. Una credencial solo puede estar en una estrategia. */
+  static async updateStrategyCredential(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const { id } = req.params;
+      const strategyId = parseInt(id);
+      const credentialId = req.body.credential_id !== undefined && req.body.credential_id !== null
+        ? parseInt(String(req.body.credential_id), 10)
+        : null;
+
+      const subscription = await SubscriptionModel.findById(req.user.userId, strategyId);
+      if (!subscription) {
+        res.status(404).json({ error: 'Not subscribed to this strategy' });
+        return;
+      }
+
+      if (credentialId !== null) {
+        const { CredentialsModel } = await import('../models/Credentials');
+        const cred = await CredentialsModel.findById(credentialId, req.user.userId);
+        if (!cred) {
+          res.status(400).json({ error: 'Credential not found or does not belong to you' });
+          return;
+        }
+        const inUse = await SubscriptionModel.isCredentialInUse(req.user.userId, credentialId, strategyId);
+        if (inUse) {
+          res.status(400).json({ error: 'Esta credencial ya está asignada a otra estrategia. Cada credencial solo puede estar en una estrategia.' });
+          return;
+        }
+      }
+
+      await SubscriptionModel.updateCredential(req.user.userId, strategyId, credentialId);
+
+      res.json({
+        message: 'Credential updated successfully',
+        credential_id: credentialId,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /** Actualiza los símbolos que el usuario no quiere copiar en esta estrategia. */
+  static async updateExcludedSymbols(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      const { id } = req.params;
+      const strategyId = parseInt(id);
+      const raw = req.body.excluded_symbols;
+      const excludedSymbols = Array.isArray(raw)
+        ? raw.filter((s: any) => typeof s === 'string' && s.trim()).map((s: string) => s.trim().toUpperCase())
+        : [];
+      const toSave = excludedSymbols.length ? excludedSymbols : null;
+
+      const subscription = await SubscriptionModel.findById(req.user.userId, strategyId);
+      if (!subscription) {
+        res.status(404).json({ error: 'Not subscribed to this strategy' });
+        return;
+      }
+
+      await SubscriptionModel.updateExcludedSymbols(req.user.userId, strategyId, toSave);
+
+      res.json({
+        message: 'Excluded symbols updated successfully',
+        excluded_symbols: toSave,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

@@ -18,6 +18,8 @@ export interface Strategy {
   tradingview_webhook_secret: string;
   is_active: boolean;
   leverage: number;
+  /** Símbolos permitidos (ej. ["BTCUSDT","ETHUSDT"]). Null o vacío = todos permitidos. */
+  allowed_symbols: string[] | null;
   created_by: number;
   created_at: Date;
 }
@@ -28,6 +30,7 @@ export interface UserBitgetCredentials {
   api_key: string; // encriptado
   api_secret: string; // encriptado
   passphrase: string; // encriptado
+  name: string | null; // nombre opcional (ej. "Cuenta principal")
   is_active: boolean;
   created_at: Date;
 }
@@ -39,6 +42,9 @@ export interface UserStrategySubscription {
   is_enabled: boolean;
   leverage: number | null;
   position_size: number | null; // Tamaño de posición en USDT
+  /** Símbolos que el usuario no quiere copiar en esta estrategia. */
+  excluded_symbols: string[] | null;
+  credential_id: number | null; // Credencial Bitget asignada (1:1 con estrategia)
   created_at: Date;
   updated_at: Date;
 }

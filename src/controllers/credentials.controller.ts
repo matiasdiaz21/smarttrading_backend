@@ -5,6 +5,8 @@ import { SubscriptionModel } from '../models/Subscription';
 import { encrypt } from '../utils/encryption';
 import { BitgetService } from '../services/bitget.service';
 
+/** Permite múltiples credenciales; cada estrategia se asocia a una credencial (1:1). */
+
 export class CredentialsController {
   static async list(req: AuthRequest, res: Response): Promise<void> {
     try {
@@ -19,6 +21,7 @@ export class CredentialsController {
       res.json(
         credentials.map((cred) => ({
           id: cred.id,
+          name: cred.name ?? null,
           is_active: cred.is_active,
           created_at: cred.created_at,
         }))
@@ -35,22 +38,11 @@ export class CredentialsController {
         return;
       }
 
-      const { api_key, api_secret, passphrase } = req.body;
+      const { api_key, api_secret, passphrase, name } = req.body;
 
       if (!api_key || !api_secret || !passphrase) {
         res.status(400).json({
           error: 'api_key, api_secret, and passphrase are required',
-        });
-        return;
-      }
-
-      // Verificar si ya existe una credencial activa
-      const existingCredentials = await CredentialsModel.findByUserId(req.user.userId);
-      const hasActiveCredential = existingCredentials.some(cred => cred.is_active);
-
-      if (hasActiveCredential) {
-        res.status(400).json({
-          error: 'Ya tienes una credencial activa. Solo puedes tener una credencial activa a la vez. Desactiva la credencial actual antes de crear una nueva.',
         });
         return;
       }
@@ -60,25 +52,12 @@ export class CredentialsController {
       const encryptedApiSecret = encrypt(api_secret);
       const encryptedPassphrase = encrypt(passphrase);
 
-      // Desactivar todas las credenciales existentes antes de crear la nueva (por seguridad)
-      for (const cred of existingCredentials) {
-        if (cred.is_active) {
-          await CredentialsModel.update(
-            cred.id,
-            req.user.userId,
-            undefined,
-            undefined,
-            undefined,
-            false
-          );
-        }
-      }
-
       const credentialId = await CredentialsModel.create(
         req.user.userId,
         encryptedApiKey,
         encryptedApiSecret,
-        encryptedPassphrase
+        encryptedPassphrase,
+        name ? String(name).trim() || null : null
       );
 
       res.status(201).json({
@@ -98,7 +77,7 @@ export class CredentialsController {
       }
 
       const { id } = req.params;
-      const { api_key, api_secret, passphrase, is_active } = req.body;
+      const { api_key, api_secret, passphrase, is_active, name } = req.body;
 
       const credential = await CredentialsModel.findById(
         parseInt(id),
@@ -116,23 +95,9 @@ export class CredentialsController {
       if (passphrase) updates.passphrase = encrypt(passphrase);
       if (is_active !== undefined) {
         updates.is_active = Boolean(is_active);
-        
-        // Si se está activando esta credencial, desactivar todas las demás
-        if (updates.is_active === true) {
-          const allCredentials = await CredentialsModel.findByUserId(req.user.userId);
-          for (const cred of allCredentials) {
-            if (cred.id !== parseInt(id) && cred.is_active) {
-              await CredentialsModel.update(
-                cred.id,
-                req.user.userId,
-                undefined,
-                undefined,
-                undefined,
-                false
-              );
-            }
-          }
-        }
+      }
+      if (name !== undefined) {
+        updates.name = name ? String(name).trim() || null : null;
       }
 
       await CredentialsModel.update(
@@ -141,7 +106,8 @@ export class CredentialsController {
         updates.api_key,
         updates.api_secret,
         updates.passphrase,
-        updates.is_active
+        updates.is_active,
+        updates.name
       );
 
       res.json({ message: 'Credentials updated successfully' });
@@ -169,13 +135,11 @@ export class CredentialsController {
         return;
       }
 
-      // Verificar si el usuario tiene estrategias habilitadas
-      const subscriptions = await SubscriptionModel.findByUserId(req.user.userId);
-      const hasEnabledStrategies = subscriptions.some(sub => sub.is_enabled);
-
-      if (hasEnabledStrategies) {
+      // No permitir eliminar si esta credencial está asignada a alguna estrategia
+      const inUse = await SubscriptionModel.isCredentialInUse(req.user.userId, parseInt(id), null);
+      if (inUse) {
         res.status(400).json({
-          error: 'No puedes eliminar credenciales mientras tengas estrategias habilitadas. Desactiva todas tus estrategias primero.',
+          error: 'Esta credencial está asignada a una estrategia. Desasigna la credencial de la estrategia antes de eliminarla.',
         });
         return;
       }

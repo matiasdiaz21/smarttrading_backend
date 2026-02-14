@@ -47,6 +47,20 @@ export class AdminController {
     }
   }
 
+  static async getWebhookLogSymbols(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+      const strategyId = req.query.strategy_id != null ? parseInt(String(req.query.strategy_id), 10) : undefined;
+      const symbols = await WebhookLogModel.getDistinctSymbols(isNaN(strategyId as number) ? undefined : strategyId);
+      res.json({ symbols });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   static async getStats(req: AuthRequest, res: Response): Promise<void> {
     try {
       if (!req.user || req.user.role !== 'admin') {

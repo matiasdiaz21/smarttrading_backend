@@ -3,13 +3,28 @@ import { AuthRequest } from '../middleware/auth';
 import { StrategyModel } from '../models/Strategy';
 import crypto from 'crypto';
 
+function normalizeStrategy(s: any) {
+  if (!s) return s;
+  const allowed = s.allowed_symbols;
+  if (typeof allowed === 'string') {
+    try {
+      s.allowed_symbols = JSON.parse(allowed);
+    } catch {
+      s.allowed_symbols = null;
+    }
+  }
+  if (Array.isArray(s.allowed_symbols) && !s.allowed_symbols.length) s.allowed_symbols = null;
+  return s;
+}
+
 export class StrategyController {
   static async list(req: AuthRequest, res: Response): Promise<void> {
     try {
       const includeInactive = req.user?.role === 'admin';
       const strategies = await StrategyModel.findAll(includeInactive);
+      const normalized = (strategies as any[]).map(normalizeStrategy);
 
-      res.json(strategies);
+      res.json(normalized);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -25,7 +40,7 @@ export class StrategyController {
         return;
       }
 
-      res.json(strategy);
+      res.json(normalizeStrategy(strategy));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -38,18 +53,18 @@ export class StrategyController {
         return;
       }
 
-      const { name, description, warnings, leverage } = req.body;
+      const { name, description, warnings, leverage, allowed_symbols } = req.body;
 
       if (!name) {
         res.status(400).json({ error: 'Name is required' });
         return;
       }
 
-      // Validar leverage (entre 1 y 125, por defecto 10)
       const leverageValue = leverage ? Math.max(1, Math.min(125, parseInt(String(leverage), 10) || 10)) : 10;
-
-      // Generar secret para el webhook
       const webhookSecret = crypto.randomBytes(32).toString('hex');
+      const allowedSymbols = Array.isArray(allowed_symbols)
+        ? allowed_symbols.filter((s: any) => typeof s === 'string' && s.trim()).map((s: string) => s.trim().toUpperCase())
+        : null;
 
       const strategyId = await StrategyModel.create(
         name,
@@ -57,12 +72,13 @@ export class StrategyController {
         warnings || null,
         webhookSecret,
         req.user.userId,
-        leverageValue
+        leverageValue,
+        allowedSymbols?.length ? allowedSymbols : null
       );
 
       const strategy = await StrategyModel.findById(strategyId);
 
-      res.status(201).json(strategy);
+      res.status(201).json(normalizeStrategy(strategy));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -76,7 +92,7 @@ export class StrategyController {
       }
 
       const { id } = req.params;
-      const { name, description, warnings, is_active, leverage } = req.body;
+      const { name, description, warnings, is_active, leverage, allowed_symbols } = req.body;
 
       const strategy = await StrategyModel.findById(parseInt(id));
       if (!strategy) {
@@ -89,17 +105,24 @@ export class StrategyController {
         ? Math.max(1, Math.min(125, parseInt(String(leverage), 10) || 10))
         : undefined;
 
+      const allowedSymbols = allowed_symbols !== undefined
+        ? (Array.isArray(allowed_symbols)
+            ? allowed_symbols.filter((s: any) => typeof s === 'string' && s.trim()).map((s: string) => s.trim().toUpperCase())
+            : null)
+        : undefined;
+
       await StrategyModel.update(
         parseInt(id),
         name,
         description,
         warnings,
         is_active !== undefined ? Boolean(is_active) : undefined,
-        leverageValue
+        leverageValue,
+        allowedSymbols
       );
 
       const updated = await StrategyModel.findById(parseInt(id));
-      res.json(updated);
+      res.json(normalizeStrategy(updated));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

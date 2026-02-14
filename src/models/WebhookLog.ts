@@ -279,5 +279,29 @@ export class WebhookLogModel {
       return null;
     }
   }
+
+  /**
+   * Obtiene los símbolos distintos que han llegado en webhook_logs (desde payload.symbol).
+   * Útil para sugerir en admin al configurar "símbolos permitidos" por estrategia.
+   * @param strategyId Opcional: filtrar por estrategia
+   */
+  static async getDistinctSymbols(strategyId?: number): Promise<string[]> {
+    let query = `SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')) AS symbol
+      FROM webhook_logs
+      WHERE JSON_EXTRACT(payload, '$.symbol') IS NOT NULL
+        AND TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.symbol')), '')) != ''`;
+    const params: any[] = [];
+    if (strategyId !== undefined && strategyId !== null) {
+      query += ' AND strategy_id = ?';
+      params.push(strategyId);
+    }
+    query += ' ORDER BY symbol ASC';
+    const [rows] = await pool.execute(query, params);
+    const list = (rows as { symbol: string }[]).map((r) => {
+      let s = (r.symbol || '').trim().replace(/\.P$/i, '');
+      return s.toUpperCase();
+    });
+    return [...new Set(list)].filter(Boolean).sort();
+  }
 }
 

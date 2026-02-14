@@ -91,6 +91,9 @@ app.get('/api/user/strategies', authenticate, UserController.getStrategies);
 app.post('/api/user/strategies/:id/subscribe', authenticate, UserController.subscribeToStrategy);
 app.put('/api/user/strategies/:id/toggle', authenticate, UserController.toggleStrategy);
 app.put('/api/user/strategies/:id/leverage', authenticate, UserController.updateLeverage);
+app.put('/api/user/strategies/:id/position-size', authenticate, UserController.updatePositionSize);
+app.put('/api/user/strategies/:id/excluded-symbols', authenticate, UserController.updateExcludedSymbols);
+app.put('/api/user/strategies/:id/credential', authenticate, UserController.updateStrategyCredential);
 app.get('/api/user/positions', authenticate, UserController.getPositions);
 app.get('/api/user/trades/closed', authenticate, UserController.getClosedTrades);
 app.get('/api/user/subscription', authenticate, UserController.getSubscriptionStatus);
@@ -138,6 +141,7 @@ app.get('/api/admin/nowpayments/currencies', authenticate, requireAdmin, NOWPaym
 // Admin routes
 app.get('/api/admin/users', authenticate, requireAdmin, AdminController.getUsers);
 app.get('/api/admin/webhook-logs', authenticate, requireAdmin, AdminController.getWebhookLogs);
+app.get('/api/admin/webhook-logs/symbols', authenticate, requireAdmin, AdminController.getWebhookLogSymbols);
 app.get('/api/admin/order-errors', authenticate, requireAdmin, AdminController.getOrderErrors);
 // Endpoint público para logs de operaciones Bitget
 app.get('/api/admin/bitget-operation-logs', AdminController.getBitgetOperationLogs);
