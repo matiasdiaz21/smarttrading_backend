@@ -709,7 +709,9 @@ export class BitgetService {
         }
         
         const positionSizeNum = parseFloat(positionSize);
-        const breakevenSize = (positionSizeNum * 0.5).toFixed(contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0);
+        const volumePlaceNum = contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0;
+        const multiplier = Math.pow(10, volumePlaceNum);
+        const breakevenSize = (Math.floor(positionSizeNum * 0.5 * multiplier) / multiplier).toFixed(volumePlaceNum);
         const breakevenRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
         
         const breakevenClientOid = `TP_BE_${symbol.substring(0, 8)}_${baseId}_${breakevenRandom}`.substring(0, 64);
@@ -734,7 +736,10 @@ export class BitgetService {
       
       if (formattedBreakeven && formattedBreakeven > 0) {
         const positionSizeNum = parseFloat(positionSize);
-        finalTPSize = (positionSizeNum * 0.5).toFixed(contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0);
+        const volumePlaceNum = contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0;
+        const multiplier = Math.pow(10, volumePlaceNum);
+        const breakevenSizeNum = Math.floor(positionSizeNum * 0.5 * multiplier) / multiplier;
+        finalTPSize = (positionSizeNum - breakevenSizeNum).toFixed(volumePlaceNum);
         finalTPDescription = `50% restante (${finalTPSize})`;
       } else {
         finalTPSize = positionSize;

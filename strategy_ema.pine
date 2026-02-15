@@ -57,7 +57,131 @@ plot(sma_mid, title="SMA Media", color=sma_mid_color, linewidth=2)
 plot(sma_slow, title="SMA Lenta", color=sma_slow_color, linewidth=1)
 
 // ═══════════════════════════════════════════════════════════════
-// 🔄 CONDICIONES DE ENTRADA/SALIDA
+// � FUNCIONES HELPER PARA MULTI-TIMEFRAME
+// ═══════════════════════════════════════════════════════════════
+
+// Calcular timeframes superiores dinámicamente
+int currentTfSeconds = timeframe.in_seconds()
+string htf1 = timeframe.from_seconds(currentTfSeconds * 4)  // 4x el timeframe actual
+string htf2 = timeframe.from_seconds(currentTfSeconds * 16)  // 16x el timeframe actual
+string htf3 = "1D"  // Diario
+
+// Función para obtener datos técnicos de un timeframe específico
+getTimeframeIndicators(string tf) =>
+    [sma_f, sma_m, sma_s, atr_val, vol_val, open_val, high_val, low_val, close_val] = request.security(syminfo.tickerid, tf, [ta.sma(close, sma_fast_len), ta.sma(close, sma_mid_len), ta.sma(close, sma_slow_len), ta.atr(atr_length), volume, open, high, low, close], lookahead=barmerge.lookahead_on)
+
+// Función para calcular sentimiento basado en SMAs
+calculateSentiment(float sma_f, float sma_m, float sma_s, float close_val) =>
+    bool full_bullish = sma_f > sma_m and sma_m > sma_s
+    bool full_bearish = sma_f < sma_m and sma_m < sma_s
+    bool price_above_all = close_val > sma_f and close_val > sma_m and close_val > sma_s
+    bool price_below_all = close_val < sma_f and close_val < sma_m and close_val < sma_s
+    int bullish_score = 0
+    int bearish_score = 0
+    if full_bullish
+        bullish_score += 40
+    else if full_bearish
+        bearish_score += 40
+    if price_above_all
+        bullish_score += 30
+    else if price_below_all
+        bearish_score += 30
+    if close_val > sma_s
+        bullish_score += 15
+    else
+        bearish_score += 15
+    if sma_f > sma_m
+        bullish_score += 15
+    else
+        bearish_score += 15
+    string sentiment_result = "NEUTRAL"
+    if bullish_score > bearish_score and bullish_score >= 40
+        sentiment_result := "ALCISTA"
+    else if bearish_score > bullish_score and bearish_score >= 40
+        sentiment_result := "BAJISTA"
+    [sentiment_result, bullish_score, bearish_score]
+
+// Función para calcular tendencia
+calculateTrend(float close_val, float sma_s, float close_prev, float sma_s_prev, float close_prev2, float sma_s_prev2, float sma_f, float sma_m) =>
+    bool uptrend_tf = close_val > sma_s
+    bool downtrend_tf = close_val < sma_s
+    bool strong_uptrend = close_val > sma_s and close_prev > sma_s_prev and close_prev2 > sma_s_prev2 and sma_f > sma_m and sma_m > sma_s
+    bool strong_downtrend = close_val < sma_s and close_prev < sma_s_prev and close_prev2 > sma_s_prev2 and sma_f < sma_m and sma_m < sma_s
+    string direction = "SIDEWAYS"
+    string strength = "WEAK"
+    if strong_uptrend
+        direction := "UP"
+        strength := "STRONG"
+    else if uptrend_tf
+        direction := "UP"
+        strength := "MODERATE"
+    else if strong_downtrend
+        direction := "DOWN"
+        strength := "STRONG"
+    else if downtrend_tf
+        direction := "DOWN"
+        strength := "MODERATE"
+    [direction, strength]
+
+// Función para obtener volumen relativo
+getVolumeRelative(float vol_val, string tf) =>
+    float vol_avg = request.security(syminfo.tickerid, tf, ta.sma(volume, 20), lookahead=barmerge.lookahead_on)
+    float vol_relative = vol_avg > 0 ? (vol_val / vol_avg) * 100 : 100.0
+    string vol_state = vol_relative > 120 ? "ABOVE_AVERAGE" : vol_relative < 80 ? "BELOW_AVERAGE" : "AVERAGE"
+    [vol_relative, vol_state]
+
+// Función para obtener ATR relativo
+getATRRelative(float atr_val, string tf) =>
+    float atr_avg = request.security(syminfo.tickerid, tf, ta.sma(ta.atr(atr_length), 20), lookahead=barmerge.lookahead_on)
+    float atr_relative = atr_avg > 0 ? (atr_val / atr_avg) * 100 : 100.0
+    string atr_state = atr_relative > 150 ? "HIGH" : atr_relative < 80 ? "LOW" : "NORMAL"
+    [atr_relative, atr_state]
+
+// Función para construir JSON de timeframe completo
+buildTimeframeJSON(string tf_name, string tf_period, float sma_f, float sma_m, float sma_s, float atr_val, float vol_val, float open_val, float high_val, float low_val, float close_val, float close_prev, float sma_s_prev, float close_prev2, float sma_s_prev2) =>
+    [sentiment_val, bullish_score, bearish_score] = calculateSentiment(sma_f, sma_m, sma_s, close_val)
+    [trend_dir, trend_str] = calculateTrend(close_val, sma_s, close_prev, sma_s_prev, close_prev2, sma_s_prev2, sma_f, sma_m)
+    [vol_rel, vol_state] = getVolumeRelative(vol_val, tf_period)
+    [atr_rel, atr_state] = getATRRelative(atr_val, tf_period)
+    string sma_alignment = sma_f > sma_m and sma_m > sma_s ? "BULLISH" : sma_f < sma_m and sma_m < sma_s ? "BEARISH" : "MIXED"
+    string price_fast_rel = close_val > sma_f ? "ABOVE" : "BELOW"
+    string price_mid_rel = close_val > sma_m ? "ABOVE" : "BELOW"
+    string price_slow_rel = close_val > sma_s ? "ABOVE" : "BELOW"
+    '"' + tf_name + '": {"timeframe": "' + tf_period + '", "indicators": {"sma_fast": {"value": ' + str.tostring(sma_f, "#.####") + ', "priceRelation": "' + price_fast_rel + '"}, "sma_mid": {"value": ' + str.tostring(sma_m, "#.####") + ', "priceRelation": "' + price_mid_rel + '"}, "sma_slow": {"value": ' + str.tostring(sma_s, "#.####") + ', "priceRelation": "' + price_slow_rel + '"}, "sma_alignment": "' + sma_alignment + '", "atr": {"value": ' + str.tostring(atr_val, "#.####") + ', "relative": ' + str.tostring(atr_rel, "#.##") + ', "state": "' + atr_state + '"}}, "ohlc": {"open": ' + str.tostring(open_val, "#.####") + ', "high": ' + str.tostring(high_val, "#.####") + ', "low": ' + str.tostring(low_val, "#.####") + ', "close": ' + str.tostring(close_val, "#.####") + '}, "volume": {"value": ' + str.tostring(vol_val, "#.##") + ', "relative": ' + str.tostring(vol_rel, "#.##") + ', "state": "' + vol_state + '"}, "sentiment": {"value": "' + sentiment_val + '", "bullishScore": ' + str.tostring(bullish_score) + ', "bearishScore": ' + str.tostring(bearish_score) + '}, "trend": {"direction": "' + trend_dir + '", "strength": "' + trend_str + '"}}'
+
+// Función para construir JSON completo de todos los timeframes y contexto de mercado
+buildMultiTimeframeJSON() =>
+    string current_tf = timeframe.period
+    float current_close_prev = close[1]
+    float current_sma_slow_prev = sma_slow[1]
+    float current_close_prev2 = close[2]
+    float current_sma_slow_prev2 = sma_slow[2]
+    string current_json = buildTimeframeJSON("current", current_tf, sma_fast, sma_mid, sma_slow, atrValue, volume, open, high, low, close, current_close_prev, current_sma_slow_prev, current_close_prev2, current_sma_slow_prev2)
+    [htf1_sma_f, htf1_sma_m, htf1_sma_s, htf1_atr, htf1_vol, htf1_open, htf1_high, htf1_low, htf1_close] = getTimeframeIndicators(htf1)
+    float htf1_close_prev = request.security(syminfo.tickerid, htf1, close[1], lookahead=barmerge.lookahead_on)
+    float htf1_sma_slow_prev = request.security(syminfo.tickerid, htf1, ta.sma(close, sma_slow_len)[1], lookahead=barmerge.lookahead_on)
+    float htf1_close_prev2 = request.security(syminfo.tickerid, htf1, close[2], lookahead=barmerge.lookahead_on)
+    float htf1_sma_slow_prev2 = request.security(syminfo.tickerid, htf1, ta.sma(close, sma_slow_len)[2], lookahead=barmerge.lookahead_on)
+    string htf1_json = buildTimeframeJSON("htf1", htf1, htf1_sma_f, htf1_sma_m, htf1_sma_s, htf1_atr, htf1_vol, htf1_open, htf1_high, htf1_low, htf1_close, htf1_close_prev, htf1_sma_slow_prev, htf1_close_prev2, htf1_sma_slow_prev2)
+    [htf2_sma_f, htf2_sma_m, htf2_sma_s, htf2_atr, htf2_vol, htf2_open, htf2_high, htf2_low, htf2_close] = getTimeframeIndicators(htf2)
+    float htf2_close_prev = request.security(syminfo.tickerid, htf2, close[1], lookahead=barmerge.lookahead_on)
+    float htf2_sma_slow_prev = request.security(syminfo.tickerid, htf2, ta.sma(close, sma_slow_len)[1], lookahead=barmerge.lookahead_on)
+    float htf2_close_prev2 = request.security(syminfo.tickerid, htf2, close[2], lookahead=barmerge.lookahead_on)
+    float htf2_sma_slow_prev2 = request.security(syminfo.tickerid, htf2, ta.sma(close, sma_slow_len)[2], lookahead=barmerge.lookahead_on)
+    string htf2_json = buildTimeframeJSON("htf2", htf2, htf2_sma_f, htf2_sma_m, htf2_sma_s, htf2_atr, htf2_vol, htf2_open, htf2_high, htf2_low, htf2_close, htf2_close_prev, htf2_sma_slow_prev, htf2_close_prev2, htf2_sma_slow_prev2)
+    [htf3_sma_f, htf3_sma_m, htf3_sma_s, htf3_atr, htf3_vol, htf3_open, htf3_high, htf3_low, htf3_close] = getTimeframeIndicators(htf3)
+    float htf3_close_prev = request.security(syminfo.tickerid, htf3, close[1], lookahead=barmerge.lookahead_on)
+    float htf3_sma_slow_prev = request.security(syminfo.tickerid, htf3, ta.sma(close, sma_slow_len)[1], lookahead=barmerge.lookahead_on)
+    float htf3_close_prev2 = request.security(syminfo.tickerid, htf3, close[2], lookahead=barmerge.lookahead_on)
+    float htf3_sma_slow_prev2 = request.security(syminfo.tickerid, htf3, ta.sma(close, sma_slow_len)[2], lookahead=barmerge.lookahead_on)
+    string htf3_json = buildTimeframeJSON("htf3", htf3, htf3_sma_f, htf3_sma_m, htf3_sma_s, htf3_atr, htf3_vol, htf3_open, htf3_high, htf3_low, htf3_close, htf3_close_prev, htf3_sma_slow_prev, htf3_close_prev2, htf3_sma_slow_prev2)
+    [atr_rel_global, atr_state_global] = getATRRelative(atrValue, current_tf)
+    [vol_rel_global, vol_state_global] = getVolumeRelative(volume, current_tf)
+    string market_context = '"marketContext": {"volatility": {"atrRelative": ' + str.tostring(atr_rel_global, "#.##") + ', "state": "' + atr_state_global + '"}, "volume": {"relative": ' + str.tostring(vol_rel_global, "#.##") + ', "state": "' + vol_state_global + '"}}'
+    '"timeframes": {' + current_json + ', ' + htf1_json + ', ' + htf2_json + ', ' + htf3_json + '}, ' + market_context
+
+// ═══════════════════════════════════════════════════════════════
+// � CONDICIONES DE ENTRADA/SALIDA
 // ═══════════════════════════════════════════════════════════════
 
 // Cruces de SMA rápida (5) con SMA media (8)
@@ -151,8 +275,8 @@ if longcondicion and not isTradeOpen and barstate.isconfirmed
     trade_id += 1
     float qty = (perdida_ * normalBalance / 100) / risk
     currentQty := qty
-
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(be) + ', "alertType": "ENTRY", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "atr": ' + str.tostring(atrValue) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(be) + ', "alertType": "ENTRY", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "atr": ' + str.tostring(atrValue) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
     label.new(bar_index, entry, text="Long Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(be, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
 
 if shortcondicion and not isTradeOpen and barstate.isconfirmed
@@ -191,8 +315,8 @@ if shortcondicion and not isTradeOpen and barstate.isconfirmed
     trade_id += 1
     float qty = (perdida_ * normalBalance / 100) / risk
     currentQty := qty
-
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(be) + ', "alertType": "ENTRY", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "atr": ' + str.tostring(atrValue) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(be) + ', "alertType": "ENTRY", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "atr": ' + str.tostring(atrValue) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
     label.new(bar_index, entry, text="Short Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(be, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
 
 // ═══════════════════════════════════════════════════════════════
@@ -204,7 +328,8 @@ if activeTradeType == "LONG" and high >= breakevenPrice and not alert_breakeven_
     stopl := activeEntry
     be_hit := true
     be_bar_index := bar_index
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "BREAKEVEN", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "BREAKEVEN", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
     label.new(bar_index, breakevenPrice, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
     alert_breakeven_triggered := true
     totalBreakevens += 1
@@ -214,7 +339,8 @@ if activeTradeType == "SHORT" and low <= breakevenPrice and not alert_breakeven_
     stops := activeEntry
     be_hit := true
     be_bar_index := bar_index
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "BREAKEVEN", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "BREAKEVEN", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
     label.new(bar_index, breakevenPrice, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
     alert_breakeven_triggered := true
     totalBreakevens += 1
@@ -225,7 +351,8 @@ if activeTradeType == "SHORT" and low <= breakevenPrice and not alert_breakeven_
 
 if high >= activeTp and activeTradeType == "LONG" and not alert_take_profit_triggered and isTradeOpen and bar_index > entry_bar_index
     tp_hit := true
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "TAKE_PROFIT", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "TAKE_PROFIT", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
     label.new(bar_index, high, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
     alert_take_profit_triggered := true
     alert_stop_loss_triggered := true
@@ -256,7 +383,8 @@ if high >= activeTp and activeTradeType == "LONG" and not alert_take_profit_trig
 
 if low <= activeTp and activeTradeType == "SHORT" and not alert_take_profit_triggered and isTradeOpen and bar_index > entry_bar_index
     tp_hit := true
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "TAKE_PROFIT", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "TAKE_PROFIT", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
     label.new(bar_index, low, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.green, textcolor=color.white, size=textSize)
     alert_take_profit_triggered := true
     alert_stop_loss_triggered := true
@@ -292,7 +420,8 @@ if low <= activeTp and activeTradeType == "SHORT" and not alert_take_profit_trig
 // LONG SL: low toca o cae por debajo del stop (no en la misma barra que BE)
 if low <= activeStop and activeTradeType == "LONG" and not alert_stop_loss_triggered and isTradeOpen and bar_index > entry_bar_index and bar_index != be_bar_index
     sl_hit := true
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "STOP_LOSS", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "STOP_LOSS", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
     label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.red, textcolor=color.white, size=textSize)
     alert_stop_loss_triggered := true
     alert_take_profit_triggered := true
@@ -330,7 +459,8 @@ if low <= activeStop and activeTradeType == "LONG" and not alert_stop_loss_trigg
 // SHORT SL: high toca o supera el stop (no en la misma barra que BE)
 if high >= activeStop and activeTradeType == "SHORT" and not alert_stop_loss_triggered and isTradeOpen and bar_index > entry_bar_index and bar_index != be_bar_index
     sl_hit := true
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "STOP_LOSS", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "STOP_LOSS", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
     label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
     alert_stop_loss_triggered := true
     alert_take_profit_triggered := true
@@ -378,7 +508,8 @@ if exit_mode == "Cruce SMA" and isTradeOpen and activeTradeType == "LONG" and be
     pnl -= comision_trade_cx
     
     string exit_type = pnl >= 0 ? "TAKE_PROFIT" : "STOP_LOSS"
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(exit_price) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "' + exit_type + '", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Cierre por cruce opuesto SMA", "exit_price": ' + str.tostring(exit_price) + ', "pnl": ' + str.tostring(math.round(pnl, 4)) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(exit_price) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "' + exit_type + '", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Cierre por cruce opuesto SMA", "exit_price": ' + str.tostring(exit_price) + ', "pnl": ' + str.tostring(math.round(pnl, 4)) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
     
     color lbl_color = pnl >= 0 ? color.green : color.red
     string lbl_text = pnl >= 0 ? "Cierre +" : "Cierre -"
@@ -420,7 +551,8 @@ if exit_mode == "Cruce SMA" and isTradeOpen and activeTradeType == "SHORT" and b
     pnl -= comision_trade_cx
     
     string exit_type = pnl >= 0 ? "TAKE_PROFIT" : "STOP_LOSS"
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(exit_price) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "' + exit_type + '", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Cierre por cruce opuesto SMA", "exit_price": ' + str.tostring(exit_price) + ', "pnl": ' + str.tostring(math.round(pnl, 4)) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(exit_price) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "' + exit_type + '", "strategy": "Strategy 3 SMA Crossover", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Cierre por cruce opuesto SMA", "exit_price": ' + str.tostring(exit_price) + ', "pnl": ' + str.tostring(math.round(pnl, 4)) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
     
     color lbl_color = pnl >= 0 ? color.green : color.red
     string lbl_text = pnl >= 0 ? "Cierre +" : "Cierre -"
