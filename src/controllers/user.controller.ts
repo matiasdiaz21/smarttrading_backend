@@ -123,7 +123,7 @@ export class UserController {
         }
         // Verificar conflicto de símbolos con otras estrategias que usen esta misma credencial
         const allSubs = await SubscriptionModel.findByUserId(req.user.userId);
-        const subsWithSameCred = allSubs.filter(s => s.credential_id === credentialId);
+        const subsWithSameCred = allSubs.filter(s => s.credential_id === credentialId && s.is_enabled);
         if (subsWithSameCred.length > 0) {
           const allStrategies = await StrategyModel.findAll(false);
           const strategyMap = new Map(allStrategies.map((s: any) => [s.id, s]));
@@ -473,7 +473,7 @@ export class UserController {
         }
         // Verificar conflicto de símbolos con otras estrategias que usen esta misma credencial
         const allSubs = await SubscriptionModel.findByUserId(req.user.userId);
-        const subsWithSameCred = allSubs.filter(s => s.credential_id === credentialId && s.strategy_id !== strategyId);
+        const subsWithSameCred = allSubs.filter(s => s.credential_id === credentialId && s.strategy_id !== strategyId && s.is_enabled);
         if (subsWithSameCred.length > 0) {
           const targetStrategy = await StrategyModel.findById(strategyId);
           const allStrategies = await StrategyModel.findAll(false);
