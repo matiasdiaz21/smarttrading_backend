@@ -1113,6 +1113,28 @@ export class BitgetService {
     }
   }
 
+  // Obtener saldo de la cuenta de futuros
+  async getAccountBalance(
+    credentials: BitgetCredentials,
+    productType: string = 'USDT-FUTURES',
+    marginCoin: string = 'USDT'
+  ): Promise<{ available: number; equity: number; unrealizedPL: number; marginCoin: string }> {
+    const endpoint = `/api/v2/mix/account/accounts?productType=${productType.toUpperCase()}`;
+    const result = await this.makeRequest('GET', endpoint, credentials);
+
+    if (!result || !Array.isArray(result) || result.length === 0) {
+      throw new Error('No se pudo obtener información de la cuenta');
+    }
+
+    const account = result.find((a: any) => a.marginCoin?.toUpperCase() === marginCoin.toUpperCase()) || result[0];
+    return {
+      available: parseFloat(account.available || account.crossedMaxAvailable || '0'),
+      equity: parseFloat(account.accountEquity || account.usdtEquity || '0'),
+      unrealizedPL: parseFloat(account.unrealizedPL || '0'),
+      marginCoin: account.marginCoin || marginCoin,
+    };
+  }
+
   // Validar conexión con Bitget usando las credenciales
   async validateConnection(credentials: BitgetCredentials): Promise<{ valid: boolean; message: string }> {
     try {

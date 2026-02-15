@@ -165,3 +165,40 @@ export interface Notification {
   created_at: Date;
   read_at: Date | null;
 }
+
+export interface MassTradeSymbolConfig {
+  symbol: string;
+  sl_percent?: number;
+  tp_percent?: number;
+}
+
+export interface MassTradeConfig {
+  id: number;
+  user_id: number;
+  name: string;
+  credential_id: number;
+  side: 'buy' | 'sell';
+  leverage: number;
+  stop_loss_percent: number;
+  take_profit_percent: number | null;
+  position_size_usdt: number;
+  symbols: MassTradeSymbolConfig[];
+  product_type: string;
+  margin_coin: string;
+  is_active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface MassTradeExecution {
+  id: number;
+  config_id: number;
+  user_id: number;
+  side: 'buy' | 'sell';
+  leverage: number;
+  symbols_count: number;
+  successful: number;
+  failed: number;
+  results: any;
+  executed_at: Date;
+}
