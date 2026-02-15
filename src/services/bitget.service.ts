@@ -616,8 +616,10 @@ export class BitgetService {
     }
   }
 
-  // Configurar múltiples órdenes TP/SL incluyendo breakeven parcial
-  // Configura: Stop Loss, Take Profit parcial (50%) en breakeven, Take Profit final (50%) en takeProfit
+  // Configurar TP/SL para estrategias con breakeven
+  // Al abrir el trade: SL (100%) + TP (100%) al precio final
+  // El breakeven se manejará cuando TradingView envíe la alerta BREAKEVEN
+  // (processBreakevenAlert cancelará estos triggers, cerrará 50% y creará nuevos SL+TP para el 50% restante)
   async setAdvancedPositionTPSL(
     credentials: BitgetCredentials,
     symbol: string,
@@ -639,17 +641,18 @@ export class BitgetService {
       const holdSide = side === 'buy' ? 'long' : 'short';
       const endpoint = '/api/v2/mix/order/place-tpsl-order';
       
-      console.log(`[Bitget] 🚀 Configurando TP/SL en PARALELO para ${symbol} ${holdSide}...`);
+      console.log(`[Bitget] 🚀 Configurando TP/SL (100% SL + 100% TP) para ${symbol} ${holdSide}...`);
+      if (breakevenPrice) {
+        console.log(`[Bitget] ℹ️ Breakeven (${breakevenPrice}) se procesará cuando TradingView envíe la alerta BREAKEVEN`);
+      }
       
       // Aplicar precisión de precio según contractInfo
       const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
       const formattedSL = parseFloat(stopLossPrice.toFixed(pricePlace));
-      const formattedBreakeven = breakevenPrice ? parseFloat(breakevenPrice.toFixed(pricePlace)) : null;
       const formattedTP = parseFloat(takeProfitPrice.toFixed(pricePlace));
       
       console.log(`[Bitget] 📊 Precisión de precio: ${pricePlace} decimales`);
       console.log(`[Bitget] 📊 SL: ${stopLossPrice} → ${formattedSL}`);
-      if (formattedBreakeven) console.log(`[Bitget] 📊 Breakeven: ${breakevenPrice} → ${formattedBreakeven}`);
       console.log(`[Bitget] 📊 TP: ${takeProfitPrice} → ${formattedTP}`);
       
       // Obtener precio actual para validar TP
@@ -667,16 +670,16 @@ export class BitgetService {
         console.error(`[Bitget] ❌ Error al obtener precio actual: ${priceError.message}. No se validará TP.`);
       }
       
-      // Generar timestamp único más corto (solo timestamp + random, sin hrtime)
+      // Generar timestamp único
       const timestamp = Date.now();
       const baseId = `${timestamp}${Math.floor(Math.random() * 1000)}`;
       
-      // Preparar todas las órdenes
+      // Preparar órdenes: SL (100%) + TP (100%)
       const orders: Array<{type: string; payload: any; description: string}> = [];
       
       // 1. Stop Loss (cierra toda la posición)
       const slRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-      const slClientOid = `SL_${symbol.substring(0, 8)}_${baseId}_${slRandom}`.substring(0, 64); // Limitar a 64 caracteres
+      const slClientOid = `SL_${symbol.substring(0, 8)}_${baseId}_${slRandom}`.substring(0, 64);
       const slPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
         productType: productType.toLowerCase(),
@@ -689,80 +692,23 @@ export class BitgetService {
         size: positionSize,
         clientOid: slClientOid,
       };
-      orders.push({ type: 'stop_loss', payload: slPayload, description: `SL en ${formattedSL}` });
+      orders.push({ type: 'stop_loss', payload: slPayload, description: `SL 100% (${positionSize}) en ${formattedSL}` });
 
-      // 2. Take Profit parcial en breakeven (si existe)
-      if (formattedBreakeven && formattedBreakeven > 0) {
-        // Validar que breakeven sea mayor que el precio actual para long, o menor para short
-        // Si no se puede validar, CONFIGURAR DE TODAS FORMAS (es mejor tener protección que no tenerla)
-        let isValidBreakeven = true; // Por defecto, asumir válido
-        
-        if (currentPrice !== null) {
-          isValidBreakeven = (holdSide === 'long' && formattedBreakeven > currentPrice) ||
-                             (holdSide === 'short' && formattedBreakeven < currentPrice);
-          
-          if (!isValidBreakeven) {
-            console.warn(`[Bitget] ⚠️ ADVERTENCIA: Breakeven (${formattedBreakeven}) podría no ser válido para posición ${holdSide} con precio actual ${currentPrice}. Se configurará de todas formas.`);
-          }
-        } else {
-          console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se configurará TP breakeven sin validación.`);
-        }
-        
-        const positionSizeNum = parseFloat(positionSize);
-        const volumePlaceNum = contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0;
-        const multiplier = Math.pow(10, volumePlaceNum);
-        const breakevenSize = (Math.floor(positionSizeNum * 0.5 * multiplier) / multiplier).toFixed(volumePlaceNum);
-        const breakevenRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-        
-        const breakevenClientOid = `TP_BE_${symbol.substring(0, 8)}_${baseId}_${breakevenRandom}`.substring(0, 64);
-        const breakevenPayload: any = {
-          marginCoin: marginCoin.toUpperCase(),
-          productType: productType.toLowerCase(),
-          symbol: symbol.toUpperCase(),
-          planType: 'pos_profit',
-          triggerPrice: formattedBreakeven.toString(),
-          triggerType: 'fill_price',
-          executePrice: formattedBreakeven.toString(),
-          holdSide,
-          size: breakevenSize,
-          clientOid: breakevenClientOid,
-        };
-        orders.push({ type: 'breakeven_tp_50', payload: breakevenPayload, description: `TP 50% (${breakevenSize}) en breakeven ${formattedBreakeven}` });
-      }
-
-      // 3. Take Profit final
-      let finalTPSize: string;
-      let finalTPDescription: string;
-      
-      if (formattedBreakeven && formattedBreakeven > 0) {
-        const positionSizeNum = parseFloat(positionSize);
-        const volumePlaceNum = contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 0;
-        const multiplier = Math.pow(10, volumePlaceNum);
-        const breakevenSizeNum = Math.floor(positionSizeNum * 0.5 * multiplier) / multiplier;
-        finalTPSize = (positionSizeNum - breakevenSizeNum).toFixed(volumePlaceNum);
-        finalTPDescription = `50% restante (${finalTPSize})`;
-      } else {
-        finalTPSize = positionSize;
-        finalTPDescription = `100% (${finalTPSize})`;
-      }
-      
+      // 2. Take Profit final (100% de la posición al precio de TP)
       // Validar que TP sea mayor que el precio actual para long, o menor para short
-      // Si no se puede validar, CONFIGURAR DE TODAS FORMAS (es mejor tener protección que no tenerla)
-      let isValidTP = true; // Por defecto, asumir válido
-      
+      let isValidTP = true;
       if (currentPrice !== null) {
         isValidTP = (holdSide === 'long' && formattedTP > currentPrice) ||
                      (holdSide === 'short' && formattedTP < currentPrice);
-        
         if (!isValidTP) {
           console.warn(`[Bitget] ⚠️ ADVERTENCIA: Take Profit (${formattedTP}) podría no ser válido para posición ${holdSide} con precio actual ${currentPrice}. Se configurará de todas formas.`);
         }
       } else {
-        console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se configurará TP final sin validación.`);
+        console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se configurará TP sin validación.`);
       }
       
-      const tpFinalRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-      const tpFinalClientOid = `TP_F_${symbol.substring(0, 8)}_${baseId}_${tpFinalRandom}`.substring(0, 64);
+      const tpRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      const tpClientOid = `TP_F_${symbol.substring(0, 8)}_${baseId}_${tpRandom}`.substring(0, 64);
       const tpPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
         productType: productType.toLowerCase(),
@@ -772,12 +718,12 @@ export class BitgetService {
         triggerType: 'fill_price',
         executePrice: formattedTP.toString(),
         holdSide,
-        size: finalTPSize,
-        clientOid: tpFinalClientOid,
+        size: positionSize,
+        clientOid: tpClientOid,
       };
-      orders.push({ type: 'take_profit_final', payload: tpPayload, description: `TP ${finalTPDescription} en ${formattedTP}` });
+      orders.push({ type: 'take_profit_final', payload: tpPayload, description: `TP 100% (${positionSize}) en ${formattedTP}` });
 
-      // Ejecutar TODAS las órdenes en PARALELO
+      // Ejecutar ambas órdenes en PARALELO
       console.log(`[Bitget] 📋 Ejecutando ${orders.length} órdenes TP/SL simultáneamente...`);
       orders.forEach(order => console.log(`[Bitget]   - ${order.description}`));
       
@@ -910,6 +856,107 @@ export class BitgetService {
       } : undefined);
     } catch (error: any) {
       throw new Error(`Error al modificar stop loss: ${error.message}`);
+    }
+  }
+
+  // Obtener órdenes trigger pendientes (TP/SL) para un símbolo
+  async getPendingTriggerOrders(
+    credentials: BitgetCredentials,
+    symbol: string,
+    productType: string = 'USDT-FUTURES',
+    planType?: string // 'pos_profit' | 'pos_loss' | undefined (all)
+  ): Promise<any[]> {
+    try {
+      const params: any = {
+        productType: productType.toLowerCase(),
+        symbol: symbol.toUpperCase(),
+      };
+      if (planType) {
+        params.planType = planType;
+      }
+
+      const queryString = Object.keys(params)
+        .map(key => `${key}=${params[key]}`)
+        .join('&');
+      const endpoint = `/api/v2/mix/order/orders-plan-pending?${queryString}`;
+
+      const result = await this.makeRequest('GET', endpoint, credentials);
+      const orders = result?.entrustedList || result || [];
+      console.log(`[Bitget] 📋 Órdenes trigger pendientes para ${symbol}: ${Array.isArray(orders) ? orders.length : 0}`);
+      return Array.isArray(orders) ? orders : [];
+    } catch (error: any) {
+      console.error(`[Bitget] ❌ Error al obtener órdenes trigger pendientes: ${error.message}`);
+      return [];
+    }
+  }
+
+  // Cancelar todas las órdenes trigger (TP/SL) pendientes para un símbolo
+  async cancelAllTriggerOrders(
+    credentials: BitgetCredentials,
+    symbol: string,
+    productType: string = 'USDT-FUTURES',
+    marginCoin: string = 'USDT',
+    logContext?: {
+      userId: number;
+      strategyId: number | null;
+      orderId?: string;
+    }
+  ): Promise<{ cancelled: number; failed: number }> {
+    try {
+      console.log(`[Bitget] 🗑️ Cancelando todas las órdenes trigger para ${symbol}...`);
+
+      // Obtener todas las órdenes trigger pendientes
+      const pendingOrders = await this.getPendingTriggerOrders(credentials, symbol, productType);
+
+      if (pendingOrders.length === 0) {
+        console.log(`[Bitget] ℹ️ No hay órdenes trigger pendientes para cancelar en ${symbol}`);
+        return { cancelled: 0, failed: 0 };
+      }
+
+      console.log(`[Bitget] 📋 Encontradas ${pendingOrders.length} órdenes trigger pendientes para cancelar`);
+
+      const endpoint = '/api/v2/mix/order/cancel-plan-order';
+      let cancelled = 0;
+      let failed = 0;
+
+      // Cancelar cada orden individualmente
+      for (const order of pendingOrders) {
+        try {
+          const orderId = order.orderId || order.id;
+          if (!orderId) {
+            console.warn(`[Bitget] ⚠️ Orden sin ID, omitiendo`);
+            failed++;
+            continue;
+          }
+
+          const payload = {
+            symbol: symbol.toUpperCase(),
+            productType: productType.toLowerCase(),
+            marginCoin: marginCoin.toUpperCase(),
+            orderId: orderId,
+          };
+
+          await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
+            userId: logContext.userId,
+            strategyId: logContext.strategyId,
+            symbol: symbol,
+            operationType: 'cancelTriggerOrder',
+            orderId: logContext.orderId,
+          } : undefined);
+
+          console.log(`[Bitget] ✅ Orden trigger ${orderId} (${order.planType || 'unknown'}) cancelada`);
+          cancelled++;
+        } catch (cancelError: any) {
+          console.error(`[Bitget] ❌ Error al cancelar orden trigger: ${cancelError.message}`);
+          failed++;
+        }
+      }
+
+      console.log(`[Bitget] 🗑️ Resultado: ${cancelled} canceladas, ${failed} fallidas de ${pendingOrders.length}`);
+      return { cancelled, failed };
+    } catch (error: any) {
+      console.error(`[Bitget] ❌ Error al cancelar órdenes trigger: ${error.message}`);
+      return { cancelled: 0, failed: 0 };
     }
   }
 

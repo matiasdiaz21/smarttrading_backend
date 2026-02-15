@@ -1,0 +1,354 @@
+//@version=5
+indicator("Session Reversal NASDAQ 1.0.0", overlay=true, precision=4, max_bars_back=1440, max_lines_count=500, max_labels_count=500)
+
+// ═══════════════════════════════════════════════════════════════
+// 📂 CONFIGURACIÓN
+// ═══════════════════════════════════════════════════════════════
+
+// Grupo: Configuración General
+group_general = 'Configuración General'
+tema = input.string("Oscuro", title="Tema", options=["Oscuro", "Claro"], group=group_general)
+i_textSize = input.string("Small", title="Text Size", options=["Tiny", "Small", "Normal", "Large"], group=group_general)
+textSize = i_textSize == "Small" ? size.small : i_textSize == "Normal" ? size.normal : i_textSize == "Large" ? size.large : size.tiny
+DEC = input.int(2, title="Decimales", minval=0, step=1, group=group_general)
+num_ops = input.int(20, title="Número de operaciones para winrate", minval=1, group=group_general)
+tpc = input.bool(true, title="Mostrar zona de profit", group=group_general)
+
+// Grupo: Configuración de Cuenta / Riesgo
+group_cuenta = 'Configuración de Cuenta / Riesgo'
+capital = input.float(100, title="Capital inicial: USDT 💲", minval=0, step=0.05, group=group_cuenta)
+perdida_ = input.float(1, title="Riesgo asumido (% de cuenta)", minval=0, step=0.05, group=group_cuenta)
+comision = input.float(0.08, title="Comisión Apertura + Cierre (%)", minval=0.01, maxval=0.2, step=0.005, group=group_cuenta)
+
+// Grupo: Configuración de Sesión NY
+group_session = 'Sesión New York'
+sessionTime = input.session("0930-1600", "Horario sesión NY", group=group_session)
+sessionTZ = input.string("America/New_York", "Timezone", group=group_session)
+showPrevLevels = input.bool(true, "Mostrar niveles sesión anterior", group=group_session)
+prevHighColor = input.color(color.new(color.red, 30), "Color máximo anterior", group=group_session)
+prevLowColor = input.color(color.new(color.green, 30), "Color mínimo anterior", group=group_session)
+
+// ═══════════════════════════════════════════════════════════════
+// 📈 DETECCIÓN DE SESIÓN Y PUNTOS DE LIQUIDEZ
+// ═══════════════════════════════════════════════════════════════
+
+// Detectar si estamos dentro de la sesión de NY
+inSession = not na(time("", sessionTime, sessionTZ))
+sessionStart = inSession and not inSession[1]
+sessionEnd = not inSession and inSession[1]
+
+// Tracking de high/low ENTRE sesiones (puntos de liquidez overnight)
+var float betweenHigh = na
+var float betweenLow = na
+
+// Niveles de liquidez fijados al inicio de sesión (referencia para trades)
+var float prevSessionHigh = na
+var float prevSessionLow = na
+
+// Cuando la sesión termina: resetear tracking entre-sesiones
+if sessionEnd
+    betweenHigh := na
+    betweenLow := na
+
+// Entre sesiones: actualizar high/low (puntos de liquidez formándose)
+if not inSession
+    betweenHigh := na(betweenHigh) ? high : math.max(betweenHigh, high)
+    betweenLow := na(betweenLow) ? low : math.min(betweenLow, low)
+
+// Al inicio de sesión: fijar niveles de liquidez como referencia
+if sessionStart
+    if not na(betweenHigh) and not na(betweenLow)
+        prevSessionHigh := betweenHigh
+        prevSessionLow := betweenLow
+
+// Dibujar niveles de liquidez:
+// - Entre sesiones: niveles formándose en tiempo real
+// - Durante sesión: niveles fijados como referencia para trades
+float plotHigh = inSession ? prevSessionHigh : betweenHigh
+float plotLow = inSession ? prevSessionLow : betweenLow
+plot(showPrevLevels and not na(plotHigh) ? plotHigh : na, "Liquidity High", color=prevHighColor, style=plot.style_linebr, linewidth=2)
+plot(showPrevLevels and not na(plotLow) ? plotLow : na, "Liquidity Low", color=prevLowColor, style=plot.style_linebr, linewidth=2)
+
+// Background sutil durante sesión NY
+bgcolor(inSession ? color.new(color.blue, 95) : na, title="Sesión NY")
+
+// ═══════════════════════════════════════════════════════════════
+// 🔄 CONDICIONES DE ENTRADA
+// ═══════════════════════════════════════════════════════════════
+
+// Estado de tracking durante la sesión
+var bool touchedResistance = false
+var bool touchedSupport = false
+var bool tradeTakenThisSession = false
+
+// Reset al inicio de cada sesión
+if sessionStart
+    touchedResistance := false
+    touchedSupport := false
+    tradeTakenThisSession := false
+
+// Detectar si el precio tocó los niveles de referencia durante la sesión
+if inSession and not na(prevSessionHigh) and high >= prevSessionHigh
+    touchedResistance := true
+if inSession and not na(prevSessionLow) and low <= prevSessionLow
+    touchedSupport := true
+
+// Patrones de velas para confirmación de rechazo
+twoRedCandles = close < open and close[1] < open[1]
+twoGreenCandles = close > open and close[1] > open[1]
+
+// Condiciones finales de entrada
+// SHORT: Precio tocó máximo anterior + 2 velas rojas de rechazo
+shortCondition = inSession and touchedResistance and twoRedCandles and not tradeTakenThisSession and not na(prevSessionLow) and barstate.isconfirmed
+// LONG: Precio tocó mínimo anterior + 2 velas verdes de rechazo
+longCondition = inSession and touchedSupport and twoGreenCandles and not tradeTakenThisSession and not na(prevSessionHigh) and barstate.isconfirmed
+
+// ═══════════════════════════════════════════════════════════════
+// 📊 LÓGICA DE ESTRATEGIA
+// ═══════════════════════════════════════════════════════════════
+
+var float limitl = 0.0
+var float stopl = 0.0
+var float tpl = 0.0
+var float limits = 0.0
+var float stops = 0.0
+var float tps = 0.0
+var float activeEntry = 0.0
+var float activeStop = 0.0
+var float activeTp = 0.0
+var string op = "na"
+var float cien = 0
+var bool alert_take_profit_triggered = false
+var bool alert_stop_loss_triggered = false
+var int entry_bar_index = -1
+var bool isTradeOpen = false
+var string activeTradeType = "na"
+var int trade_id = 0
+var float[] outcomes = array.new_float(0)
+var bool tp_hit = false
+var bool sl_hit = false
+var float normalBalance = capital
+var int totalWins = 0
+var int totalLosses = 0
+var float currentQty = 0.0
+
+// ═══════════════════════════════════════════════════════════════
+// 📥 ENTRADAS - Solo 1 trade por sesión
+// ═══════════════════════════════════════════════════════════════
+
+// LONG: Precio tocó mínimo anterior + 2 velas verdes de rechazo
+if longCondition and not isTradeOpen
+    float entry = close
+    float sl = math.min(low, low[1])    // Mínimo de las 2 velas verdes
+    float tp = prevSessionHigh           // TP en máximo de sesión anterior
+    float risk = math.abs(entry - sl)
+    
+    if risk > 0 and tp > entry
+        limitl := entry
+        limits := 0.0
+        stopl := sl
+        stops := 0.0
+        tpl := tp
+        tps := 0.0
+        activeEntry := entry
+        activeStop := sl
+        activeTp := tp
+        activeTradeType := "LONG"
+        op := "LONG"
+        cien := 1
+        alert_take_profit_triggered := false
+        alert_stop_loss_triggered := false
+        entry_bar_index := bar_index
+        isTradeOpen := true
+        tradeTakenThisSession := true
+        trade_id += 1
+        float qty = (perdida_ * normalBalance / 100) / risk
+        currentQty := qty
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": 0, "alertType": "ENTRY", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "prevSessionHigh": ' + str.tostring(prevSessionHigh) + ', "prevSessionLow": ' + str.tostring(prevSessionLow) + ', "pattern": "2 green candles rejection at support", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+        label.new(bar_index, entry, text="Long Entry\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+
+// SHORT: Precio tocó máximo anterior + 2 velas rojas de rechazo
+if shortCondition and not isTradeOpen
+    float entry = close
+    float sl = math.max(high, high[1])   // Máximo de las 2 velas rojas
+    float tp = prevSessionLow             // TP en mínimo de sesión anterior
+    float risk = math.abs(sl - entry)
+    
+    if risk > 0 and tp < entry
+        limits := entry
+        limitl := 0.0
+        stops := sl
+        stopl := 0.0
+        tps := tp
+        tpl := 0.0
+        activeEntry := entry
+        activeStop := sl
+        activeTp := tp
+        activeTradeType := "SHORT"
+        op := "SHORT"
+        cien := -1
+        alert_take_profit_triggered := false
+        alert_stop_loss_triggered := false
+        entry_bar_index := bar_index
+        isTradeOpen := true
+        tradeTakenThisSession := true
+        trade_id += 1
+        float qty = (perdida_ * normalBalance / 100) / risk
+        currentQty := qty
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": 0, "alertType": "ENTRY", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "prevSessionHigh": ' + str.tostring(prevSessionHigh) + ', "prevSessionLow": ' + str.tostring(prevSessionLow) + ', "pattern": "2 red candles rejection at resistance", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+        label.new(bar_index, entry, text="Short Entry\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+
+// ═══════════════════════════════════════════════════════════════
+// 🎯 TAKE PROFIT
+// ═══════════════════════════════════════════════════════════════
+
+// LONG TP: high toca o supera el take profit
+if high >= activeTp and activeTradeType == "LONG" and not alert_take_profit_triggered and isTradeOpen and bar_index > entry_bar_index
+    tp_hit := true
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "TAKE_PROFIT", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, high, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+    alert_take_profit_triggered := true
+    alert_stop_loss_triggered := true
+    array.push(outcomes, 1.0)
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    // Calcular ganancia
+    float posicion_trade = activeEntry * currentQty
+    float comision_trade = (comision * posicion_trade / 100)
+    float profit = (activeTp - activeEntry) * currentQty - comision_trade
+    normalBalance += profit
+    totalWins += 1
+    limitl := 0.0
+    tpl := 0.0
+    stopl := 0.0
+    op := "na"
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// SHORT TP: low toca o cae bajo el take profit
+if low <= activeTp and activeTradeType == "SHORT" and not alert_take_profit_triggered and isTradeOpen and bar_index > entry_bar_index
+    tp_hit := true
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "TAKE_PROFIT", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, low, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.green, textcolor=color.white, size=textSize)
+    alert_take_profit_triggered := true
+    alert_stop_loss_triggered := true
+    array.push(outcomes, 1.0)
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    // Calcular ganancia
+    float posicion_trade = activeEntry * currentQty
+    float comision_trade = (comision * posicion_trade / 100)
+    float profit = (activeEntry - activeTp) * currentQty - comision_trade
+    normalBalance += profit
+    totalWins += 1
+    limits := 0.0
+    tps := 0.0
+    stops := 0.0
+    op := "na"
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// ═══════════════════════════════════════════════════════════════
+// 🛑 STOP LOSS
+// ═══════════════════════════════════════════════════════════════
+
+// LONG SL: low toca o cae por debajo del stop
+if low <= activeStop and activeTradeType == "LONG" and not alert_stop_loss_triggered and isTradeOpen and bar_index > entry_bar_index
+    sl_hit := true
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "STOP_LOSS", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.red, textcolor=color.white, size=textSize)
+    alert_stop_loss_triggered := true
+    alert_take_profit_triggered := true
+    array.push(outcomes, 0.0)
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    // Calcular pérdida
+    float posicion_trade_sl = activeEntry * currentQty
+    float comision_trade_sl = (comision * posicion_trade_sl / 100)
+    float loss = (activeStop - activeEntry) * currentQty - comision_trade_sl
+    normalBalance += loss
+    totalLosses += 1
+    limitl := 0.0
+    tpl := 0.0
+    stopl := 0.0
+    op := "na"
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// SHORT SL: high toca o supera el stop
+if high >= activeStop and activeTradeType == "SHORT" and not alert_stop_loss_triggered and isTradeOpen and bar_index > entry_bar_index
+    sl_hit := true
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "STOP_LOSS", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+    alert_stop_loss_triggered := true
+    alert_take_profit_triggered := true
+    array.push(outcomes, 0.0)
+    if array.size(outcomes) > num_ops
+        array.shift(outcomes)
+    // Calcular pérdida
+    float posicion_trade_sl = activeEntry * currentQty
+    float comision_trade_sl = (comision * posicion_trade_sl / 100)
+    float loss = (activeEntry - activeStop) * currentQty - comision_trade_sl
+    normalBalance += loss
+    totalLosses += 1
+    limits := 0.0
+    tps := 0.0
+    stops := 0.0
+    op := "na"
+    isTradeOpen := false
+    activeTradeType := "na"
+
+// ═══════════════════════════════════════════════════════════════
+// 📊 VISUALIZACIÓN
+// ═══════════════════════════════════════════════════════════════
+
+// Plots de niveles de entrada, TP y SL - SHORT
+medios = plot(limits > 0.0 ? limits : na, title="Entry Point Short", style=plot.style_linebr, color=color.rgb(255, 255, 30, 50), linewidth=1)
+ganancias = plot(tpc and tps > 0.0 ? tps : na, title="TP Short", style=plot.style_linebr, color=color.rgb(17, 84, 64, 65), linewidth=1)
+perdidas = plot(tpc and stops > 0.0 ? stops : na, title="Stop Short", style=plot.style_linebr, color=color.rgb(244, 42, 42, 80), linewidth=1)
+fill(medios, ganancias, color=color.rgb(17, 84, 64, 65))
+fill(medios, perdidas, color=color.rgb(224, 42, 42, 80))
+
+// Plots de niveles de entrada, TP y SL - LONG
+mediol = plot(limitl > 0.0 ? limitl : na, title="Entry Point Long", style=plot.style_linebr, color=color.rgb(255, 255, 30, 50), linewidth=1)
+ganancial = plot(tpc and tpl > 0.0 ? tpl : na, title="TP Long", style=plot.style_linebr, color=color.rgb(17, 84, 64, 65), linewidth=1)
+perdidal = plot(tpc and stopl > 0.0 ? stopl : na, title="Stop Long", style=plot.style_linebr, color=color.rgb(244, 42, 42, 80), linewidth=1)
+fill(mediol, ganancial, color=color.rgb(17, 84, 64, 65))
+fill(mediol, perdidal, color=color.rgb(224, 42, 42, 85))
+
+// ═══════════════════════════════════════════════════════════════
+// 📋 TABLA DE INFORMACIÓN
+// ═══════════════════════════════════════════════════════════════
+
+// Gestión de riesgo (para mostrar en tabla)
+float diferencia = isTradeOpen ? math.abs(activeEntry - activeStop) : 0.0
+float PORCENTT = (isTradeOpen and activeEntry > 0 and cien != 0) ? (diferencia * 100 / activeEntry) * cien : 0.0
+float POSICION = (isTradeOpen and PORCENTT != 0) ? (100 / PORCENTT) * perdida_ : 0.0
+float LOTE = (isTradeOpen and activeEntry > 0 and POSICION > 0) ? POSICION / activeEntry : 0.0
+float COMI = (isTradeOpen and POSICION > 0) ? (comision * POSICION / 100) * -1 : 0.0
+
+mysite = "Session Reversal NASDAQ"
+var infoTable = table.new(position=position.bottom_right, columns=1, rows=12, bgcolor=color.rgb(208, 207, 198), border_width=2)
+table.cell(infoTable, 0, 0, text=mysite, text_halign=text.align_center, text_size=textSize, text_color=chart.bg_color, bgcolor=chart.fg_color)
+table.cell(infoTable, 0, 1, text=op + " " + syminfo.ticker + " ▐ Session Reversal", text_size=textSize, text_halign=text.align_left, text_color=color.fuchsia, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 2, text="ENTRADA : " + (isTradeOpen ? str.tostring(math.round(activeEntry, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.yellow, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 3, text="STOP : " + (isTradeOpen ? str.tostring(math.round(activeStop, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.red, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 4, text="TP : " + (isTradeOpen ? str.tostring(math.round(activeTp, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.green, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 5, text="LOTE : " + (isTradeOpen ? str.tostring(math.round(LOTE, 5)) + " ▐ $ " + str.tostring(math.round(POSICION, 2)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 6, text="COMISIÓN: ▐ " + (isTradeOpen ? str.tostring(math.round(COMI, 4)) : "---") + " ▐ ", text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 7, text="Trade ID: " + str.tostring(trade_id), text_size=textSize, text_halign=text.align_left, text_color=color.blue, bgcolor=chart.bg_color)
+
+// Balance
+float normalBalanceChange = normalBalance - capital
+float normalBalancePercent = capital > 0 ? (normalBalanceChange / capital) * 100 : 0.0
+table.cell(infoTable, 0, 8, text="Balance: " + str.tostring(math.round(normalBalance, 2)) + " USDT (" + (normalBalanceChange >= 0 ? "+" : "") + str.tostring(math.round(normalBalancePercent, 2)) + "%)", text_size=textSize, text_halign=text.align_left, text_color=normalBalanceChange >= 0 ? color.green : color.red, bgcolor=chart.bg_color)
+
+// Contador W/L
+table.cell(infoTable, 0, 9, text="W/L: " + str.tostring(totalWins) + "/" + str.tostring(totalLosses), text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
+
+// Winrate
+winrate = array.size(outcomes) > 0 ? (array.sum(outcomes) / array.size(outcomes)) * 100 : 0.0
+table.cell(infoTable, 0, 10, text="Winrate: " + str.tostring(math.round(winrate, 2)) + "%", text_size=textSize, text_halign=text.align_left, text_color=winrate >= 50 ? color.green : color.red, bgcolor=chart.bg_color)
+
+// Niveles de liquidez (entre sesiones)
+table.cell(infoTable, 0, 11, text="Liquidez: H " + (not na(prevSessionHigh) ? str.tostring(math.round(prevSessionHigh, DEC)) : "---") + " / L " + (not na(prevSessionLow) ? str.tostring(math.round(prevSessionLow, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.blue, bgcolor=chart.bg_color)
