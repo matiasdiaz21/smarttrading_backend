@@ -780,8 +780,8 @@ export class UserController {
             total_pnl: grossPnl,
             total_fees: totalFees,
             net_pnl: netPnl,
-            opened_at: new Date(openTime).toISOString(),
-            closed_at: new Date(closeTime).toISOString(),
+            open_time: new Date(openTime).toISOString(),
+            close_time: new Date(closeTime).toISOString(),
             latest_update: new Date(closeTime).toISOString(),
             is_automatic: isAutomatic,
             strategy_id: tradeInfo?.strategy_id || null,
@@ -823,24 +823,57 @@ export class UserController {
       const strategies = await StrategyModel.findAll(true);
       const strategyNameMap = new Map(strategies.map((s: any) => [s.id, s.name]));
 
+      // Build a global symbol→trade map from ALL user trades (not just per-credential)
+      // This ensures open positions are correctly identified as automatic even if
+      // the credential→strategy mapping doesn't cover all cases
+      const globalTradesBySymbol = new Map<string, { strategy_id: number; strategy_name?: string; latest_trade_at: Date }>();
+      userTrades.forEach((trade: any) => {
+        const sym = trade.symbol?.toUpperCase();
+        if (!sym) return;
+        const tradeDate = new Date(trade.executed_at);
+        const existing = globalTradesBySymbol.get(sym);
+        if (!existing || tradeDate > existing.latest_trade_at) {
+          globalTradesBySymbol.set(sym, {
+            strategy_id: trade.strategy_id,
+            strategy_name: strategyNameMap.get(trade.strategy_id) || undefined,
+            latest_trade_at: tradeDate,
+          });
+        }
+      });
+
+      // Also build a set of open order IDs per credential (from allBitgetOrders with tradeSide=open)
+      // to cross-reference with tradeInfoMap
+      const openOrderIdsByCredential = new Map<number, string[]>();
+      allBitgetOrders.forEach(({ credentialId: cid, order }) => {
+        if (order.tradeSide?.toLowerCase() === 'open' && order.status?.toLowerCase() === 'filled') {
+          if (!openOrderIdsByCredential.has(cid)) openOrderIdsByCredential.set(cid, []);
+          openOrderIdsByCredential.get(cid)!.push(order.orderId);
+        }
+      });
+
       const openPositions: any[] = [];
       for (const { credentialId, positions: openPositionsData } of allOpenPositionsByCredential) {
+        // Per-credential trade map (preferred, more specific)
         const strategyIdsForCred = strategyIdsByCredential.get(credentialId) || [];
-        const tradesBySymbol = new Map<string, { strategy_id: number; strategy_name?: string; latest_trade_at: Date }>();
+        const credTradesBySymbol = new Map<string, { strategy_id: number; strategy_name?: string; latest_trade_at: Date }>();
         userTrades
           .filter((t: any) => strategyIdsForCred.includes(t.strategy_id))
           .forEach((trade: any) => {
-            const symbol = trade.symbol.toUpperCase();
+            const sym = trade.symbol?.toUpperCase();
+            if (!sym) return;
             const tradeDate = new Date(trade.executed_at);
-            const existing = tradesBySymbol.get(symbol);
+            const existing = credTradesBySymbol.get(sym);
             if (!existing || tradeDate > existing.latest_trade_at) {
-              tradesBySymbol.set(symbol, {
+              credTradesBySymbol.set(sym, {
                 strategy_id: trade.strategy_id,
                 strategy_name: strategyNameMap.get(trade.strategy_id) || undefined,
                 latest_trade_at: tradeDate,
               });
             }
           });
+
+        // Open order IDs for this credential (to check against tradeInfoMap)
+        const credOpenOrderIds = openOrderIdsByCredential.get(credentialId) || [];
 
         (openPositionsData || []).forEach((pos: any) => {
           const openTime = pos.cTime ? parseInt(pos.cTime) : Date.now();
@@ -854,8 +887,32 @@ export class UserController {
           const unrealizedPnl = parseFloat(pos.unrealizedPL || pos.upl || pos.pnl || '0');
           const totalFees = Math.abs(parseFloat(pos.totalFee || pos.fee || '0'));
           const netPnl = unrealizedPnl - totalFees;
-          const tradeInfo = tradesBySymbol.get(symbol);
+
+          // Strategy detection: try credential-specific first, then global, then order-ID match
+          let tradeInfo = credTradesBySymbol.get(symbol) || null;
+          if (!tradeInfo) {
+            tradeInfo = globalTradesBySymbol.get(symbol) || null;
+          }
+          // Fallback: check if any filled open order for this credential+symbol is in tradeInfoMap
+          if (!tradeInfo) {
+            const matchingOrderId = credOpenOrderIds.find(oid => {
+              const info = tradeInfoMap.get(oid);
+              if (!info) return false;
+              // Match the order's symbol (from allBitgetOrders)
+              const orderData = allBitgetOrders.find(o => o.order.orderId === oid && o.credentialId === credentialId);
+              return orderData && orderData.order.symbol?.toUpperCase() === symbol;
+            });
+            if (matchingOrderId) {
+              const info = tradeInfoMap.get(matchingOrderId)!;
+              tradeInfo = {
+                strategy_id: info.strategy_id,
+                strategy_name: info.strategy_name || strategyNameMap.get(info.strategy_id) || undefined,
+                latest_trade_at: new Date(),
+              };
+            }
+          }
           const isAutomatic = !!tradeInfo;
+
           openPositions.push({
             position_id: pos.positionId || pos.posId || `${credentialId}_${pos.symbol}_${openTime}_open`,
             symbol: symbol || 'N/A',
@@ -870,8 +927,8 @@ export class UserController {
             total_pnl: unrealizedPnl,
             total_fees: totalFees,
             net_pnl: netPnl,
-            opened_at: new Date(openTime).toISOString(),
-            closed_at: null,
+            open_time: new Date(openTime).toISOString(),
+            close_time: null,
             latest_update: new Date(updateTime).toISOString(),
             is_automatic: isAutomatic,
             strategy_id: tradeInfo?.strategy_id ?? null,
