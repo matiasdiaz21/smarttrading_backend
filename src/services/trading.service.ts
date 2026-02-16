@@ -835,6 +835,7 @@ export class TradingService {
 
         // PASO 2: Cerrar 50% de la posición a mercado
         let remainingSize = 0;
+        let positionGone = false; // Flag: la posición ya no existe en Bitget
         try {
           console.log(`[BREAKEVEN] 📊 Paso 2: Cerrando 50% de la posición...`);
           const positions = await this.bitgetService.getPositions(
@@ -897,97 +898,121 @@ export class TradingService {
               }
             } else {
               console.warn(`[BREAKEVEN] ⚠️ No se encontró tamaño de posición válido para cerrar`);
+              positionGone = true;
             }
           } else {
-            console.warn(`[BREAKEVEN] ⚠️ No se encontró posición abierta para ${symbol}`);
+            console.warn(`[BREAKEVEN] ⚠️ No se encontró posición abierta para ${symbol}. La posición probablemente ya fue cerrada por TP/SL.`);
+            positionGone = true;
           }
         } catch (closeError: any) {
-          console.error(`[BREAKEVEN] ❌ Error al cerrar 50% de la posición: ${closeError.message}`);
-          // Continuar para intentar crear nuevos SL+TP
+          // Bitget error 22002 = "No position to close" — la posición ya fue cerrada
+          const errMsg = closeError?.message || '';
+          const isNoPosition = errMsg.includes('No position to close') || errMsg.includes('22002');
+          if (isNoPosition) {
+            console.warn(`[BREAKEVEN] ⚠️ La posición de ${symbol} ya no existe (fue cerrada por TP/SL o manualmente). Se omitirá PASO 3.`);
+            positionGone = true;
+          } else {
+            console.error(`[BREAKEVEN] ❌ Error al cerrar 50% de la posición: ${closeError.message}`);
+            // Continuar para intentar crear nuevos SL+TP
+          }
         }
 
         // PASO 3: Crear nuevos SL (al precio de entrada) + TP (al precio final) para el 50% restante
-        try {
-          // Usar el precio de entrada ORIGINAL guardado en la tabla trades
-          const originalEntryPrice = tradeFinal.entry_price ? parseFloat(tradeFinal.entry_price.toString()) : null;
-          const newStopLoss = originalEntryPrice || alert.entryPrice || breakevenPrice;
-          const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
-          const formattedStopLoss = parseFloat(newStopLoss.toFixed(pricePlace));
-          
-          console.log(`[BREAKEVEN] 📊 Paso 3: Creando nuevos SL+TP para posición restante...`);
-          console.log(`[BREAKEVEN]   Precio de entrada original: ${originalEntryPrice}`);
-          console.log(`[BREAKEVEN]   Nuevo SL: ${formattedStopLoss} (movido a breakeven/entrada)`);
-
-          if (remainingSize > 0) {
-            // Obtener tamaño restante como string con precisión correcta
-            const volumePlace = contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 2;
-            const remainingSizeStr = remainingSize.toFixed(volumePlace).replace(/\.?0+$/, '');
-
-            // Determinar holdSide y side para las nuevas órdenes
-            const bitgetSide: 'buy' | 'sell' = tradeFinal.side === 'buy' ? 'buy' : 'sell';
-
-            // Crear nuevos SL + TP usando setPositionTPSL (para el 50% restante)
-            const takeProfitPrice = tradeFinal.take_profit ? parseFloat(tradeFinal.take_profit.toString()) : (alert.takeProfit || 0);
+        if (positionGone) {
+          // La posición ya no existe — no intentar crear SL/TP porque fallarían
+          console.warn(`[BREAKEVEN] ⚠️ Paso 3 omitido: la posición de ${symbol} ya no existe. No se crearán nuevos SL+TP.`);
+          // Actualizar DB para reflejar que el breakeven fue procesado (posición cerrada externamente)
+          try {
+            const originalEntryPrice = tradeFinal.entry_price ? parseFloat(tradeFinal.entry_price.toString()) : null;
+            const newStopLoss = originalEntryPrice || alert.entryPrice || breakevenPrice;
+            await TradeModel.updateStopLoss(tradeFinal.id, newStopLoss);
+            console.log(`[BREAKEVEN] ✅ Stop loss actualizado en DB a ${newStopLoss} (posición ya cerrada)`);
+          } catch (dbError: any) {
+            console.error(`[BREAKEVEN] ❌ Error al actualizar DB: ${dbError.message}`);
+          }
+        } else {
+          try {
+            // Usar el precio de entrada ORIGINAL guardado en la tabla trades
+            const originalEntryPrice = tradeFinal.entry_price ? parseFloat(tradeFinal.entry_price.toString()) : null;
+            const newStopLoss = originalEntryPrice || alert.entryPrice || breakevenPrice;
+            const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
+            const formattedStopLoss = parseFloat(newStopLoss.toFixed(pricePlace));
             
-            if (takeProfitPrice > 0) {
-              console.log(`[BREAKEVEN]   Nuevo TP: ${takeProfitPrice} para ${remainingSizeStr} contratos`);
+            console.log(`[BREAKEVEN] 📊 Paso 3: Creando nuevos SL+TP para posición restante...`);
+            console.log(`[BREAKEVEN]   Precio de entrada original: ${originalEntryPrice}`);
+            console.log(`[BREAKEVEN]   Nuevo SL: ${formattedStopLoss} (movido a breakeven/entrada)`);
 
-              const tpslResults = await this.bitgetService.setPositionTPSL(
-                decryptedCredentials,
-                symbol,
-                bitgetSide,
-                formattedStopLoss,
-                takeProfitPrice,
-                productType,
-                marginCoin,
-                remainingSizeStr,
-                contractInfo,
-                logContext
-              );
+            if (remainingSize > 0) {
+              // Obtener tamaño restante como string con precisión correcta
+              const volumePlace = contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 2;
+              const remainingSizeStr = remainingSize.toFixed(volumePlace).replace(/\.?0+$/, '');
 
-              const slSuccess = Array.isArray(tpslResults) ? tpslResults.some((r: any) => r.type === 'stop_loss' && r.success) : false;
-              const tpSuccess = Array.isArray(tpslResults) ? tpslResults.some((r: any) => r.type === 'take_profit' && r.success) : false;
-              console.log(`[BREAKEVEN] ✅ Nuevos SL+TP creados: SL=${slSuccess ? 'OK' : 'FAIL'}, TP=${tpSuccess ? 'OK' : 'FAIL'}`);
+              // Determinar holdSide y side para las nuevas órdenes
+              const bitgetSide: 'buy' | 'sell' = tradeFinal.side === 'buy' ? 'buy' : 'sell';
+
+              // Crear nuevos SL + TP usando setPositionTPSL (para el 50% restante)
+              const takeProfitPrice = tradeFinal.take_profit ? parseFloat(tradeFinal.take_profit.toString()) : (alert.takeProfit || 0);
+              
+              if (takeProfitPrice > 0) {
+                console.log(`[BREAKEVEN]   Nuevo TP: ${takeProfitPrice} para ${remainingSizeStr} contratos`);
+
+                const tpslResults = await this.bitgetService.setPositionTPSL(
+                  decryptedCredentials,
+                  symbol,
+                  bitgetSide,
+                  formattedStopLoss,
+                  takeProfitPrice,
+                  productType,
+                  marginCoin,
+                  remainingSizeStr,
+                  contractInfo,
+                  logContext
+                );
+
+                const slSuccess = Array.isArray(tpslResults) ? tpslResults.some((r: any) => r.type === 'stop_loss' && r.success) : false;
+                const tpSuccess = Array.isArray(tpslResults) ? tpslResults.some((r: any) => r.type === 'take_profit' && r.success) : false;
+                console.log(`[BREAKEVEN] ✅ Nuevos SL+TP creados: SL=${slSuccess ? 'OK' : 'FAIL'}, TP=${tpSuccess ? 'OK' : 'FAIL'}`);
+              } else {
+                // Solo crear SL si no hay TP disponible
+                console.log(`[BREAKEVEN] ⚠️ No hay TP disponible, solo se creará SL`);
+                await this.bitgetService.modifyPositionStopLoss(
+                  decryptedCredentials,
+                  symbol,
+                  formattedStopLoss,
+                  productType,
+                  marginCoin,
+                  undefined,
+                  contractInfo,
+                  logContext
+                );
+                console.log(`[BREAKEVEN] ✅ Nuevo SL creado en ${formattedStopLoss}`);
+              }
             } else {
-              // Solo crear SL si no hay TP disponible
-              console.log(`[BREAKEVEN] ⚠️ No hay TP disponible, solo se creará SL`);
+              // Si no pudimos cerrar 50% (posición muy pequeña), al menos mover el SL
+              console.log(`[BREAKEVEN] ⚠️ Sin posición restante calculada, moviendo SL con modifyPositionStopLoss`);
+              let formattedTakeProfit: number | undefined;
+              if (tradeFinal.take_profit) {
+                formattedTakeProfit = parseFloat(parseFloat(tradeFinal.take_profit.toString()).toFixed(pricePlace));
+              }
               await this.bitgetService.modifyPositionStopLoss(
                 decryptedCredentials,
                 symbol,
                 formattedStopLoss,
                 productType,
                 marginCoin,
-                undefined,
+                formattedTakeProfit,
                 contractInfo,
                 logContext
               );
-              console.log(`[BREAKEVEN] ✅ Nuevo SL creado en ${formattedStopLoss}`);
+              console.log(`[BREAKEVEN] ✅ SL movido a breakeven`);
             }
-          } else {
-            // Si no pudimos cerrar 50% (posición muy pequeña), al menos mover el SL
-            console.log(`[BREAKEVEN] ⚠️ Sin posición restante calculada, moviendo SL con modifyPositionStopLoss`);
-            let formattedTakeProfit: number | undefined;
-            if (tradeFinal.take_profit) {
-              formattedTakeProfit = parseFloat(parseFloat(tradeFinal.take_profit.toString()).toFixed(pricePlace));
-            }
-            await this.bitgetService.modifyPositionStopLoss(
-              decryptedCredentials,
-              symbol,
-              formattedStopLoss,
-              productType,
-              marginCoin,
-              formattedTakeProfit,
-              contractInfo,
-              logContext
-            );
-            console.log(`[BREAKEVEN] ✅ SL movido a breakeven`);
-          }
 
-          // Actualizar stop loss en base de datos
-          await TradeModel.updateStopLoss(tradeFinal.id, newStopLoss);
-          console.log(`[BREAKEVEN] ✅ Stop loss actualizado en DB a ${newStopLoss}`);
-        } catch (slError: any) {
-          console.error(`[BREAKEVEN] ❌ Error al crear nuevos SL+TP: ${slError.message}`);
+            // Actualizar stop loss en base de datos
+            await TradeModel.updateStopLoss(tradeFinal.id, newStopLoss);
+            console.log(`[BREAKEVEN] ✅ Stop loss actualizado en DB a ${newStopLoss}`);
+          } catch (slError: any) {
+            console.error(`[BREAKEVEN] ❌ Error al crear nuevos SL+TP: ${slError.message}`);
+          }
         }
 
         successful++;
