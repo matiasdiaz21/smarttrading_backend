@@ -8,6 +8,8 @@ import { NotificationModel } from '../models/Notification';
 import { TradingViewAlert } from '../types';
 import { decrypt } from '../utils/encryption';
 import OrderErrorModel from '../models/orderError.model';
+import { StrategyModel } from '../models/Strategy';
+import { isStrategyFreeAndActive } from '../utils/strategyUtils';
 
 export class TradingService {
   private bitgetService: BitgetService;
@@ -31,14 +33,20 @@ export class TradingService {
         return { success: false, error: 'User not found' };
       }
 
-      // Verificar que el usuario tenga suscripción de pago activa (excepto para administradores)
+      // Verificar que el usuario tenga suscripción de pago activa o que la estrategia sea gratuita y vigente (excepto admin)
       if (user.role !== 'admin') {
-        const activeSubscription = await PaymentSubscriptionModel.findActiveByUserId(userId);
-        if (!activeSubscription) {
-          console.warn(`[TradeService] ⚠️ Usuario ${userId} no tiene suscripción de pago activa`);
+        const activePayment = await PaymentSubscriptionModel.findActiveByUserId(userId);
+        const strategy = await StrategyModel.findById(strategyId);
+        const freeAndActive = strategy ? isStrategyFreeAndActive(strategy as any) : false;
+        if (!activePayment && !freeAndActive) {
+          console.warn(`[TradeService] ⚠️ Usuario ${userId} no tiene suscripción de pago activa ni estrategia gratuita vigente`);
           return { success: false, error: 'User does not have an active payment subscription' };
         }
-        console.log(`[TradeService] ✅ Usuario ${userId} tiene suscripción de pago activa`);
+        if (activePayment) {
+          console.log(`[TradeService] ✅ Usuario ${userId} tiene suscripción de pago activa`);
+        } else {
+          console.log(`[TradeService] ✅ Estrategia ${strategyId} es gratuita y vigente para usuario ${userId}`);
+        }
       } else {
         console.log(`[TradeService] ✅ Usuario ${userId} es administrador - se omite verificación de suscripción de pago`);
       }
@@ -53,7 +61,6 @@ export class TradingService {
 
       // Obtener el leverage del usuario (si tiene uno personalizado) o el de la estrategia por defecto
       // PRIORIDAD: 1. Leverage del usuario en user_strategy_subscriptions, 2. Leverage de la estrategia, 3. 10x por defecto
-      const { StrategyModel } = await import('../models/Strategy');
       const strategy = await StrategyModel.findById(strategyId);
       
       let leverage: number;

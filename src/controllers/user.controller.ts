@@ -7,6 +7,7 @@ import { PaymentSubscriptionModel } from '../models/PaymentSubscription';
 import { UserModel } from '../models/User';
 import { WebhookLogModel } from '../models/WebhookLog';
 import { RiskAcceptanceModel } from '../models/RiskAcceptance';
+import { isStrategyFreeAndActive } from '../utils/strategyUtils';
 
 export class UserController {
   static async getStrategies(req: AuthRequest, res: Response): Promise<void> {
@@ -111,6 +112,19 @@ export class UserController {
       if (existing) {
         res.status(409).json({ error: 'Already subscribed to this strategy' });
         return;
+      }
+
+      // Si no es admin, requiere suscripción de pago activa o que la estrategia sea gratuita y vigente
+      if (req.user.role !== 'admin') {
+        const activePayment = await PaymentSubscriptionModel.findActiveByUserId(req.user.userId);
+        const freeAndActive = isStrategyFreeAndActive(strategy as any);
+        if (!activePayment && !freeAndActive) {
+          const freeUntil = (strategy as any).free_until;
+          if ((strategy as any).is_free && freeUntil) {
+            return res.status(403).json({ error: 'El período gratuito de esta estrategia ha expirado. Suscríbete al plan de pago para continuar.' });
+          }
+          return res.status(403).json({ error: 'Esta estrategia requiere suscripción de pago. Suscríbete en la sección Suscripción.' });
+        }
       }
 
       const credentialId = req.body.credential_id != null ? parseInt(String(req.body.credential_id), 10) : null;

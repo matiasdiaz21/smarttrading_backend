@@ -53,7 +53,7 @@ export class StrategyController {
         return;
       }
 
-      const { name, description, warnings, leverage, allowed_symbols, category } = req.body;
+      const { name, description, warnings, leverage, allowed_symbols, category, is_free, free_until } = req.body;
 
       if (!name) {
         res.status(400).json({ error: 'Name is required' });
@@ -66,6 +66,8 @@ export class StrategyController {
         ? allowed_symbols.filter((s: any) => typeof s === 'string' && s.trim()).map((s: string) => s.trim().toUpperCase())
         : null;
       const categoryValue = typeof category === 'string' && category.trim() ? category.trim() : 'crypto';
+      const isFree = Boolean(is_free);
+      const freeUntilVal = free_until == null || free_until === '' ? null : String(free_until).slice(0, 10);
 
       const strategyId = await StrategyModel.create(
         name,
@@ -75,7 +77,9 @@ export class StrategyController {
         req.user.userId,
         leverageValue,
         allowedSymbols?.length ? allowedSymbols : null,
-        categoryValue
+        categoryValue,
+        isFree,
+        freeUntilVal
       );
 
       const strategy = await StrategyModel.findById(strategyId);
@@ -94,7 +98,7 @@ export class StrategyController {
       }
 
       const { id } = req.params;
-      const { name, description, warnings, is_active, leverage, allowed_symbols, category } = req.body;
+      const { name, description, warnings, is_active, leverage, allowed_symbols, category, is_free, free_until } = req.body;
 
       const strategy = await StrategyModel.findById(parseInt(id));
       if (!strategy) {
@@ -115,6 +119,10 @@ export class StrategyController {
       const categoryValue = category !== undefined
         ? (typeof category === 'string' && category.trim() ? category.trim() : null)
         : undefined;
+      const isFree = is_free !== undefined ? Boolean(is_free) : undefined;
+      const freeUntilVal = free_until !== undefined
+        ? (free_until == null || free_until === '' ? null : String(free_until).slice(0, 10))
+        : undefined;
 
       await StrategyModel.update(
         parseInt(id),
@@ -124,7 +132,9 @@ export class StrategyController {
         is_active !== undefined ? Boolean(is_active) : undefined,
         leverageValue,
         allowedSymbols,
-        categoryValue
+        categoryValue,
+        isFree,
+        freeUntilVal
       );
 
       const updated = await StrategyModel.findById(parseInt(id));

@@ -30,14 +30,17 @@ export class StrategyModel {
     createdBy: number,
     leverage: number = 10,
     allowedSymbols: string[] | null = null,
-    category: string | null = 'crypto'
+    category: string | null = 'crypto',
+    isFree: boolean = false,
+    freeUntil: Date | string | null = null
   ): Promise<number> {
     const allowedSymbolsJson = allowedSymbols?.length
       ? JSON.stringify(allowedSymbols)
       : null;
+    const freeUntilVal = freeUntil == null ? null : (typeof freeUntil === 'string' ? freeUntil : freeUntil.toISOString().slice(0, 10));
     const [result] = await pool.execute(
-      'INSERT INTO strategies (name, description, warnings, tradingview_webhook_secret, is_active, leverage, allowed_symbols, category, created_by) VALUES (?, ?, ?, ?, true, ?, ?, ?, ?)',
-      [name, description, warnings, webhookSecret, leverage, allowedSymbolsJson, category || 'crypto', createdBy]
+      'INSERT INTO strategies (name, description, warnings, tradingview_webhook_secret, is_active, leverage, allowed_symbols, category, is_free, free_until, created_by) VALUES (?, ?, ?, ?, true, ?, ?, ?, ?, ?, ?)',
+      [name, description, warnings, webhookSecret, leverage, allowedSymbolsJson, category || 'crypto', !!isFree, freeUntilVal, createdBy]
     );
     return (result as any).insertId;
   }
@@ -50,7 +53,9 @@ export class StrategyModel {
     isActive?: boolean,
     leverage?: number,
     allowedSymbols?: string[] | null,
-    category?: string | null
+    category?: string | null,
+    isFree?: boolean,
+    freeUntil?: Date | string | null
   ): Promise<void> {
     const updates: string[] = [];
     const values: any[] = [];
@@ -82,6 +87,14 @@ export class StrategyModel {
     if (category !== undefined) {
       updates.push('category = ?');
       values.push(category || null);
+    }
+    if (isFree !== undefined) {
+      updates.push('is_free = ?');
+      values.push(!!isFree);
+    }
+    if (freeUntil !== undefined) {
+      updates.push('free_until = ?');
+      values.push(freeUntil == null ? null : (typeof freeUntil === 'string' ? freeUntil : freeUntil.toISOString().slice(0, 10)));
     }
 
     if (updates.length === 0) return;

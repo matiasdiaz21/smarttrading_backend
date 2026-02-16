@@ -22,6 +22,10 @@ export interface Strategy {
   allowed_symbols: string[] | null;
   /** Categoría de la estrategia: crypto, forex, indices, commodities, otros. */
   category: string | null;
+  /** Si la estrategia es gratuita. */
+  is_free: boolean;
+  /** Hasta cuándo es gratuita; null = indefinido. Solo aplica si is_free es true. */
+  free_until: Date | null;
   created_by: number;
   created_at: Date;
 }
