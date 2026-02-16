@@ -46,4 +46,22 @@ export class SettingsController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  static async updateStatsStrategies(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+      const { stats_strategy_ids } = req.body;
+      const ids = Array.isArray(stats_strategy_ids)
+        ? stats_strategy_ids.map((id: any) => parseInt(String(id), 10)).filter((id: number) => !isNaN(id) && Number.isInteger(id))
+        : null;
+      await AppSettingsModel.updateStatsStrategyIds(ids && ids.length > 0 ? ids : null);
+      const settings = await AppSettingsModel.get();
+      res.json(settings);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
 }

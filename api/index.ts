@@ -251,6 +251,7 @@ app.post('/api/admin/bitget-operation-logs/:id/unreview', AdminController.markLo
 app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats);
 app.get('/api/admin/settings', authenticate, requireAdmin, SettingsController.getAdmin);
 app.put('/api/admin/settings', authenticate, requireAdmin, SettingsController.updateAdmin);
+app.put('/api/admin/settings/stats-strategies', authenticate, requireAdmin, SettingsController.updateStatsStrategies);
 
 
 // Error handler

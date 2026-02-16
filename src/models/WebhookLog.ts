@@ -33,6 +33,21 @@ export class WebhookLogModel {
     return rows as WebhookLog[];
   }
 
+  static async findByStrategyIds(strategyIds: number[], limit = 1000): Promise<WebhookLog[]> {
+    if (!strategyIds || strategyIds.length === 0) {
+      return [];
+    }
+    const limitInt = Math.max(1, Math.min(1000, parseInt(String(limit), 10) || 1000));
+    const validIds = strategyIds.map(id => parseInt(String(id), 10)).filter(id => !isNaN(id) && Number.isInteger(id));
+    if (validIds.length === 0) return [];
+    const placeholders = validIds.map(() => '?').join(',');
+    const [rows] = await pool.execute(
+      `SELECT * FROM webhook_logs WHERE strategy_id IN (${placeholders}) ORDER BY processed_at DESC, id DESC LIMIT ${limitInt}`,
+      validIds
+    );
+    return rows as WebhookLog[];
+  }
+
   static async findByStrategyId(strategyId: number, limit = 50): Promise<WebhookLog[]> {
     // Validar y convertir parámetros
     const strategyIdInt = parseInt(String(strategyId), 10);

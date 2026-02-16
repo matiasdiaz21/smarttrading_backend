@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { WebhookLogModel } from '../models/WebhookLog';
+import { AppSettingsModel } from '../models/AppSettings';
 
 interface ParsedPayload {
   symbol?: string;
@@ -30,8 +31,14 @@ export class StatsController {
   // Obtener estadísticas públicas para el landing page
   static async getPublicStats(req: Request, res: Response) {
     try {
-      // Obtener todos los logs (sin filtro de estrategia para estadísticas públicas)
-      const logs = await WebhookLogModel.findAll(1000); // Limitar a 1000 logs más recientes
+      // Obtener estrategias configuradas para estadísticas públicas
+      const settings = await AppSettingsModel.get();
+      const statsStrategyIds = settings.stats_strategy_ids;
+
+      // Si hay estrategias configuradas, filtrar logs por ellas; si no, obtener todos
+      const logs = statsStrategyIds && statsStrategyIds.length > 0
+        ? await WebhookLogModel.findByStrategyIds(statsStrategyIds, 1000)
+        : await WebhookLogModel.findAll(1000);
 
       // Agrupar logs por símbolo y trade ID
       const { groupedBySymbol } = StatsController.groupLogsBySymbolAndTradeId(logs);
