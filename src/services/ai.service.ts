@@ -169,7 +169,6 @@ async function fetchCurrentPrice(symbol: string, productType: string = 'USDT-FUT
 // ===================== Format data for prompt =====================
 
 function formatCandlesForPrompt(candles: Candle[], maxRows: number = 30): string {
-  // Sample candles to reduce tokens while keeping representative data
   const step = Math.max(1, Math.floor(candles.length / maxRows));
   const sampled = candles.filter((_, i) => i % step === 0 || i === candles.length - 1);
 
@@ -179,6 +178,66 @@ function formatCandlesForPrompt(candles: Candle[], maxRows: number = 30): string
   });
 
   return lines.join('\n');
+}
+
+function buildAutoPrompt(data: {
+  symbol: string;
+  currentPrice: number;
+  candles1h: Candle[];
+  candles4h: Candle[];
+  rsi1h: number;
+  rsi4h: number;
+  macd1h: { macd: number; signal: number; histogram: number };
+  macd4h: { macd: number; signal: number; histogram: number };
+}): string {
+  const { symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h } = data;
+
+  // Price change calculations
+  const last1h = candles1h.slice(-24);
+  const last4h = candles4h.slice(-6);
+  const priceChange24h = last1h.length > 0
+    ? ((currentPrice - last1h[0].open) / last1h[0].open * 100).toFixed(2)
+    : '0';
+  const high24h = last1h.length > 0 ? Math.max(...last1h.map(c => c.high)) : currentPrice;
+  const low24h = last1h.length > 0 ? Math.min(...last1h.map(c => c.low)) : currentPrice;
+  const avgVolume1h = last1h.length > 0
+    ? Math.round(last1h.reduce((s, c) => s + c.volume, 0) / last1h.length)
+    : 0;
+  const lastVolume = last1h.length > 0 ? Math.round(last1h[last1h.length - 1].volume) : 0;
+  const volRatio = avgVolume1h > 0 ? (lastVolume / avgVolume1h).toFixed(2) : '1.00';
+
+  return `Analyze ${symbol} for a futures trading opportunity.
+
+CURRENT STATE:
+- Symbol: ${symbol}
+- Current Price: ${currentPrice}
+- 24h Change: ${priceChange24h}%
+- 24h High: ${high24h}
+- 24h Low: ${low24h}
+- Last 1H Volume: ${lastVolume} (${volRatio}x average)
+
+TECHNICAL INDICATORS:
+- RSI (14) 1H: ${rsi1h.toFixed(2)}
+- RSI (14) 4H: ${rsi4h.toFixed(2)}
+- MACD 1H: Line=${macd1h.macd}, Signal=${macd1h.signal}, Histogram=${macd1h.histogram}
+- MACD 4H: Line=${macd4h.macd}, Signal=${macd4h.signal}, Histogram=${macd4h.histogram}
+
+RECENT 1H CANDLES (last 25):
+${formatCandlesForPrompt(candles1h, 25)}
+
+RECENT 4H CANDLES (last 20):
+${formatCandlesForPrompt(candles4h, 20)}
+
+Based on all the data above, provide your trading recommendation. You MUST respond ONLY with a valid JSON object in this exact format:
+{
+  "side": "LONG" or "SHORT",
+  "entry_price": <number - recommended entry price>,
+  "stop_loss": <number - stop loss price>,
+  "take_profit": <number - take profit price>,
+  "confidence": <number 0-100 - your confidence level>,
+  "timeframe": "1h" or "4h",
+  "reasoning": "<string - brief explanation of your analysis>"
+}`;
 }
 
 // ===================== Groq API =====================
@@ -265,9 +324,6 @@ export async function analyzeAsset(
   if (!config.groq_api_key) {
     throw new Error('Groq API key no configurada');
   }
-  if (!config.system_prompt || !config.analysis_prompt_template) {
-    throw new Error('Prompts de IA no configurados');
-  }
 
   // 1. Fetch market data from Bitget (public endpoints, no auth)
   console.log(`[AI Service] 📊 Obteniendo velas 1H y 4H para ${symbol}...`);
@@ -290,23 +346,34 @@ export async function analyzeAsset(
 
   console.log(`[AI Service] 📈 Indicadores: RSI_1H=${rsi1h.toFixed(2)}, RSI_4H=${rsi4h.toFixed(2)}, MACD_1H=${macd1h.macd}, MACD_4H=${macd4h.macd}`);
 
-  // 3. Build prompt from template
-  const userPrompt = config.analysis_prompt_template
-    .replace('{{symbol}}', symbol)
-    .replace('{{candles_1h}}', formatCandlesForPrompt(candles1h, 25))
-    .replace('{{candles_4h}}', formatCandlesForPrompt(candles4h, 20))
-    .replace('{{rsi_1h}}', rsi1h.toFixed(2))
-    .replace('{{rsi_4h}}', rsi4h.toFixed(2))
-    .replace('{{macd_1h}}', `MACD: ${macd1h.macd}, Signal: ${macd1h.signal}, Histogram: ${macd1h.histogram}`)
-    .replace('{{macd_4h}}', `MACD: ${macd4h.macd}, Signal: ${macd4h.signal}, Histogram: ${macd4h.histogram}`)
-    .replace('{{current_price}}', currentPrice.toString());
+  // 3. Build prompt - automatic or from custom template
+  let userPrompt: string;
+  if (config.analysis_prompt_template && config.analysis_prompt_template.trim().length > 0) {
+    // Admin provided a custom template with placeholders
+    userPrompt = config.analysis_prompt_template
+      .replace(/\{\{symbol\}\}/g, symbol)
+      .replace(/\{\{candles_1h\}\}/g, formatCandlesForPrompt(candles1h, 25))
+      .replace(/\{\{candles_4h\}\}/g, formatCandlesForPrompt(candles4h, 20))
+      .replace(/\{\{rsi_1h\}\}/g, rsi1h.toFixed(2))
+      .replace(/\{\{rsi_4h\}\}/g, rsi4h.toFixed(2))
+      .replace(/\{\{macd_1h\}\}/g, `MACD: ${macd1h.macd}, Signal: ${macd1h.signal}, Histogram: ${macd1h.histogram}`)
+      .replace(/\{\{macd_4h\}\}/g, `MACD: ${macd4h.macd}, Signal: ${macd4h.signal}, Histogram: ${macd4h.histogram}`)
+      .replace(/\{\{current_price\}\}/g, currentPrice.toString());
+  } else {
+    // Fully automatic prompt - no template needed
+    userPrompt = buildAutoPrompt({ symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h });
+  }
 
   // 4. Call Groq
+  const systemPrompt = config.system_prompt && config.system_prompt.trim().length > 0
+    ? config.system_prompt
+    : `You are an expert cryptocurrency and futures trading analyst. You analyze technical indicators (RSI, MACD), candlestick patterns, price action, support/resistance levels, and volume to provide high-quality trading signals. You only recommend trades when you have high confidence. Always provide precise entry, stop loss, and take profit prices. Respond ONLY in valid JSON format.`;
+
   console.log(`[AI Service] 🤖 Consultando Groq (${config.groq_model})...`);
   const { response, tokensUsed, rawResponse } = await callGroq(
     config.groq_api_key,
     config.groq_model,
-    config.system_prompt,
+    systemPrompt,
     userPrompt
   );
 
