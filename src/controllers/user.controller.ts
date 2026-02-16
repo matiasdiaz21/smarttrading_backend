@@ -744,9 +744,30 @@ export class UserController {
           }, 0);
           const closePrice = totalCloseSize > 0 ? (closePriceWeighted / totalCloseSize) : 0;
           
-          // PnL total de las órdenes de cierre
-          const grossPnl = groupCloseOrders.reduce((sum: number, o: any) => 
+          // PnL total de las órdenes de cierre (de Bitget)
+          const totalProfitsSum = groupCloseOrders.reduce((sum: number, o: any) => 
             sum + parseFloat(o.totalProfits || '0'), 0);
+          
+          // Calcular PnL basado en precios como validación
+          const sizeForPnl = Math.min(totalOpenSize, totalCloseSize);
+          let calculatedPnl = 0;
+          if (openPrice > 0 && closePrice > 0 && sizeForPnl > 0) {
+            calculatedPnl = posSide === 'long'
+              ? (closePrice - openPrice) * sizeForPnl
+              : (openPrice - closePrice) * sizeForPnl;
+          }
+          
+          // Si totalProfits y el PnL calculado tienen signos diferentes, usar el calculado
+          // Esto corrige casos donde Bitget devuelve totalProfits con signo incorrecto
+          let grossPnl: number;
+          if (totalProfitsSum !== 0 && calculatedPnl !== 0 && Math.sign(totalProfitsSum) !== Math.sign(calculatedPnl)) {
+            console.warn(`[UserController] ⚠️ PnL sign mismatch for ${symbol} ${posSide}: totalProfits=${totalProfitsSum.toFixed(4)}, calculated=${calculatedPnl.toFixed(4)}. Using calculated.`);
+            grossPnl = calculatedPnl;
+          } else if (totalProfitsSum !== 0) {
+            grossPnl = totalProfitsSum;
+          } else {
+            grossPnl = calculatedPnl;
+          }
           const netPnl = grossPnl - totalFees;
           
           // Leverage (de la primera orden de apertura)

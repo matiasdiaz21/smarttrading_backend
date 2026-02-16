@@ -341,28 +341,28 @@ export class MassTradeController {
             { userId: req.user!.userId, strategyId: null }
           );
 
-          // SL
+          // SL - usar endpoint correcto de TPSL (/api/v2/mix/order/place-tpsl-order)
           const holdSide = side === 'buy' ? 'long' : 'short';
           try {
             const slClientOid = `MT_SL_${symbol.substring(0, 8)}_${timestamp}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
-            await bitgetService.placeOrder(decryptedCredentials, {
+            await bitgetService.placeTpslOrder(decryptedCredentials, {
               symbol, productType: config.product_type, marginCoin: config.margin_coin,
               planType: 'pos_loss', triggerPrice: formattedSL.toString(), triggerType: 'fill_price',
               executePrice: formattedSL.toString(), holdSide, size: sizeStr, clientOid: slClientOid,
-            } as any, { userId: req.user!.userId, strategyId: null });
+            }, { userId: req.user!.userId, strategyId: null });
           } catch (slErr: any) {
             console.warn(`[MassTrade] ⚠️ ${symbol}: SL falló: ${slErr.message}`);
           }
 
-          // TP
+          // TP - usar endpoint correcto de TPSL (/api/v2/mix/order/place-tpsl-order)
           if (formattedTP) {
             try {
               const tpClientOid = `MT_TP_${symbol.substring(0, 8)}_${timestamp}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
-              await bitgetService.placeOrder(decryptedCredentials, {
+              await bitgetService.placeTpslOrder(decryptedCredentials, {
                 symbol, productType: config.product_type, marginCoin: config.margin_coin,
                 planType: 'pos_profit', triggerPrice: formattedTP.toString(), triggerType: 'fill_price',
                 executePrice: formattedTP.toString(), holdSide, size: sizeStr, clientOid: tpClientOid,
-              } as any, { userId: req.user!.userId, strategyId: null });
+              }, { userId: req.user!.userId, strategyId: null });
             } catch (tpErr: any) {
               console.warn(`[MassTrade] ⚠️ ${symbol}: TP falló: ${tpErr.message}`);
             }

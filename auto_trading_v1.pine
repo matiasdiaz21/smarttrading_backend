@@ -281,16 +281,16 @@ var float[] outcomes = array.new_float(0)
 var tp = 0.0
 // Entradas y salidas
 if longcondicion and not isTradeOpen
-    limit := ema1
+    limit := math.round_to_mintick(ema1)
     limitl := limit
     limits := 0.0
-    stop := M_LOW
+    stop := math.round_to_mintick(M_LOW)
     stopl := stop
     stops := 0.0
-    tp := limit + (limit - stop) * take_profit
+    tp := math.round_to_mintick(limit + (limit - stop) * take_profit)
     tpl := tp
     tps := 0.0
-    breakeven := limit + (tp - limit) * breakeven_ratio
+    breakeven := math.round_to_mintick(limit + (tp - limit) * breakeven_ratio)
     activeTradeType := "LONG"
     activeEntry := limit
     activeStop := stop
@@ -308,16 +308,16 @@ if longcondicion and not isTradeOpen
     label.new(bar_index, limit, text="Long Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(breakeven, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
 
 if shortcondicion and not isTradeOpen
-    limit := ema1
+    limit := math.round_to_mintick(ema1)
     limits := limit
     limitl := 0.0
-    stop := M_HIGH
+    stop := math.round_to_mintick(M_HIGH)
     stops := stop
     stopl := 0.0
-    tp := limit - math.abs(limit - stop) * take_profit
+    tp := math.round_to_mintick(limit - math.abs(limit - stop) * take_profit)
     tps := tp
     tpl := 0.0
-    breakeven := limit - (limit - tp) * breakeven_ratio
+    breakeven := math.round_to_mintick(limit - (limit - tp) * breakeven_ratio)
     activeTradeType := "SHORT"
     activeEntry := limit
     activeStop := stop
@@ -352,21 +352,21 @@ LOTE = POSICION / limit
 COMI = (comision * POSICION / 100) * -1
 
 // Alertas de Breakeven
-if activeTradeType == "LONG" and ta.crossover(close, breakeven) and not alert_breakeven_triggered and isTradeOpen
+if activeTradeType == "LONG" and high >= breakeven and not alert_breakeven_triggered and isTradeOpen
     activeStop := activeEntry
     stopl := activeEntry
     strategy.exit("Exit Long", "Long", stop=activeEntry, limit=activeTp)
     string multi_tf_json = buildMultiTimeframeJSON()
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
     alert_breakeven_triggered := true
     label.new(bar_index, close, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
 
-if activeTradeType == "SHORT" and ta.crossunder(close, breakeven) and not alert_breakeven_triggered and isTradeOpen
+if activeTradeType == "SHORT" and low <= breakeven and not alert_breakeven_triggered and isTradeOpen
     activeStop := activeEntry
     stops := activeEntry
     strategy.exit("Exit Short", "Short", stop=activeEntry, limit=activeTp)
     string multi_tf_json = buildMultiTimeframeJSON()
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
     alert_breakeven_triggered := true
     label.new(bar_index, close, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
 

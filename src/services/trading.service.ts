@@ -852,8 +852,9 @@ export class TradingService {
                 
                 const holdSide = position.holdSide || (tradeFinal.side === 'buy' ? 'long' : 'short');
                 const closeSide: 'buy' | 'sell' = tradeFinal.side === 'buy' ? 'sell' : 'buy';
+                const posMarginMode = position.marginMode || 'isolated';
 
-                console.log(`[BREAKEVEN] Cerrando 50%: ${halfSizeStr} contratos de ${currentSize} total`);
+                console.log(`[BREAKEVEN] Cerrando 50%: ${halfSizeStr} contratos de ${currentSize} total (marginMode: ${posMarginMode}, holdSide: ${holdSide})`);
 
                 const timestamp = Date.now();
                 const baseId = `${timestamp}${Math.floor(Math.random() * 1000)}`;
@@ -865,12 +866,13 @@ export class TradingService {
                   {
                     symbol: symbol,
                     productType: productType,
-                    marginMode: 'isolated',
+                    marginMode: posMarginMode,
                     marginCoin: marginCoin,
                     size: halfSizeStr,
                     side: closeSide,
                     tradeSide: 'close',
                     orderType: 'market',
+                    holdSide: holdSide,
                     clientOid: beClientOid,
                   },
                   logContext

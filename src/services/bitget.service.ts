@@ -312,6 +312,7 @@ export class BitgetService {
       tradeSide?: 'open' | 'close';
       orderType: 'limit' | 'market';
       force?: string;
+      holdSide?: string;
       clientOid?: string;
     },
     logContext?: {
@@ -350,6 +351,10 @@ export class BitgetService {
       orderPayload.clientOid = orderData.clientOid;
     }
 
+    if (orderData.holdSide) {
+      orderPayload.holdSide = orderData.holdSide;
+    }
+
     const result = await this.makeRequest(
       'POST', 
       endpoint, 
@@ -372,6 +377,58 @@ export class BitgetService {
       orderId,
       clientOid,
     };
+  }
+
+  async placeTpslOrder(
+    credentials: BitgetCredentials,
+    tpslData: {
+      symbol: string;
+      productType: string;
+      marginCoin: string;
+      planType: 'pos_profit' | 'pos_loss';
+      triggerPrice: string;
+      triggerType?: string;
+      executePrice?: string;
+      holdSide: string;
+      size: string;
+      clientOid?: string;
+    },
+    logContext?: {
+      userId: number;
+      strategyId: number | null;
+      orderId?: string;
+    }
+  ): Promise<any> {
+    const endpoint = '/api/v2/mix/order/place-tpsl-order';
+
+    const payload: any = {
+      symbol: tpslData.symbol.toUpperCase(),
+      productType: tpslData.productType.toLowerCase(),
+      marginCoin: tpslData.marginCoin.toUpperCase(),
+      planType: tpslData.planType,
+      triggerPrice: tpslData.triggerPrice,
+      triggerType: tpslData.triggerType || 'fill_price',
+      holdSide: tpslData.holdSide,
+      size: tpslData.size,
+    };
+
+    if (tpslData.executePrice) {
+      payload.executePrice = tpslData.executePrice;
+    }
+    if (tpslData.clientOid) {
+      payload.clientOid = tpslData.clientOid;
+    }
+
+    const operationType = tpslData.planType === 'pos_profit' ? 'setTakeProfit' : 'setStopLoss';
+
+    return this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
+      userId: logContext.userId,
+      strategyId: logContext.strategyId,
+      symbol: tpslData.symbol,
+      operationType,
+      orderId: logContext.orderId,
+      clientOid: tpslData.clientOid,
+    } : undefined);
   }
 
   async getOrderStatus(
