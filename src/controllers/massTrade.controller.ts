@@ -4,6 +4,8 @@ import { MassTradeConfigModel } from '../models/MassTradeConfig';
 import { CredentialsModel } from '../models/Credentials';
 import { BitgetService } from '../services/bitget.service';
 import { decrypt } from '../utils/encryption';
+import { PaymentSubscriptionModel } from '../models/PaymentSubscription';
+import { UserModel } from '../models/User';
 
 const MAX_SYMBOLS = 20;
 
@@ -168,6 +170,17 @@ export class MassTradeController {
   static async execute(req: AuthRequest, res: Response): Promise<void> {
     try {
       if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
+
+      // Verificar suscripción activa (excepto administradores)
+      const user = await UserModel.findById(req.user.userId);
+      if (!user) { res.status(401).json({ error: 'Usuario no encontrado' }); return; }
+      if (user.role !== 'admin') {
+        const activeSubscription = await PaymentSubscriptionModel.findActiveByUserId(req.user.userId);
+        if (!activeSubscription) {
+          res.status(403).json({ error: 'Se requiere una suscripción activa para ejecutar trading masivo' });
+          return;
+        }
+      }
 
       const configId = parseInt(req.params.id);
       const config = await MassTradeConfigModel.findById(configId, req.user.userId);
@@ -419,6 +432,17 @@ export class MassTradeController {
   static async closeAll(req: AuthRequest, res: Response): Promise<void> {
     try {
       if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
+
+      // Verificar suscripción activa (excepto administradores)
+      const user = await UserModel.findById(req.user.userId);
+      if (!user) { res.status(401).json({ error: 'Usuario no encontrado' }); return; }
+      if (user.role !== 'admin') {
+        const activeSubscription = await PaymentSubscriptionModel.findActiveByUserId(req.user.userId);
+        if (!activeSubscription) {
+          res.status(403).json({ error: 'Se requiere una suscripción activa para ejecutar trading masivo' });
+          return;
+        }
+      }
 
       const configId = parseInt(req.params.id);
       const config = await MassTradeConfigModel.findById(configId, req.user.userId);
