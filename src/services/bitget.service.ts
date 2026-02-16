@@ -385,7 +385,7 @@ export class BitgetService {
     return await this.makeRequest('GET', endpoint, credentials);
   }
 
-  // Obtener historial de órdenes del usuario desde Bitget
+  // Obtener historial de órdenes del usuario desde Bitget (con paginación automática)
   async getOrdersHistory(
     credentials: BitgetCredentials,
     productType: string = 'USDT-FUTURES',
@@ -396,68 +396,79 @@ export class BitgetService {
   ): Promise<any[]> {
     try {
       const endpoint = '/api/v2/mix/order/orders-history';
-      
-      // Construir query parameters
-      const params: any = {
-        productType: productType,
-        limit: limit.toString(),
-      };
-      
-      if (symbol) {
-        params.symbol = symbol;
-      }
-      
-      if (startTime) {
-        params.startTime = startTime.toString();
-      }
-      
-      if (endTime) {
-        params.endTime = endTime.toString();
-      }
+      const allOrders: any[] = [];
+      let idLessThan: string | undefined;
+      const maxPages = 10; // Máximo 10 páginas (1000 órdenes) para evitar loops infinitos
 
-      // Construir el requestPath con query parameters para la firma
-      const queryString = Object.keys(params)
-        .map(key => `${key}=${params[key]}`)
-        .join('&');
-      const requestPath = `${endpoint}?${queryString}`;
+      for (let page = 0; page < maxPages; page++) {
+        const params: any = {
+          productType: productType,
+          limit: '100', // Máximo por request de Bitget
+        };
 
-      const timestamp = Date.now().toString();
-      const bodyString = '';
+        if (symbol) params.symbol = symbol;
+        if (startTime) params.startTime = startTime.toString();
+        if (endTime) params.endTime = endTime.toString();
+        if (idLessThan) params.idLessThan = idLessThan;
 
-      const signature = this.generateSignature(
-        timestamp,
-        'GET',
-        requestPath,
-        bodyString,
-        credentials.apiSecret
-      );
+        const queryString = Object.keys(params)
+          .map(key => `${key}=${params[key]}`)
+          .join('&');
+        const requestPath = `${endpoint}?${queryString}`;
 
-      const headers: any = {
-        'ACCESS-KEY': credentials.apiKey,
-        'ACCESS-SIGN': signature,
-        'ACCESS-TIMESTAMP': timestamp,
-        'ACCESS-PASSPHRASE': credentials.passphrase,
-        'Content-Type': 'application/json',
-        'locale': 'en-US',
-      };
+        const timestamp = Date.now().toString();
+        const signature = this.generateSignature(
+          timestamp,
+          'GET',
+          requestPath,
+          '',
+          credentials.apiSecret
+        );
 
-      const response = await axios({
-        method: 'GET',
-        url: `${this.apiBaseUrl}${endpoint}`,
-        headers,
-        params,
-      });
+        const headers: any = {
+          'ACCESS-KEY': credentials.apiKey,
+          'ACCESS-SIGN': signature,
+          'ACCESS-TIMESTAMP': timestamp,
+          'ACCESS-PASSPHRASE': credentials.passphrase,
+          'Content-Type': 'application/json',
+          'locale': 'en-US',
+        };
 
-      if (response.data.code === '00000') {
-        const data = response.data.data;
-        // La respuesta tiene la estructura: { entrustedList: [...], endId: "..." }
-        if (data && data.entrustedList) {
-          return data.entrustedList;
+        const response = await axios({
+          method: 'GET',
+          url: `${this.apiBaseUrl}${endpoint}`,
+          headers,
+          params,
+        });
+
+        if (response.data.code !== '00000') {
+          throw new Error(`Bitget API Error: ${response.data.msg}`);
         }
-        return [];
-      } else {
-        throw new Error(`Bitget API Error: ${response.data.msg}`);
+
+        const data = response.data.data;
+        if (!data || !data.entrustedList || data.entrustedList.length === 0) {
+          break; // No hay más órdenes
+        }
+
+        allOrders.push(...data.entrustedList);
+        console.log(`[BitgetService] Página ${page + 1}: ${data.entrustedList.length} órdenes (total acumulado: ${allOrders.length})`);
+
+        // Si devolvió menos de 100, no hay más páginas
+        if (data.entrustedList.length < 100) break;
+
+        // Usar endId como cursor para la siguiente página
+        if (data.endId) {
+          idLessThan = data.endId;
+        } else {
+          break;
+        }
+
+        // Si ya tenemos suficientes órdenes según el limit solicitado, parar
+        if (limit > 0 && allOrders.length >= limit) break;
       }
+
+      console.log(`[BitgetService] Total órdenes obtenidas: ${allOrders.length}`);
+      return allOrders;
     } catch (error: any) {
       console.error(`[BitgetService] Error al obtener historial de órdenes:`, error);
       throw new Error(`Error al obtener historial de órdenes de Bitget: ${error.response?.data?.msg || error.message}`);

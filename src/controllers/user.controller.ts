@@ -613,12 +613,12 @@ export class UserController {
       const { BitgetService } = await import('../services/bitget.service');
       const bitgetService = new BitgetService();
 
-      const pageSize = parseInt(req.query.limit as string) || 100;
+      const pageSize = parseInt(req.query.limit as string) || 1000;
       const productType = (req.query.productType as string) || 'USDT-FUTURES';
       const endTime = Date.now();
       const startTime = req.query.startTime 
         ? parseInt(req.query.startTime as string) 
-        : endTime - (30 * 24 * 60 * 60 * 1000);
+        : endTime - (90 * 24 * 60 * 60 * 1000);
 
       // Acumular órdenes y posiciones abiertas de todas las credenciales (varias cuentas Bitget)
       const allBitgetOrders: Array<{ credentialId: number; order: any }> = [];
