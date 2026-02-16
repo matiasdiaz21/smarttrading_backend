@@ -97,8 +97,7 @@ export class AiPredictionModel {
 
     const limit = Math.min(filters?.limit || 50, 200);
     const offset = filters?.offset || 0;
-    query += ' LIMIT ? OFFSET ?';
-    values.push(limit, offset);
+    query += ` LIMIT ${Number(limit)} OFFSET ${Number(offset)}`;
 
     const [rows] = await pool.execute(query, values);
     return (rows as any[]).map(r => ({
