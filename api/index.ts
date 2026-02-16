@@ -41,6 +41,7 @@ import { NOWPaymentsCredentialsController } from '../src/controllers/nowpayments
 import { NOWPaymentsController } from '../src/controllers/nowpayments.controller';
 import { AdminController } from '../src/controllers/admin.controller';
 import { StatsController } from '../src/controllers/stats.controller';
+import { SettingsController } from '../src/controllers/settings.controller';
 import { TermsAndConditionsController } from '../src/controllers/termsAndConditions.controller';
 import { NotificationsController } from '../src/controllers/notifications.controller';
 import { MassTradeController } from '../src/controllers/massTrade.controller';
@@ -149,6 +150,9 @@ app.get('/api/health', (req: Request, res: Response) => {
 // Public stats route (sin autenticación)
 app.get('/api/public/stats', StatsController.getPublicStats);
 
+// Settings (público: solo free_trial para el frontend)
+app.get('/api/settings', SettingsController.getPublic);
+
 // Terms and Conditions routes (público para obtener activos)
 app.get('/api/public/terms-and-conditions', TermsAndConditionsController.getActive);
 
@@ -178,6 +182,7 @@ app.put('/api/user/strategies/:id/toggle', authenticate, UserController.toggleSt
 app.put('/api/user/strategies/:id/leverage', authenticate, UserController.updateLeverage);
 app.put('/api/user/strategies/:id/position-size', authenticate, UserController.updatePositionSize);
 app.put('/api/user/strategies/:id/excluded-symbols', authenticate, UserController.updateExcludedSymbols);
+app.put('/api/user/strategies/:id/partial-tp', authenticate, UserController.updatePartialTp);
 app.put('/api/user/strategies/:id/credential', authenticate, UserController.updateStrategyCredential);
 app.get('/api/user/positions', authenticate, UserController.getPositions);
 app.get('/api/user/trades/closed', authenticate, UserController.getClosedTrades);
@@ -246,6 +251,8 @@ app.get('/api/admin/bitget-operation-logs', AdminController.getBitgetOperationLo
 app.post('/api/admin/bitget-operation-logs/:id/review', AdminController.markLogAsReviewed);
 app.post('/api/admin/bitget-operation-logs/:id/unreview', AdminController.markLogAsUnreviewed);
 app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats);
+app.get('/api/admin/settings', authenticate, requireAdmin, SettingsController.getAdmin);
+app.put('/api/admin/settings', authenticate, requireAdmin, SettingsController.updateAdmin);
 
 // Terms and Conditions admin routes
 app.get('/api/admin/terms-and-conditions', authenticate, requireAdmin, TermsAndConditionsController.getAll);
