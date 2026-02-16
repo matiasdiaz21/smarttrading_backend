@@ -43,6 +43,7 @@ import { AdminController } from '../src/controllers/admin.controller';
 import { StatsController } from '../src/controllers/stats.controller';
 import { TermsAndConditionsController } from '../src/controllers/termsAndConditions.controller';
 import { NotificationsController } from '../src/controllers/notifications.controller';
+import { MassTradeController } from '../src/controllers/massTrade.controller';
 import { authenticate, requireAdmin } from '../src/middleware/auth';
 import { authLimiter, webhookLimiter } from '../src/middleware/rateLimit';
 
@@ -190,6 +191,16 @@ app.get('/api/notifications', authenticate, NotificationsController.getNotificat
 app.get('/api/notifications/unread-count', authenticate, NotificationsController.getUnreadCount);
 app.post('/api/notifications/:id/read', authenticate, NotificationsController.markAsRead);
 app.post('/api/notifications/read-all', authenticate, NotificationsController.markAllAsRead);
+
+// Mass Trade routes
+app.get('/api/mass-trade/configs', authenticate, MassTradeController.listConfigs);
+app.get('/api/mass-trade/configs/:id', authenticate, MassTradeController.getConfig);
+app.post('/api/mass-trade/configs', authenticate, MassTradeController.createConfig);
+app.put('/api/mass-trade/configs/:id', authenticate, MassTradeController.updateConfig);
+app.delete('/api/mass-trade/configs/:id', authenticate, MassTradeController.deleteConfig);
+app.post('/api/mass-trade/configs/:id/execute', authenticate, MassTradeController.execute);
+app.post('/api/mass-trade/configs/:id/close-all', authenticate, MassTradeController.closeAll);
+app.get('/api/mass-trade/executions', authenticate, MassTradeController.getExecutions);
 
 // Webhook routes (público, pero con verificación HMAC)
 app.get('/api/webhooks/tradingview/test', WebhookController.test); // Endpoint de prueba
