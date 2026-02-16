@@ -21,6 +21,16 @@ interface PriceCache {
 const priceCache: PriceCache = {};
 const CACHE_TTL = 5000; // 5 segundos
 
+// Cache de información de contratos (no cambia frecuentemente) - TTL 5 minutos
+interface ContractInfoCache {
+  [key: string]: {
+    data: { minTradeNum: string; sizeMultiplier: string; minTradeUSDT: string; volumePlace: string; pricePlace: string };
+    timestamp: number;
+  };
+}
+const contractInfoCache: ContractInfoCache = {};
+const CONTRACT_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
+
 export class BitgetService {
   private apiBaseUrl: string;
 
@@ -237,6 +247,7 @@ export class BitgetService {
   }
 
   // Obtener información del contrato (minTradeNum, sizeMultiplier, etc.)
+  // Usa cache en memoria con TTL de 5 minutos (la info de contratos no cambia frecuentemente)
   async getContractInfo(
     symbol: string,
     productType: string = 'USDT-FUTURES'
@@ -247,6 +258,14 @@ export class BitgetService {
     volumePlace: string;
     pricePlace: string;
   }> {
+    // Check cache first
+    const cacheKey = `${symbol}_${productType}`;
+    const cached = contractInfoCache[cacheKey];
+    if (cached && Date.now() - cached.timestamp < CONTRACT_CACHE_TTL) {
+      console.log(`[Bitget] 📦 getContractInfo cache HIT para ${symbol} (${Math.round((Date.now() - cached.timestamp) / 1000)}s old)`);
+      return cached.data;
+    }
+
     try {
       const response = await axios.get(
         `${this.apiBaseUrl}/api/v2/mix/market/contracts`,
@@ -260,13 +279,17 @@ export class BitgetService {
 
       if (response.data.code === '00000' && response.data.data && response.data.data.length > 0) {
         const contract = response.data.data[0];
-        return {
+        const data = {
           minTradeNum: contract.minTradeNum || '0.01',
           sizeMultiplier: contract.sizeMultiplier || '0.01',
           minTradeUSDT: contract.minTradeUSDT || '5',
           volumePlace: contract.volumePlace || '2',
           pricePlace: contract.pricePlace || '1',
         };
+        // Store in cache
+        contractInfoCache[cacheKey] = { data, timestamp: Date.now() };
+        console.log(`[Bitget] 📦 getContractInfo cache MISS para ${symbol} — cacheado por ${CONTRACT_CACHE_TTL / 1000}s`);
+        return data;
       } else {
         throw new Error('Failed to get contract info');
       }
@@ -547,7 +570,8 @@ export class BitgetService {
       userId: number;
       strategyId: number | null;
       orderId?: string;
-    }
+    },
+    knownCurrentPrice?: number
   ): Promise<any> {
     try {
       const holdSide = side === 'buy' ? 'long' : 'short';
@@ -564,19 +588,23 @@ export class BitgetService {
       console.log(`[Bitget] 📊 TP: ${takeProfitPrice} → ${formattedTP}`);
       console.log(`[Bitget] 📊 SL: ${stopLossPrice} → ${formattedSL}`);
       
-      // Obtener precio actual para validar TP
-      let currentPrice: number | null = null;
-      try {
-        const tickerPrice = await this.getTickerPrice(symbol, productType);
-        const parsedPrice = parseFloat(tickerPrice);
-        if (!isNaN(parsedPrice) && parsedPrice > 0) {
-          currentPrice = parsedPrice;
-          console.log(`[Bitget] 📊 Precio actual de ${symbol}: ${currentPrice}`);
-        } else {
-          console.error(`[Bitget] ❌ Precio inválido obtenido: "${tickerPrice}". Continuando sin validación de precio.`);
+      // Usar precio conocido si se proporcionó, sino obtener de Bitget (optimización: ahorra 1 API call)
+      let currentPrice: number | null = knownCurrentPrice || null;
+      if (!currentPrice) {
+        try {
+          const tickerPrice = await this.getTickerPrice(symbol, productType);
+          const parsedPrice = parseFloat(tickerPrice);
+          if (!isNaN(parsedPrice) && parsedPrice > 0) {
+            currentPrice = parsedPrice;
+            console.log(`[Bitget] 📊 Precio actual de ${symbol}: ${currentPrice}`);
+          } else {
+            console.error(`[Bitget] ❌ Precio inválido obtenido: "${tickerPrice}". Continuando sin validación de precio.`);
+          }
+        } catch (priceError: any) {
+          console.error(`[Bitget] ❌ Error al obtener precio actual: ${priceError.message}. Continuando sin validación de precio.`);
         }
-      } catch (priceError: any) {
-        console.error(`[Bitget] ❌ Error al obtener precio actual: ${priceError.message}. Continuando sin validación de precio.`);
+      } else {
+        console.log(`[Bitget] 📊 Usando precio conocido para validación: ${currentPrice} (sin llamada extra a Bitget)`);
       }
       
       // Generar clientOids únicos más cortos (solo timestamp + random, sin hrtime)
@@ -720,7 +748,8 @@ export class BitgetService {
       userId: number;
       strategyId: number | null;
       orderId?: string;
-    }
+    },
+    knownCurrentPrice?: number
   ): Promise<any> {
     try {
       const holdSide = side === 'buy' ? 'long' : 'short';
@@ -740,19 +769,23 @@ export class BitgetService {
       console.log(`[Bitget] 📊 SL: ${stopLossPrice} → ${formattedSL}`);
       console.log(`[Bitget] 📊 TP: ${takeProfitPrice} → ${formattedTP}`);
       
-      // Obtener precio actual para validar TP
-      let currentPrice: number | null = null;
-      try {
-        const tickerPrice = await this.getTickerPrice(symbol, productType);
-        const parsedPrice = parseFloat(tickerPrice);
-        if (!isNaN(parsedPrice) && parsedPrice > 0) {
-          currentPrice = parsedPrice;
-          console.log(`[Bitget] 📊 Precio actual de ${symbol}: ${currentPrice}`);
-        } else {
-          console.error(`[Bitget] ❌ Precio inválido obtenido: "${tickerPrice}". No se validará TP.`);
+      // Usar precio conocido si se proporcionó, sino obtener de Bitget (optimización: ahorra 1 API call)
+      let currentPrice: number | null = knownCurrentPrice || null;
+      if (!currentPrice) {
+        try {
+          const tickerPrice = await this.getTickerPrice(symbol, productType);
+          const parsedPrice = parseFloat(tickerPrice);
+          if (!isNaN(parsedPrice) && parsedPrice > 0) {
+            currentPrice = parsedPrice;
+            console.log(`[Bitget] 📊 Precio actual de ${symbol}: ${currentPrice}`);
+          } else {
+            console.error(`[Bitget] ❌ Precio inválido obtenido: "${tickerPrice}". No se validará TP.`);
+          }
+        } catch (priceError: any) {
+          console.error(`[Bitget] ❌ Error al obtener precio actual: ${priceError.message}. No se validará TP.`);
         }
-      } catch (priceError: any) {
-        console.error(`[Bitget] ❌ Error al obtener precio actual: ${priceError.message}. No se validará TP.`);
+      } else {
+        console.log(`[Bitget] 📊 Usando precio conocido para validación: ${currentPrice} (sin llamada extra a Bitget)`);
       }
       
       // Generar timestamp único
@@ -1033,43 +1066,41 @@ export class BitgetService {
       console.log(`[Bitget] 📋 Encontradas ${pendingOrders.length} órdenes trigger pendientes para cancelar`);
 
       const endpoint = '/api/v2/mix/order/cancel-plan-order';
-      let cancelled = 0;
-      let failed = 0;
 
-      // Cancelar cada orden individualmente
-      for (const order of pendingOrders) {
-        try {
+      // Cancelar todas las órdenes en PARALELO (optimización: antes era secuencial)
+      const results = await Promise.all(
+        pendingOrders.map(async (order) => {
           const orderId = order.orderId || order.id;
           if (!orderId) {
             console.warn(`[Bitget] ⚠️ Orden sin ID, omitiendo`);
-            failed++;
-            continue;
+            return false;
           }
+          try {
+            const payload = {
+              symbol: symbol.toUpperCase(),
+              productType: productType.toLowerCase(),
+              marginCoin: marginCoin.toUpperCase(),
+              orderId: orderId,
+            };
+            await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
+              userId: logContext.userId,
+              strategyId: logContext.strategyId,
+              symbol: symbol,
+              operationType: 'cancelTriggerOrder',
+              orderId: logContext.orderId,
+            } : undefined);
+            console.log(`[Bitget] ✅ Orden trigger ${orderId} (${order.planType || 'unknown'}) cancelada`);
+            return true;
+          } catch (cancelError: any) {
+            console.error(`[Bitget] ❌ Error al cancelar orden trigger ${orderId}: ${cancelError.message}`);
+            return false;
+          }
+        })
+      );
 
-          const payload = {
-            symbol: symbol.toUpperCase(),
-            productType: productType.toLowerCase(),
-            marginCoin: marginCoin.toUpperCase(),
-            orderId: orderId,
-          };
-
-          await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
-            userId: logContext.userId,
-            strategyId: logContext.strategyId,
-            symbol: symbol,
-            operationType: 'cancelTriggerOrder',
-            orderId: logContext.orderId,
-          } : undefined);
-
-          console.log(`[Bitget] ✅ Orden trigger ${orderId} (${order.planType || 'unknown'}) cancelada`);
-          cancelled++;
-        } catch (cancelError: any) {
-          console.error(`[Bitget] ❌ Error al cancelar orden trigger: ${cancelError.message}`);
-          failed++;
-        }
-      }
-
-      console.log(`[Bitget] 🗑️ Resultado: ${cancelled} canceladas, ${failed} fallidas de ${pendingOrders.length}`);
+      const cancelled = results.filter(r => r === true).length;
+      const failed = results.length - cancelled;
+      console.log(`[Bitget] 🗑️ Resultado: ${cancelled} canceladas, ${failed} fallidas de ${pendingOrders.length} (en paralelo)`);
       return { cancelled, failed };
     } catch (error: any) {
       console.error(`[Bitget] ❌ Error al cancelar órdenes trigger: ${error.message}`);

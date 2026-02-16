@@ -248,48 +248,46 @@ export class TradingService {
         console.log(`[TradeService] 📏 Tamaño solicitado: ${requestedSize}, Tamaño calculado: ${calculatedSize}`);
       }
       
-      // Configurar el apalancamiento ANTES de ejecutar la orden
-      // Esto es CRÍTICO: el leverage debe estar configurado antes de abrir la posición
+      // Configurar el apalancamiento Y verificar posiciones existentes EN PARALELO
+      // (Optimización: antes eran 2 llamadas secuenciales + 500ms delay = ~1.5s, ahora ~0.5s)
       const holdSide = alert.side === 'LONG' || alert.side === 'buy' ? 'long' : 'short';
       
-      try {
-        console.log(`[TradeService] 🔧 Configurando leverage a ${leverage}x para ${symbol} antes de abrir posición...`);
-        await this.bitgetService.setLeverage(
+      let existingPosition = null;
+      let actualPositionSize = calculatedSize;
+      let shouldOpenPosition = true;
+      let result: any = null;
+
+      console.log(`[TradeService] ⚡ Ejecutando setLeverage + getPositions en PARALELO para ${symbol}...`);
+      const [leverageResult, positionsResult] = await Promise.allSettled([
+        // Tarea 1: Configurar leverage
+        this.bitgetService.setLeverage(
           decryptedCredentials,
           symbol,
           leverage,
           productType,
           alert.marginCoin || 'USDT',
           holdSide,
-          {
-            userId,
-            strategyId,
-          }
-        );
-        console.log(`[TradeService] ✅ Apalancamiento configurado exitosamente a ${leverage}x para ${symbol}`);
-        
-        // Pequeña pausa para asegurar que el leverage se haya aplicado antes de continuar
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (leverageError: any) {
-        // NO continuar si falla la configuración del leverage - esto es crítico
-        console.error(`[TradeService] ❌ ERROR CRÍTICO: No se pudo configurar el apalancamiento a ${leverage}x: ${leverageError.message}`);
-        console.error(`[TradeService] Detalles del error:`, leverageError);
-        throw new Error(`No se pudo configurar el apalancamiento a ${leverage}x: ${leverageError.message}. La operación se ha cancelado para evitar usar un leverage incorrecto.`);
-      }
-      
-      // Verificar si ya existe una posición abierta para este símbolo
-      let existingPosition = null;
-      let actualPositionSize = calculatedSize;
-      let shouldOpenPosition = true;
-      
-      try {
-        console.log(`[TradeService] 🔍 Verificando si ya existe posición para ${symbol}...`);
-        const positions = await this.bitgetService.getPositions(
+          { userId, strategyId }
+        ),
+        // Tarea 2: Verificar posiciones existentes
+        this.bitgetService.getPositions(
           decryptedCredentials,
           symbol,
           productType
-        );
-        
+        ),
+      ]);
+
+      // Evaluar resultado de leverage (CRÍTICO - falla = abortar)
+      if (leverageResult.status === 'rejected') {
+        const leverageError = leverageResult.reason;
+        console.error(`[TradeService] ❌ ERROR CRÍTICO: No se pudo configurar el apalancamiento a ${leverage}x: ${leverageError.message}`);
+        throw new Error(`No se pudo configurar el apalancamiento a ${leverage}x: ${leverageError.message}. La operación se ha cancelado para evitar usar un leverage incorrecto.`);
+      }
+      console.log(`[TradeService] ✅ Apalancamiento configurado exitosamente a ${leverage}x para ${symbol}`);
+
+      // Evaluar resultado de getPositions (no crítico - si falla, simplemente abrimos)
+      if (positionsResult.status === 'fulfilled') {
+        const positions = positionsResult.value;
         if (positions && positions.length > 0) {
           const matchingPosition = positions.find((p: any) => 
             p.symbol === symbol && 
@@ -303,17 +301,14 @@ export class TradingService {
             shouldOpenPosition = false;
             console.log(`[TradeService] ⚠️ Ya existe una posición ${holdSide} para ${symbol} con tamaño ${actualPositionSize}. No se abrirá nueva posición.`);
             console.log(`[TradeService] 🎯 Se configurarán TP/SL para la posición existente.`);
-            // Usar el positionId de la posición existente como orderId para los logs
             if (matchingPosition.positionId || matchingPosition.id) {
               result = { orderId: matchingPosition.positionId || matchingPosition.id };
             }
           }
         }
-      } catch (checkError: any) {
-        console.warn(`[TradeService] ⚠️ No se pudo verificar posiciones existentes: ${checkError.message}. Se intentará abrir la posición.`);
+      } else {
+        console.warn(`[TradeService] ⚠️ No se pudo verificar posiciones existentes: ${positionsResult.reason?.message}. Se intentará abrir la posición.`);
       }
-      
-      let result: any = null;
       
       if (shouldOpenPosition) {
         // Generar clientOid único usando timestamp de alta precisión y número aleatorio
@@ -352,27 +347,10 @@ export class TradingService {
 
           console.log(`[TradeService] ✅ Orden ejecutada en Bitget. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
 
-          // Esperar un momento para que la posición se registre en Bitget
-          await new Promise(resolve => setTimeout(resolve, 1000));
-
-          // Obtener el tamaño real de la posición después de abrirla
-          try {
-            const positions = await this.bitgetService.getPositions(
-              decryptedCredentials,
-              symbol,
-              productType
-            );
-            
-            if (positions && positions.length > 0) {
-              const position = positions[0];
-              actualPositionSize = position.total || position.available || position.size || calculatedSize;
-              console.log(`[TradeService] 📊 Tamaño de posición obtenido: ${actualPositionSize} (solicitado: ${calculatedSize})`);
-            } else {
-              console.warn(`[TradeService] ⚠️ No se encontró posición abierta, usando tamaño calculado: ${calculatedSize}`);
-            }
-          } catch (positionError: any) {
-            console.warn(`[TradeService] ⚠️ No se pudo obtener el tamaño de la posición: ${positionError.message}. Usando tamaño calculado: ${calculatedSize}`);
-          }
+          // Optimización: usar calculatedSize directamente en lugar de hacer getPositions extra
+          // Para órdenes market, Bitget llena exactamente el tamaño solicitado
+          actualPositionSize = calculatedSize;
+          console.log(`[TradeService] 📊 Usando tamaño calculado como posición real: ${actualPositionSize} (sin llamada extra a getPositions)`);
         } catch (orderError: any) {
           console.error(`[TradeService] ❌ Error al ejecutar orden: ${orderError.message}`);
           
@@ -453,7 +431,8 @@ export class TradingService {
                 userId,
                 strategyId,
                 orderId: result?.orderId,
-              }
+              },
+              entryPrice ? parseFloat(entryPrice.toString()) : undefined // Optimización: evita getTickerPrice
             );
           } else {
             // Si no hay breakeven, usar el método básico (TP 100% en takeProfit)
@@ -473,7 +452,8 @@ export class TradingService {
                 userId,
                 strategyId,
                 orderId: result?.orderId,
-              }
+              },
+              entryPrice ? parseFloat(entryPrice.toString()) : undefined // Optimización: evita getTickerPrice
             );
           }
           
@@ -966,7 +946,8 @@ export class TradingService {
                   marginCoin,
                   remainingSizeStr,
                   contractInfo,
-                  logContext
+                  logContext,
+                  parseFloat(breakevenPrice.toString()) // Optimización: evita getTickerPrice
                 );
 
                 const slSuccess = Array.isArray(tpslResults) ? tpslResults.some((r: any) => r.type === 'stop_loss' && r.success) : false;
