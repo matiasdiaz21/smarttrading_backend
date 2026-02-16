@@ -603,20 +603,14 @@ export class UserController {
       }
 
       const { CredentialsModel } = await import('../models/Credentials');
-      const credentials = await CredentialsModel.findActiveByUserId(req.user.userId);
+      const credentialsList = await CredentialsModel.findAllActiveByUserId(req.user.userId);
 
-      if (!credentials) {
+      if (credentialsList.length === 0) {
         res.json([]);
         return;
       }
 
       const { BitgetService } = await import('../services/bitget.service');
-      const decryptedCredentials = BitgetService.getDecryptedCredentials({
-        api_key: credentials.api_key,
-        api_secret: credentials.api_secret,
-        passphrase: credentials.passphrase,
-      });
-
       const bitgetService = new BitgetService();
 
       const pageSize = parseInt(req.query.limit as string) || 100;
@@ -626,61 +620,63 @@ export class UserController {
         ? parseInt(req.query.startTime as string) 
         : endTime - (30 * 24 * 60 * 60 * 1000);
 
-      // Obtener historial de órdenes (incluye leverage)
-      const bitgetOrders = await bitgetService.getOrdersHistory(
-        decryptedCredentials,
-        productType,
-        pageSize,
-        startTime,
-        endTime
-      );
+      // Acumular órdenes y posiciones abiertas de todas las credenciales (varias cuentas Bitget)
+      const allBitgetOrders: Array<{ credentialId: number; order: any }> = [];
+      const allOpenPositionsByCredential: Array<{ credentialId: number; positions: any[] }> = [];
+      const allOrderIds: string[] = [];
 
-      // Obtener posiciones abiertas actuales (incluye leverage)
-      const openPositionsData = await bitgetService.getPositions(
-        decryptedCredentials,
-        undefined,
-        productType
-      );
+      for (const credentials of credentialsList) {
+        const decrypted = BitgetService.getDecryptedCredentials({
+          api_key: credentials.api_key,
+          api_secret: credentials.api_secret,
+          passphrase: credentials.passphrase,
+        });
+        const [bitgetOrders, openPositionsData] = await Promise.all([
+          bitgetService.getOrdersHistory(decrypted, productType, pageSize, startTime, endTime),
+          bitgetService.getPositions(decrypted, undefined, productType),
+        ]);
+        bitgetOrders.forEach((o: any) => {
+          allBitgetOrders.push({ credentialId: credentials.id, order: o });
+          const id = o.orderId;
+          if (id && id !== 'N/A') allOrderIds.push(id);
+        });
+        allOpenPositionsByCredential.push({
+          credentialId: credentials.id,
+          positions: openPositionsData || [],
+        });
+      }
 
+      // Identificar órdenes automáticas (tabla trades) para todas las cuentas
+      const tradeInfoMap = await TradeModel.findByBitgetOrderIds(req.user.userId, allOrderIds);
       console.log('[UserController] ===== POSITION DATA SUMMARY =====');
-      console.log('[UserController] Total órdenes:', bitgetOrders.length);
-      console.log('[UserController] Total posiciones abiertas:', openPositionsData?.length || 0);
+      console.log('[UserController] Credenciales:', credentialsList.length);
+      console.log('[UserController] Total órdenes:', allBitgetOrders.length);
+      console.log('[UserController] Órdenes automáticas (trades):', tradeInfoMap.size);
       console.log('[UserController] ================================');
 
-      // Identificar qué órdenes son automáticas (de estrategias) vs manuales
-      // Extraer todos los orderIds de las órdenes de Bitget
-      const allOrderIds = bitgetOrders
-        .map((o: any) => o.orderId)
-        .filter((id: string) => id && id !== 'N/A');
-      
-      // Buscar en la tabla trades para identificar cuáles son automáticas
-      const tradeInfoMap = await TradeModel.findByBitgetOrderIds(req.user.userId, allOrderIds);
-      console.log(`[UserController] 🔍 Identificadas ${tradeInfoMap.size} órdenes automáticas de ${allOrderIds.length} totales`);
-
-      // Agrupar órdenes cerradas por símbolo + posSide + proximidad temporal
+      // Agrupar órdenes cerradas por credencial + símbolo + posSide (no mezclar cuentas)
       const groupedOrders = new Map<string, any[]>();
-      
-      bitgetOrders.forEach((order: any) => {
-        const symbol = order.symbol?.toUpperCase();
-        const posSide = order.posSide?.toLowerCase();
-        const tradeSide = order.tradeSide?.toLowerCase();
-        const status = order.status?.toLowerCase();
-        
-        // Solo procesar órdenes completadas
+
+      allBitgetOrders.forEach(({ credentialId, order }) => {
+        const o = order;
+        const symbol = o.symbol?.toUpperCase();
+        const posSide = o.posSide?.toLowerCase();
+        const tradeSide = o.tradeSide?.toLowerCase();
+        const status = o.status?.toLowerCase();
         if (status !== 'filled') return;
-        
-        const key = `${symbol}_${posSide}`;
-        if (!groupedOrders.has(key)) {
-          groupedOrders.set(key, []);
-        }
-        groupedOrders.get(key)!.push(order);
+        const key = `${credentialId}_${symbol}_${posSide}`;
+        if (!groupedOrders.has(key)) groupedOrders.set(key, []);
+        groupedOrders.get(key)!.push(o);
       });
 
       // Crear posiciones cerradas agrupando órdenes de apertura y cierre
       const closedPositions: any[] = [];
       
       groupedOrders.forEach((orders, key) => {
-        const [symbol, posSide] = key.split('_');
+        const parts = key.split('_');
+        const credentialId = parts[0];
+        const posSide = parts[parts.length - 1];
+        const symbol = parts.length > 2 ? parts.slice(1, -1).join('_') : parts[1];
         
         // Separar órdenes de apertura y cierre
         const openOrders = orders.filter((o: any) => o.tradeSide?.toLowerCase() === 'open');
@@ -767,7 +763,7 @@ export class UserController {
             .find((info: any) => info !== undefined);
           
           closedPositions.push({
-            position_id: `${symbol}_${posSide}_${openTime}`,
+            position_id: `${credentialId}_${symbol}_${posSide}_${openTime}`,
             symbol: symbol,
             pos_side: holdSide,
             status: 'closed' as const,
@@ -808,87 +804,79 @@ export class UserController {
         });
       });
 
-      // Mapear posiciones abiertas actuales
-      // Para posiciones abiertas, buscamos en trades por símbolo y usuario
-      // Una posición es automática si tiene trades registrados para ese símbolo
+      // Mapear posiciones abiertas actuales (por cada credencial, asignar estrategia según suscripciones)
       const { StrategyModel } = await import('../models/Strategy');
       const userTrades = await TradeModel.findByUserId(req.user.userId, 1000);
-      const tradesBySymbol = new Map<string, { strategy_id: number; strategy_name?: string; latest_trade_at: Date }>();
-      
-      // Agrupar trades por símbolo (mantener el más reciente)
-      userTrades.forEach((trade) => {
-        const symbol = trade.symbol.toUpperCase();
-        const existing = tradesBySymbol.get(symbol);
-        const tradeDate = new Date(trade.executed_at);
-        
-        if (!existing || tradeDate > existing.latest_trade_at) {
-          tradesBySymbol.set(symbol, {
-            strategy_id: trade.strategy_id,
-            strategy_name: null, // Se cargará después
-            latest_trade_at: tradeDate,
-          });
+      const subscriptions = await SubscriptionModel.findByUserId(req.user.userId);
+      const strategyIdsByCredential = new Map<number, number[]>();
+      subscriptions.forEach((sub: any) => {
+        const cid = sub.credential_id;
+        if (cid) {
+          if (!strategyIdsByCredential.has(cid)) strategyIdsByCredential.set(cid, []);
+          strategyIdsByCredential.get(cid)!.push(sub.strategy_id);
         }
       });
-      
-      // Cargar nombres de estrategias
-      if (tradesBySymbol.size > 0) {
-        const strategyIds = Array.from(new Set(Array.from(tradesBySymbol.values()).map(t => t.strategy_id)));
-        const strategies = await StrategyModel.findAll(true);
-        const strategyMap = new Map(strategies.map(s => [s.id, s.name]));
-        
-        // Actualizar nombres de estrategias
-        tradesBySymbol.forEach((value, symbol) => {
-          value.strategy_name = strategyMap.get(value.strategy_id) || null;
+      const strategies = await StrategyModel.findAll(true);
+      const strategyNameMap = new Map(strategies.map((s: any) => [s.id, s.name]));
+
+      const openPositions: any[] = [];
+      for (const { credentialId, positions: openPositionsData } of allOpenPositionsByCredential) {
+        const strategyIdsForCred = strategyIdsByCredential.get(credentialId) || [];
+        const tradesBySymbol = new Map<string, { strategy_id: number; strategy_name?: string; latest_trade_at: Date }>();
+        userTrades
+          .filter((t: any) => strategyIdsForCred.includes(t.strategy_id))
+          .forEach((trade: any) => {
+            const symbol = trade.symbol.toUpperCase();
+            const tradeDate = new Date(trade.executed_at);
+            const existing = tradesBySymbol.get(symbol);
+            if (!existing || tradeDate > existing.latest_trade_at) {
+              tradesBySymbol.set(symbol, {
+                strategy_id: trade.strategy_id,
+                strategy_name: strategyNameMap.get(trade.strategy_id) || undefined,
+                latest_trade_at: tradeDate,
+              });
+            }
+          });
+
+        (openPositionsData || []).forEach((pos: any) => {
+          const openTime = pos.cTime ? parseInt(pos.cTime) : Date.now();
+          const updateTime = pos.uTime ? parseInt(pos.uTime) : (pos.cTime ? parseInt(pos.cTime) : Date.now());
+          const symbol = pos.symbol?.toUpperCase();
+          const posSide = pos.holdSide?.toLowerCase();
+          const positionSize = pos.total || pos.available || '0';
+          const openPrice = pos.openPriceAvg || pos.averageOpenPrice || pos.openAvgPrice || null;
+          const marginMode = pos.marginMode || pos.marginCoin || 'crossed';
+          const leverage = pos.leverage || '1';
+          const unrealizedPnl = parseFloat(pos.unrealizedPL || pos.upl || pos.pnl || '0');
+          const totalFees = Math.abs(parseFloat(pos.totalFee || pos.fee || '0'));
+          const netPnl = unrealizedPnl - totalFees;
+          const tradeInfo = tradesBySymbol.get(symbol);
+          const isAutomatic = !!tradeInfo;
+          openPositions.push({
+            position_id: pos.positionId || pos.posId || `${credentialId}_${pos.symbol}_${openTime}_open`,
+            symbol: symbol || 'N/A',
+            pos_side: posSide || 'net',
+            status: 'open' as const,
+            side: posSide === 'long' ? 'buy' : 'sell',
+            leverage: leverage,
+            margin_mode: marginMode,
+            open_price: openPrice,
+            close_price: null,
+            size: positionSize,
+            total_pnl: unrealizedPnl,
+            total_fees: totalFees,
+            net_pnl: netPnl,
+            opened_at: new Date(openTime).toISOString(),
+            closed_at: null,
+            latest_update: new Date(updateTime).toISOString(),
+            is_automatic: isAutomatic,
+            strategy_id: tradeInfo?.strategy_id ?? null,
+            strategy_name: tradeInfo?.strategy_name ?? null,
+            open_orders: [],
+            close_orders: [],
+          });
         });
       }
-      
-      const openPositions = (openPositionsData || []).map((pos: any) => {
-        const openTime = pos.cTime ? parseInt(pos.cTime) : Date.now();
-        const updateTime = pos.uTime ? parseInt(pos.uTime) : (pos.cTime ? parseInt(pos.cTime) : Date.now());
-        const symbol = pos.symbol?.toUpperCase();
-        const posSide = pos.holdSide?.toLowerCase();
-        
-        // Extraer datos de posición abierta
-        const positionSize = pos.total || pos.available || '0';
-        const openPrice = pos.openPriceAvg || pos.averageOpenPrice || pos.openAvgPrice || null;
-        const marginMode = pos.marginMode || pos.marginCoin || 'crossed';
-        const leverage = pos.leverage || '1';
-        
-        // PnL no realizado
-        const unrealizedPnl = parseFloat(pos.unrealizedPL || pos.upl || pos.pnl || '0');
-        const totalFees = Math.abs(parseFloat(pos.totalFee || pos.fee || '0'));
-        const netPnl = unrealizedPnl - totalFees;
-        
-        // Verificar si esta posición es automática (tiene trades registrados para este símbolo)
-        const tradeInfo = tradesBySymbol.get(symbol);
-        const isAutomatic = !!tradeInfo;
-        
-        console.log(`[UserController] ✓ OPEN ${symbol} ${posSide}: size=${positionSize}, open=${openPrice}, leverage=${leverage}x, unrealizedPnL=${unrealizedPnl}, fees=${totalFees}, automatic=${isAutomatic}`);
-        
-        return {
-          position_id: pos.positionId || pos.posId || `${pos.symbol}_${openTime}_open`,
-          symbol: symbol || 'N/A',
-          pos_side: posSide || 'net',
-          status: 'open' as const,
-          side: posSide === 'long' ? 'buy' : 'sell',
-          leverage: leverage,
-          margin_mode: marginMode,
-          open_price: openPrice,
-          close_price: null,
-          size: positionSize,
-          total_pnl: unrealizedPnl,
-          total_fees: totalFees,
-          net_pnl: netPnl,
-          opened_at: new Date(openTime).toISOString(),
-          closed_at: null,
-          latest_update: new Date(updateTime).toISOString(),
-          is_automatic: isAutomatic,
-          strategy_id: tradeInfo?.strategy_id || null,
-          strategy_name: tradeInfo?.strategy_name || null,
-          open_orders: [],
-          close_orders: [],
-        };
-      });
 
       // Combinar posiciones abiertas y cerradas
       const allPositions = [...closedPositions, ...openPositions];

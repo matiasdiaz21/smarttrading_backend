@@ -90,5 +90,14 @@ export class CredentialsModel {
     const credentials = rows as UserBitgetCredentials[];
     return credentials[0] || null;
   }
+
+  /** Todas las credenciales activas del usuario (para agrupar posiciones de todas las cuentas). */
+  static async findAllActiveByUserId(userId: number): Promise<UserBitgetCredentials[]> {
+    const [rows] = await pool.execute(
+      'SELECT * FROM user_bitget_credentials WHERE user_id = ? AND is_active = true ORDER BY id ASC',
+      [userId]
+    );
+    return (rows as UserBitgetCredentials[]) || [];
+  }
 }
 
