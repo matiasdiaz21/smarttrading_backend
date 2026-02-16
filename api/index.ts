@@ -42,7 +42,7 @@ import { NOWPaymentsController } from '../src/controllers/nowpayments.controller
 import { AdminController } from '../src/controllers/admin.controller';
 import { StatsController } from '../src/controllers/stats.controller';
 import { SettingsController } from '../src/controllers/settings.controller';
-import { TermsAndConditionsController } from '../src/controllers/termsAndConditions.controller';
+
 import { NotificationsController } from '../src/controllers/notifications.controller';
 import { MassTradeController } from '../src/controllers/massTrade.controller';
 import { authenticate, requireAdmin } from '../src/middleware/auth';
@@ -153,8 +153,6 @@ app.get('/api/public/stats', StatsController.getPublicStats);
 // Settings (público: solo free_trial para el frontend)
 app.get('/api/settings', SettingsController.getPublic);
 
-// Terms and Conditions routes (público para obtener activos)
-app.get('/api/public/terms-and-conditions', TermsAndConditionsController.getActive);
 
 // Auth routes
 app.post('/api/auth/register', authLimiter, AuthController.register);
@@ -254,13 +252,6 @@ app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats
 app.get('/api/admin/settings', authenticate, requireAdmin, SettingsController.getAdmin);
 app.put('/api/admin/settings', authenticate, requireAdmin, SettingsController.updateAdmin);
 
-// Terms and Conditions admin routes
-app.get('/api/admin/terms-and-conditions', authenticate, requireAdmin, TermsAndConditionsController.getAll);
-app.get('/api/admin/terms-and-conditions/:id', authenticate, requireAdmin, TermsAndConditionsController.getById);
-app.post('/api/admin/terms-and-conditions', authenticate, requireAdmin, TermsAndConditionsController.create);
-app.put('/api/admin/terms-and-conditions/:id', authenticate, requireAdmin, TermsAndConditionsController.update);
-app.post('/api/admin/terms-and-conditions/:id/activate', authenticate, requireAdmin, TermsAndConditionsController.setActive);
-app.delete('/api/admin/terms-and-conditions/:id', authenticate, requireAdmin, TermsAndConditionsController.delete);
 
 // Error handler
 app.use((err: any, req: Request, res: Response, next: any) => {
