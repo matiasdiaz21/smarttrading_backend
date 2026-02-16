@@ -668,28 +668,35 @@ export class BitgetService {
       
       // Ejecutar órdenes en PARALELO (solo las válidas)
       console.log(`[Bitget] 📋 Ejecutando TP y SL simultáneamente...`);
-      console.log(`[Bitget]   - TP en ${takeProfitPrice} (${isValidTP ? 'válido' : 'podría fallar'})`);
+      console.log(`[Bitget]   - TP en ${takeProfitPrice} (${isValidTP ? 'válido' : 'OMITIDO - inválido'})`);
       console.log(`[Bitget]   - SL en ${stopLossPrice} (${isValidSL ? 'válido' : 'OMITIDO - inválido'})`);
       
       const promises: Promise<any>[] = [];
       
-      // SIEMPRE agregar TP
-      promises.push(
-        this.makeRequest('POST', endpoint, credentials, tpPayload, logContext ? {
-          userId: logContext.userId,
-          strategyId: logContext.strategyId,
-          symbol: symbol,
-          operationType: 'setTakeProfit',
-          orderId: logContext.orderId,
-          clientOid: tpPayload.clientOid,
-        } : undefined).then(result => {
-          console.log(`[Bitget] ✅ Take Profit configurado exitosamente`);
-          return { type: 'take_profit', result, success: true };
-        }).catch(error => {
-          console.error(`[Bitget] ❌ Error en Take Profit: ${error.message}`);
-          return { type: 'take_profit', error: error.message, success: false };
-        })
-      );
+      // Agregar TP solo si es válido
+      if (isValidTP) {
+        promises.push(
+          this.makeRequest('POST', endpoint, credentials, tpPayload, logContext ? {
+            userId: logContext.userId,
+            strategyId: logContext.strategyId,
+            symbol: symbol,
+            operationType: 'setTakeProfit',
+            orderId: logContext.orderId,
+            clientOid: tpPayload.clientOid,
+          } : undefined).then(result => {
+            console.log(`[Bitget] ✅ Take Profit configurado exitosamente`);
+            return { type: 'take_profit', result, success: true };
+          }).catch(error => {
+            console.error(`[Bitget] ❌ Error en Take Profit: ${error.message}`);
+            return { type: 'take_profit', error: error.message, success: false };
+          })
+        );
+      } else {
+        // TP omitido - agregar resultado sintético de fallo
+        promises.push(
+          Promise.resolve({ type: 'take_profit', error: `TP (${formattedTP}) inválido para ${holdSide} con precio ${currentPrice}`, success: false, skipped: true })
+        );
+      }
       
       // Agregar SL solo si es válido
       if (isValidSL) {
@@ -831,27 +838,30 @@ export class BitgetService {
         isValidTP = (holdSide === 'long' && formattedTP > currentPrice) ||
                      (holdSide === 'short' && formattedTP < currentPrice);
         if (!isValidTP) {
-          console.warn(`[Bitget] ⚠️ ADVERTENCIA: Take Profit (${formattedTP}) podría no ser válido para posición ${holdSide} con precio actual ${currentPrice}. Se configurará de todas formas.`);
+          console.warn(`[Bitget] ⚠️ ADVERTENCIA: Take Profit (${formattedTP}) no es válido para posición ${holdSide} con precio actual ${currentPrice}. Se omitirá TP.`);
         }
       } else {
         console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se configurará TP sin validación.`);
       }
       
-      const tpRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-      const tpClientOid = `TP_F_${symbol.substring(0, 8)}_${baseId}_${tpRandom}`.substring(0, 64);
-      const tpPayload: any = {
-        marginCoin: marginCoin.toUpperCase(),
-        productType: productType.toLowerCase(),
-        symbol: symbol.toUpperCase(),
-        planType: 'pos_profit',
-        triggerPrice: formattedTP.toString(),
-        triggerType: 'fill_price',
-        executePrice: formattedTP.toString(),
-        holdSide,
-        size: positionSize,
-        clientOid: tpClientOid,
-      };
-      orders.push({ type: 'take_profit_final', payload: tpPayload, description: `TP 100% (${positionSize}) en ${formattedTP}` });
+      // Solo agregar TP si es válido o si no se pudo validar (currentPrice null)
+      if (isValidTP || currentPrice === null) {
+        const tpRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+        const tpClientOid = `TP_F_${symbol.substring(0, 8)}_${baseId}_${tpRandom}`.substring(0, 64);
+        const tpPayload: any = {
+          marginCoin: marginCoin.toUpperCase(),
+          productType: productType.toLowerCase(),
+          symbol: symbol.toUpperCase(),
+          planType: 'pos_profit',
+          triggerPrice: formattedTP.toString(),
+          triggerType: 'fill_price',
+          executePrice: formattedTP.toString(),
+          holdSide,
+          size: positionSize,
+          clientOid: tpClientOid,
+        };
+        orders.push({ type: 'take_profit_final', payload: tpPayload, description: `TP 100% (${positionSize}) en ${formattedTP}` });
+      }
 
       // Ejecutar ambas órdenes en PARALELO
       console.log(`[Bitget] 📋 Ejecutando ${orders.length} órdenes TP/SL simultáneamente...`);

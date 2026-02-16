@@ -898,6 +898,33 @@ export class TradingService {
         }
 
         // PASO 3: Crear nuevos SL (al precio de entrada) + TP (al precio final) para el 50% restante
+        // Verificar nuevamente si la posición sigue abierta (puede haber sido cerrada por trigger entre paso 2 y 3)
+        if (!positionGone) {
+          try {
+            const freshPositions = await this.bitgetService.getPositions(
+              decryptedCredentials,
+              symbol,
+              productType
+            );
+            if (!freshPositions || freshPositions.length === 0) {
+              console.warn(`[BREAKEVEN] ⚠️ La posición de ${symbol} fue cerrada entre paso 2 y paso 3 (por trigger o manualmente). Marcando como positionGone.`);
+              positionGone = true;
+            } else {
+              // Actualizar remainingSize con el tamaño real de la posición
+              const freshSize = parseFloat(freshPositions[0].total || freshPositions[0].available || '0');
+              if (freshSize <= 0) {
+                console.warn(`[BREAKEVEN] ⚠️ Posición de ${symbol} tiene tamaño 0. Marcando como positionGone.`);
+                positionGone = true;
+              } else if (freshSize !== remainingSize) {
+                console.log(`[BREAKEVEN] 📊 Tamaño de posición actualizado: ${remainingSize} → ${freshSize}`);
+                remainingSize = freshSize;
+              }
+            }
+          } catch (checkError: any) {
+            console.warn(`[BREAKEVEN] ⚠️ Error al verificar posición antes de paso 3: ${checkError.message}. Continuando con datos previos.`);
+          }
+        }
+
         if (positionGone) {
           // La posición ya no existe — no intentar crear SL/TP porque fallarían
           console.warn(`[BREAKEVEN] ⚠️ Paso 3 omitido: la posición de ${symbol} ya no existe. No se crearán nuevos SL+TP.`);
