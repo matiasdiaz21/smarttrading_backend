@@ -874,12 +874,15 @@ export class TradingService {
 
         // PASO 3: Crear nuevos SL (al precio de entrada) + TP (al precio final) para el 50% restante
         try {
-          const newStopLoss = alert.entryPrice || breakevenPrice;
+          // Usar el precio de entrada ORIGINAL guardado en la tabla trades
+          const originalEntryPrice = trade.entry_price ? parseFloat(trade.entry_price.toString()) : null;
+          const newStopLoss = originalEntryPrice || alert.entryPrice || breakevenPrice;
           const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
           const formattedStopLoss = parseFloat(newStopLoss.toFixed(pricePlace));
           
           console.log(`[BREAKEVEN] 📊 Paso 3: Creando nuevos SL+TP para posición restante...`);
-          console.log(`[BREAKEVEN]   Nuevo SL: ${formattedStopLoss} (precio de entrada)`);
+          console.log(`[BREAKEVEN]   Precio de entrada original: ${originalEntryPrice}`);
+          console.log(`[BREAKEVEN]   Nuevo SL: ${formattedStopLoss} (movido a breakeven/entrada)`);
 
           if (remainingSize > 0) {
             // Obtener tamaño restante como string con precisión correcta

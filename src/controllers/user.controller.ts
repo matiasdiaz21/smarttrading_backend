@@ -648,6 +648,10 @@ export class UserController {
 
       // Identificar órdenes automáticas (tabla trades) para todas las cuentas
       const tradeInfoMap = await TradeModel.findByBitgetOrderIds(req.user.userId, allOrderIds);
+      const subscriptionsList = await SubscriptionModel.findByUserId(req.user.userId);
+      const enabledStrategyIds = new Set(
+        subscriptionsList.filter((s: any) => s.is_enabled).map((s: any) => s.strategy_id)
+      );
       console.log('[UserController] ===== POSITION DATA SUMMARY =====');
       console.log('[UserController] Credenciales:', credentialsList.length);
       console.log('[UserController] Total órdenes:', allBitgetOrders.length);
@@ -782,6 +786,7 @@ export class UserController {
             is_automatic: isAutomatic,
             strategy_id: tradeInfo?.strategy_id || null,
             strategy_name: tradeInfo?.strategy_name || null,
+            subscription_is_enabled: tradeInfo?.strategy_id != null ? enabledStrategyIds.has(tradeInfo.strategy_id) : null,
             open_orders: groupOpenOrders.map((o: any) => ({
               order_id: o.orderId,
               size: o.baseVolume || o.size || '0',
@@ -807,9 +812,8 @@ export class UserController {
       // Mapear posiciones abiertas actuales (por cada credencial, asignar estrategia según suscripciones)
       const { StrategyModel } = await import('../models/Strategy');
       const userTrades = await TradeModel.findByUserId(req.user.userId, 1000);
-      const subscriptions = await SubscriptionModel.findByUserId(req.user.userId);
       const strategyIdsByCredential = new Map<number, number[]>();
-      subscriptions.forEach((sub: any) => {
+      subscriptionsList.forEach((sub: any) => {
         const cid = sub.credential_id;
         if (cid) {
           if (!strategyIdsByCredential.has(cid)) strategyIdsByCredential.set(cid, []);
@@ -872,6 +876,7 @@ export class UserController {
             is_automatic: isAutomatic,
             strategy_id: tradeInfo?.strategy_id ?? null,
             strategy_name: tradeInfo?.strategy_name ?? null,
+            subscription_is_enabled: tradeInfo?.strategy_id != null ? enabledStrategyIds.has(tradeInfo.strategy_id) : null,
             open_orders: [],
             close_orders: [],
           });
