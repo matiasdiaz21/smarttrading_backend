@@ -8,6 +8,8 @@ import { UserModel } from '../models/User';
 import { WebhookLogModel } from '../models/WebhookLog';
 import { RiskAcceptanceModel } from '../models/RiskAcceptance';
 import { isStrategyFreeAndActive } from '../utils/strategyUtils';
+import { AppSettingsModel } from '../models/AppSettings';
+import { userHasActiveFreeTrial } from '../utils/freeTrialUtils';
 
 export class UserController {
   static async getStrategies(req: AuthRequest, res: Response): Promise<void> {
@@ -114,11 +116,14 @@ export class UserController {
         return;
       }
 
-      // Si no es admin, requiere suscripción de pago activa o que la estrategia sea gratuita y vigente
+      // Si no es admin, requiere: pago activo, o estrategia gratuita vigente, o prueba gratuita para usuarios nuevos
       if (req.user.role !== 'admin') {
         const activePayment = await PaymentSubscriptionModel.findActiveByUserId(req.user.userId);
         const freeAndActive = isStrategyFreeAndActive(strategy as any);
-        if (!activePayment && !freeAndActive) {
+        const appSettings = await AppSettingsModel.get();
+        const fullUser = await UserModel.findById(req.user.userId);
+        const hasFreeTrial = fullUser ? userHasActiveFreeTrial(fullUser, appSettings) : false;
+        if (!activePayment && !freeAndActive && !hasFreeTrial) {
           const freeUntil = (strategy as any).free_until;
           if ((strategy as any).is_free && freeUntil) {
             return res.status(403).json({ error: 'El período gratuito de esta estrategia ha expirado. Suscríbete al plan de pago para continuar.' });

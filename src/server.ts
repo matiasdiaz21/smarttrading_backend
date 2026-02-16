@@ -26,6 +26,7 @@ import { NOWPaymentsCredentialsController } from './controllers/nowpaymentsCrede
 import { NOWPaymentsController } from './controllers/nowpayments.controller';
 import { AdminController } from './controllers/admin.controller';
 import { StatsController } from './controllers/stats.controller';
+import { SettingsController } from './controllers/settings.controller';
 import { NotificationsController } from './controllers/notifications.controller';
 import { MassTradeController } from './controllers/massTrade.controller';
 import { authenticate, requireAdmin } from './middleware/auth';
@@ -61,6 +62,7 @@ app.use('/api', (req, res, next) => {
 });
 
 // Health check
+app.get('/api/settings', SettingsController.getPublic);
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -163,6 +165,8 @@ app.get('/api/admin/bitget-operation-logs', AdminController.getBitgetOperationLo
 app.post('/api/admin/bitget-operation-logs/:id/review', AdminController.markLogAsReviewed);
 app.post('/api/admin/bitget-operation-logs/:id/unreview', AdminController.markLogAsUnreviewed);
 app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats);
+app.get('/api/admin/settings', authenticate, requireAdmin, SettingsController.getAdmin);
+app.put('/api/admin/settings', authenticate, requireAdmin, SettingsController.updateAdmin);
 
 // Error handler
 app.use((err: any, req: Request, res: Response, next: any) => {

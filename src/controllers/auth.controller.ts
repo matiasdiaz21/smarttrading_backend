@@ -111,6 +111,7 @@ export class AuthController {
         role: user.role,
         subscription_status: user.subscription_status,
         subscription_expires_at: user.subscription_expires_at,
+        created_at: user.created_at,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

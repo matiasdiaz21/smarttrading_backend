@@ -9,7 +9,9 @@ import { TradingViewAlert } from '../types';
 import { decrypt } from '../utils/encryption';
 import OrderErrorModel from '../models/orderError.model';
 import { StrategyModel } from '../models/Strategy';
+import { AppSettingsModel } from '../models/AppSettings';
 import { isStrategyFreeAndActive } from '../utils/strategyUtils';
+import { userHasActiveFreeTrial } from '../utils/freeTrialUtils';
 
 export class TradingService {
   private bitgetService: BitgetService;
@@ -33,17 +35,21 @@ export class TradingService {
         return { success: false, error: 'User not found' };
       }
 
-      // Verificar que el usuario tenga suscripción de pago activa o que la estrategia sea gratuita y vigente (excepto admin)
+      // Verificar: pago activo, o estrategia gratuita vigente, o prueba gratuita para usuarios nuevos (excepto admin)
       if (user.role !== 'admin') {
         const activePayment = await PaymentSubscriptionModel.findActiveByUserId(userId);
         const strategy = await StrategyModel.findById(strategyId);
         const freeAndActive = strategy ? isStrategyFreeAndActive(strategy as any) : false;
-        if (!activePayment && !freeAndActive) {
-          console.warn(`[TradeService] ⚠️ Usuario ${userId} no tiene suscripción de pago activa ni estrategia gratuita vigente`);
+        const appSettings = await AppSettingsModel.get();
+        const hasFreeTrial = userHasActiveFreeTrial(user, appSettings);
+        if (!activePayment && !freeAndActive && !hasFreeTrial) {
+          console.warn(`[TradeService] ⚠️ Usuario ${userId} no tiene suscripción de pago, ni estrategia gratuita vigente, ni prueba activa`);
           return { success: false, error: 'User does not have an active payment subscription' };
         }
         if (activePayment) {
           console.log(`[TradeService] ✅ Usuario ${userId} tiene suscripción de pago activa`);
+        } else if (hasFreeTrial) {
+          console.log(`[TradeService] ✅ Usuario ${userId} está en período de prueba gratuita`);
         } else {
           console.log(`[TradeService] ✅ Estrategia ${strategyId} es gratuita y vigente para usuario ${userId}`);
         }
