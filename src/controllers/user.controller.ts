@@ -1100,9 +1100,16 @@ export class UserController {
       const activeSubscription =
         await PaymentSubscriptionModel.findActiveByUserId(req.user.userId);
 
+      // Check free trial status
+      const fullUser = await UserModel.findById(req.user.userId);
+      const appSettings = await AppSettingsModel.get();
+      const hasFreeTrial = fullUser ? userHasActiveFreeTrial(fullUser, appSettings) : false;
+
       res.json({
         has_active_subscription: !!activeSubscription,
         subscription: activeSubscription,
+        has_free_trial: hasFreeTrial,
+        subscription_status: activeSubscription ? 'active' : (hasFreeTrial ? 'free_trial' : 'inactive'),
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

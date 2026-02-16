@@ -34,6 +34,9 @@ export class AuthController {
         role: 'user',
       });
 
+      // Fetch the newly created user to get all fields (created_at, subscription_status, etc.)
+      const newUser = await UserModel.findById(userId);
+
       res.status(201).json({
         message: 'User created successfully',
         token,
@@ -41,6 +44,9 @@ export class AuthController {
           id: userId,
           email,
           role: 'user',
+          subscription_status: newUser?.subscription_status || null,
+          subscription_expires_at: newUser?.subscription_expires_at || null,
+          created_at: newUser?.created_at || new Date().toISOString(),
         },
       });
     } catch (error: any) {
@@ -85,6 +91,8 @@ export class AuthController {
           email: user.email,
           role: user.role,
           subscription_status: user.subscription_status,
+          subscription_expires_at: user.subscription_expires_at,
+          created_at: user.created_at,
         },
       });
     } catch (error: any) {
