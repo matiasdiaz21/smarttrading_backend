@@ -116,7 +116,7 @@ export class UserController {
         return;
       }
 
-      // Si no es admin, requiere: pago activo, o estrategia gratuita vigente, o prueba gratuita para usuarios nuevos
+      // Si no es admin: permite si tiene pago activo, o estrategia gratuita vigente, o prueba gratuita GLOBAL (usuarios nuevos X días; sobrescribe configuración de estrategias)
       if (req.user.role !== 'admin') {
         const activePayment = await PaymentSubscriptionModel.findActiveByUserId(req.user.userId);
         const freeAndActive = isStrategyFreeAndActive(strategy as any);

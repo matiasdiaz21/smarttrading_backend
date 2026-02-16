@@ -6,6 +6,8 @@ import { BitgetService } from '../services/bitget.service';
 import { decrypt } from '../utils/encryption';
 import { PaymentSubscriptionModel } from '../models/PaymentSubscription';
 import { UserModel } from '../models/User';
+import { AppSettingsModel } from '../models/AppSettings';
+import { userHasActiveFreeTrial } from '../utils/freeTrialUtils';
 
 const MAX_SYMBOLS = 20;
 
@@ -171,13 +173,15 @@ export class MassTradeController {
     try {
       if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
 
-      // Verificar suscripción activa (excepto administradores)
+      // Verificar acceso: admin, suscripción de pago activa o prueba gratuita global (usuarios nuevos X días)
       const user = await UserModel.findById(req.user.userId);
       if (!user) { res.status(401).json({ error: 'Usuario no encontrado' }); return; }
       if (user.role !== 'admin') {
         const activeSubscription = await PaymentSubscriptionModel.findActiveByUserId(req.user.userId);
-        if (!activeSubscription) {
-          res.status(403).json({ error: 'Se requiere una suscripción activa para ejecutar trading masivo' });
+        const appSettings = await AppSettingsModel.get();
+        const hasFreeTrial = userHasActiveFreeTrial(user, appSettings);
+        if (!activeSubscription && !hasFreeTrial) {
+          res.status(403).json({ error: 'Se requiere una suscripción activa o estar en período de prueba para ejecutar trading masivo' });
           return;
         }
       }
@@ -433,13 +437,15 @@ export class MassTradeController {
     try {
       if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
 
-      // Verificar suscripción activa (excepto administradores)
+      // Verificar acceso: admin, suscripción de pago activa o prueba gratuita global (usuarios nuevos X días)
       const user = await UserModel.findById(req.user.userId);
       if (!user) { res.status(401).json({ error: 'Usuario no encontrado' }); return; }
       if (user.role !== 'admin') {
         const activeSubscription = await PaymentSubscriptionModel.findActiveByUserId(req.user.userId);
-        if (!activeSubscription) {
-          res.status(403).json({ error: 'Se requiere una suscripción activa para ejecutar trading masivo' });
+        const appSettings = await AppSettingsModel.get();
+        const hasFreeTrial = userHasActiveFreeTrial(user, appSettings);
+        if (!activeSubscription && !hasFreeTrial) {
+          res.status(403).json({ error: 'Se requiere una suscripción activa o estar en período de prueba para cerrar posiciones' });
           return;
         }
       }

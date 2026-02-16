@@ -35,7 +35,7 @@ export class TradingService {
         return { success: false, error: 'User not found' };
       }
 
-      // Verificar: pago activo, o estrategia gratuita vigente, o prueba gratuita para usuarios nuevos (excepto admin)
+      // Verificar: pago activo, o estrategia gratuita vigente, o prueba gratuita GLOBAL (usuarios nuevos X días; sobrescribe configuración de estrategia) (excepto admin)
       if (user.role !== 'admin') {
         const activePayment = await PaymentSubscriptionModel.findActiveByUserId(userId);
         const strategy = await StrategyModel.findById(strategyId);
