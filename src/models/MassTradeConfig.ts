@@ -134,14 +134,15 @@ export class MassTradeConfigModel {
   }
 
   static async getExecutions(userId: number, limit: number = 20): Promise<MassTradeExecution[]> {
+    const limitInt = Math.max(1, Math.min(100, parseInt(String(limit), 10) || 20));
     const [rows] = await pool.execute(
       `SELECT e.*, c.name as config_name 
        FROM mass_trade_executions e 
        LEFT JOIN mass_trade_configs c ON e.config_id = c.id 
        WHERE e.user_id = ? 
        ORDER BY e.executed_at DESC 
-       LIMIT ?`,
-      [userId, limit]
+       LIMIT ${limitInt}`,
+      [userId]
     );
     return (rows as any[]).map(row => ({
       ...row,
