@@ -558,7 +558,6 @@ export class BitgetService {
       };
       
       // Validar que TP sea mayor que el precio actual para long, o menor para short
-      // SIEMPRE configurar el TP, solo mostrar advertencia si parece inválido
       let isValidTP = true;
       if (currentPrice !== null) {
         isValidTP = (holdSide === 'long' && formattedTP > currentPrice) ||
@@ -570,11 +569,22 @@ export class BitgetService {
       } else {
         console.warn(`[Bitget] ⚠️ No se pudo obtener precio actual. Se configurará TP sin validación.`);
       }
+
+      // Validar que SL sea menor que el precio actual para long, o mayor para short
+      let isValidSL = true;
+      if (currentPrice !== null) {
+        isValidSL = (holdSide === 'long' && formattedSL < currentPrice) ||
+                     (holdSide === 'short' && formattedSL > currentPrice);
+        
+        if (!isValidSL) {
+          console.warn(`[Bitget] ⚠️ Stop Loss (${formattedSL}) no es válido para ${holdSide} con precio actual ${currentPrice}. Para ${holdSide}, SL debe ser ${holdSide === 'long' ? 'menor' : 'mayor'} que el precio actual. Se omitirá SL.`);
+        }
+      }
       
-      // Ejecutar órdenes en PARALELO
+      // Ejecutar órdenes en PARALELO (solo las válidas)
       console.log(`[Bitget] 📋 Ejecutando TP y SL simultáneamente...`);
-      console.log(`[Bitget]   - TP en ${takeProfitPrice}`);
-      console.log(`[Bitget]   - SL en ${stopLossPrice}`);
+      console.log(`[Bitget]   - TP en ${takeProfitPrice} (${isValidTP ? 'válido' : 'podría fallar'})`);
+      console.log(`[Bitget]   - SL en ${stopLossPrice} (${isValidSL ? 'válido' : 'OMITIDO - inválido'})`);
       
       const promises: Promise<any>[] = [];
       
@@ -596,23 +606,30 @@ export class BitgetService {
         })
       );
       
-      // Siempre agregar SL
-      promises.push(
-        this.makeRequest('POST', endpoint, credentials, slPayload, logContext ? {
-          userId: logContext.userId,
-          strategyId: logContext.strategyId,
-          symbol: symbol,
-          operationType: 'setStopLoss',
-          orderId: logContext.orderId,
-          clientOid: slPayload.clientOid,
-        } : undefined).then(result => {
-          console.log(`[Bitget] ✅ Stop Loss configurado exitosamente`);
-          return { type: 'stop_loss', result, success: true };
-        }).catch(error => {
-          console.error(`[Bitget] ❌ Error en Stop Loss: ${error.message}`);
-          return { type: 'stop_loss', error: error.message, success: false };
-        })
-      );
+      // Agregar SL solo si es válido
+      if (isValidSL) {
+        promises.push(
+          this.makeRequest('POST', endpoint, credentials, slPayload, logContext ? {
+            userId: logContext.userId,
+            strategyId: logContext.strategyId,
+            symbol: symbol,
+            operationType: 'setStopLoss',
+            orderId: logContext.orderId,
+            clientOid: slPayload.clientOid,
+          } : undefined).then(result => {
+            console.log(`[Bitget] ✅ Stop Loss configurado exitosamente`);
+            return { type: 'stop_loss', result, success: true };
+          }).catch(error => {
+            console.error(`[Bitget] ❌ Error en Stop Loss: ${error.message}`);
+            return { type: 'stop_loss', error: error.message, success: false };
+          })
+        );
+      } else {
+        // SL omitido - agregar resultado sintético de fallo
+        promises.push(
+          Promise.resolve({ type: 'stop_loss', error: `SL (${formattedSL}) inválido para ${holdSide} con precio ${currentPrice}`, success: false, skipped: true })
+        );
+      }
       
       const results = await Promise.all(promises);
       const tpResult = results[0];
@@ -688,22 +705,34 @@ export class BitgetService {
       // Preparar órdenes: SL (100%) + TP (100%)
       const orders: Array<{type: string; payload: any; description: string}> = [];
       
-      // 1. Stop Loss (cierra toda la posición)
-      const slRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-      const slClientOid = `SL_${symbol.substring(0, 8)}_${baseId}_${slRandom}`.substring(0, 64);
-      const slPayload: any = {
-        marginCoin: marginCoin.toUpperCase(),
-        productType: productType.toLowerCase(),
-        symbol: symbol.toUpperCase(),
-        planType: 'pos_loss',
-        triggerPrice: formattedSL.toString(),
-        triggerType: 'fill_price',
-        executePrice: formattedSL.toString(),
-        holdSide,
-        size: positionSize,
-        clientOid: slClientOid,
-      };
-      orders.push({ type: 'stop_loss', payload: slPayload, description: `SL 100% (${positionSize}) en ${formattedSL}` });
+      // Validar SL contra precio actual
+      let isValidSL = true;
+      if (currentPrice !== null) {
+        isValidSL = (holdSide === 'long' && formattedSL < currentPrice) ||
+                     (holdSide === 'short' && formattedSL > currentPrice);
+        if (!isValidSL) {
+          console.warn(`[Bitget] ⚠️ Stop Loss (${formattedSL}) no es válido para ${holdSide} con precio actual ${currentPrice}. Se omitirá SL.`);
+        }
+      }
+
+      // 1. Stop Loss (cierra toda la posición) - solo si es válido
+      if (isValidSL) {
+        const slRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+        const slClientOid = `SL_${symbol.substring(0, 8)}_${baseId}_${slRandom}`.substring(0, 64);
+        const slPayload: any = {
+          marginCoin: marginCoin.toUpperCase(),
+          productType: productType.toLowerCase(),
+          symbol: symbol.toUpperCase(),
+          planType: 'pos_loss',
+          triggerPrice: formattedSL.toString(),
+          triggerType: 'fill_price',
+          executePrice: formattedSL.toString(),
+          holdSide,
+          size: positionSize,
+          clientOid: slClientOid,
+        };
+        orders.push({ type: 'stop_loss', payload: slPayload, description: `SL 100% (${positionSize}) en ${formattedSL}` });
+      }
 
       // 2. Take Profit final (100% de la posición al precio de TP)
       // Validar que TP sea mayor que el precio actual para long, o menor para short
@@ -800,20 +829,28 @@ export class BitgetService {
       console.log(`[BitgetService] 📊 Precisión de precio: ${pricePlace} decimales`);
       console.log(`[BitgetService] 📊 Stop Loss: ${stopLossPrice} → ${formattedStopLoss}`);
 
-      // Obtener precio actual para validar take profit si se proporciona
+      // Obtener precio actual para validar SL y TP
       let currentPrice: number | null = null;
-      if (takeProfitPrice) {
-        try {
-          const tickerPrice = await this.getTickerPrice(symbol, productType);
-          const parsedPrice = parseFloat(tickerPrice);
-          if (!isNaN(parsedPrice) && parsedPrice > 0) {
-            currentPrice = parsedPrice;
-            console.log(`[BitgetService] 📊 Precio actual de ${symbol}: ${currentPrice}`);
-          } else {
-            console.error(`[BitgetService] ❌ Precio inválido obtenido: "${tickerPrice}". No se validará TP.`);
-          }
-        } catch (priceError: any) {
-          console.error(`[BitgetService] ❌ Error al obtener precio actual: ${priceError.message}. No se validará TP.`);
+      try {
+        const tickerPrice = await this.getTickerPrice(symbol, productType);
+        const parsedPrice = parseFloat(tickerPrice);
+        if (!isNaN(parsedPrice) && parsedPrice > 0) {
+          currentPrice = parsedPrice;
+          console.log(`[BitgetService] 📊 Precio actual de ${symbol}: ${currentPrice}`);
+        } else {
+          console.error(`[BitgetService] ❌ Precio inválido obtenido: "${tickerPrice}".`);
+        }
+      } catch (priceError: any) {
+        console.error(`[BitgetService] ❌ Error al obtener precio actual: ${priceError.message}`);
+      }
+
+      // Validar SL contra precio actual
+      let isValidSL = true;
+      if (currentPrice !== null) {
+        isValidSL = (holdSide === 'long' && formattedStopLoss < currentPrice) ||
+                     (holdSide === 'short' && formattedStopLoss > currentPrice);
+        if (!isValidSL) {
+          console.warn(`[BitgetService] ⚠️ Stop Loss (${formattedStopLoss}) no es válido para ${holdSide} con precio actual ${currentPrice}. Para ${holdSide}, SL debe ser ${holdSide === 'long' ? 'menor' : 'mayor'} que el precio actual. Se omitirá SL del payload.`);
         }
       }
 
@@ -824,20 +861,21 @@ export class BitgetService {
         productType: productType.toLowerCase(), // Bitget requiere lowercase
         symbol,
         holdSide,
-        stopLossTriggerPrice: formattedStopLoss.toString(),
-        stopLossTriggerType: 'fill_price', // Usar fill_price para activación precisa
-        stopLossExecutePrice: formattedStopLoss.toString(), // Precio de ejecución igual al trigger
       };
+
+      // Incluir SL solo si es válido
+      if (isValidSL) {
+        payload.stopLossTriggerPrice = formattedStopLoss.toString();
+        payload.stopLossTriggerType = 'fill_price';
+        payload.stopLossExecutePrice = formattedStopLoss.toString();
+        console.log(`[BitgetService] ✅ Stop Loss incluido: ${formattedStopLoss}`);
+      }
 
       // Si hay take profit, validarlo y incluirlo solo si es válido
       if (takeProfitPrice) {
         const formattedTakeProfit = parseFloat(takeProfitPrice.toFixed(pricePlace));
         console.log(`[BitgetService] 📊 Take Profit: ${takeProfitPrice} → ${formattedTakeProfit}`);
         
-        // Validar que TP sea correcto según el tipo de posición
-        // Para LONG: TP debe ser > precio actual
-        // Para SHORT: TP debe ser < precio actual
-        // Solo incluir TP si se pudo validar correctamente
         let isValidTP = false;
         if (currentPrice !== null) {
           isValidTP = (holdSide === 'long' && formattedTakeProfit > currentPrice) ||
@@ -856,6 +894,17 @@ export class BitgetService {
           payload.stopSurplusExecutePrice = formattedTakeProfit.toString();
           console.log(`[BitgetService] ✅ Take Profit incluido en la modificación: ${formattedTakeProfit}`);
         }
+      }
+
+      // Verificar que haya algo que enviar
+      const hasSL = !!payload.stopLossTriggerPrice;
+      const hasTP = !!payload.stopSurplusTriggerPrice;
+      if (!hasSL && !hasTP) {
+        console.warn(`[BitgetService] ⚠️ Ni SL ni TP son válidos para ${holdSide} con precio actual ${currentPrice}. No se enviará la solicitud.`);
+        return { skipped: true, reason: `SL (${formattedStopLoss}) y TP no son válidos para ${holdSide} con precio ${currentPrice}` };
+      }
+      if (!hasSL) {
+        console.warn(`[BitgetService] ⚠️ Enviando solo TP (SL omitido por precio inválido)`);
       }
 
       return await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {

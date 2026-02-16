@@ -29,12 +29,17 @@ export class TradeModel {
   static async findByTradeIdAndUser(
     userId: number,
     strategyId: number,
-    tradeId: number | string
+    tradeId: number | string,
+    symbol?: string
   ): Promise<Trade | null> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM trades WHERE user_id = ? AND strategy_id = ? AND trade_id = ? AND status IN (?, ?) ORDER BY executed_at DESC LIMIT 1',
-      [userId, strategyId, tradeId, 'pending', 'filled']
-    );
+    let query = 'SELECT * FROM trades WHERE user_id = ? AND strategy_id = ? AND trade_id = ? AND status IN (?, ?)';
+    const params: any[] = [userId, strategyId, tradeId, 'pending', 'filled'];
+    if (symbol) {
+      query += ' AND symbol = ?';
+      params.push(symbol);
+    }
+    query += ' ORDER BY executed_at DESC LIMIT 1';
+    const [rows] = await pool.execute(query, params);
     const trades = rows as Trade[];
     return trades[0] || null;
   }
@@ -111,19 +116,23 @@ export class TradeModel {
   static async hasEntryForTradeId(
     userId: number,
     strategyId: number,
-    tradeId: number | string
+    tradeId: number | string,
+    symbol?: string
   ): Promise<boolean> {
-    const [rows] = await pool.execute(
-      `SELECT COUNT(*) as count 
+    let query = `SELECT COUNT(*) as count 
        FROM trades 
        WHERE user_id = ? 
          AND strategy_id = ? 
          AND trade_id = ? 
          AND alert_type = 'ENTRY' 
-         AND status IN ('pending', 'filled')
-       LIMIT 1`,
-      [userId, strategyId, tradeId]
-    );
+         AND status IN ('pending', 'filled')`;
+    const params: any[] = [userId, strategyId, tradeId];
+    if (symbol) {
+      query += ` AND symbol = ?`;
+      params.push(symbol);
+    }
+    query += ` LIMIT 1`;
+    const [rows] = await pool.execute(query, params);
     const result = rows as any[];
     return result[0]?.count > 0;
   }

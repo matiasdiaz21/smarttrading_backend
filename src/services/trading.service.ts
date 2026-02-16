@@ -689,14 +689,26 @@ export class TradingService {
           continue;
         }
 
-        // Verificar si existe un ENTRY previo para este trade_id (preferido) o símbolo
+        // Normalizar símbolo (remover .P si existe) para buscar en DB
+        const dbSymbol = alert.symbol.replace(/\.P$/, '');
+
+        // Verificar si existe un ENTRY previo para este trade_id + símbolo (preferido)
         let hasEntry = false;
         if (alert.trade_id) {
           hasEntry = await TradeModel.hasEntryForTradeId(
             subscription.user_id,
             strategyId,
-            alert.trade_id
+            alert.trade_id,
+            dbSymbol
           );
+          // Fallback sin símbolo por compatibilidad
+          if (!hasEntry) {
+            hasEntry = await TradeModel.hasEntryForTradeId(
+              subscription.user_id,
+              strategyId,
+              alert.trade_id
+            );
+          }
         }
         
         // Si no se encontró por trade_id, verificar por símbolo
@@ -704,25 +716,32 @@ export class TradingService {
           hasEntry = await TradeModel.hasEntryForSymbol(
             subscription.user_id,
             strategyId,
-            alert.symbol
+            dbSymbol
           );
         }
 
         if (!hasEntry) {
-          console.warn(`[BREAKEVEN] No se encontró ENTRY previo para usuario ${subscription.user_id}, strategy ${strategyId}, symbol ${alert.symbol}, trade_id ${alert.trade_id || 'N/A'}. La alerta BREAKEVEN será ignorada.`);
+          console.warn(`[BREAKEVEN] No se encontró ENTRY previo para usuario ${subscription.user_id}, strategy ${strategyId}, symbol ${dbSymbol}, trade_id ${alert.trade_id || 'N/A'}. La alerta BREAKEVEN será ignorada.`);
           failed++;
           continue;
         }
 
-        // Buscar el trade abierto correspondiente a este trade_id
+        // Buscar el trade abierto correspondiente a este trade_id + símbolo
         const trade = await TradeModel.findByTradeIdAndUser(
+          subscription.user_id,
+          strategyId,
+          alert.trade_id!,
+          dbSymbol
+        );
+        // Fallback sin símbolo por compatibilidad
+        const tradeFinal = trade || await TradeModel.findByTradeIdAndUser(
           subscription.user_id,
           strategyId,
           alert.trade_id!
         );
 
-        if (!trade) {
-          console.warn(`[BREAKEVEN] Trade no encontrado para usuario ${subscription.user_id}, strategy ${strategyId}, trade_id ${alert.trade_id}`);
+        if (!tradeFinal) {
+          console.warn(`[BREAKEVEN] Trade no encontrado para usuario ${subscription.user_id}, strategy ${strategyId}, trade_id ${alert.trade_id}, symbol ${dbSymbol}`);
           failed++;
           continue;
         }
@@ -782,7 +801,7 @@ export class TradingService {
         const logContext = {
           userId: subscription.user_id,
           strategyId: strategyId,
-          orderId: trade.bitget_order_id || undefined,
+          orderId: tradeFinal.bitget_order_id || undefined,
         };
 
         // PASO 1: Cancelar TODAS las órdenes trigger existentes (SL 100% + TP 100% originales)
@@ -831,8 +850,8 @@ export class TradingService {
                 const volumePlace = contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 2;
                 const halfSizeStr = halfSize.toFixed(volumePlace).replace(/\.?0+$/, '');
                 
-                const holdSide = position.holdSide || (trade.side === 'buy' ? 'long' : 'short');
-                const closeSide: 'buy' | 'sell' = trade.side === 'buy' ? 'sell' : 'buy';
+                const holdSide = position.holdSide || (tradeFinal.side === 'buy' ? 'long' : 'short');
+                const closeSide: 'buy' | 'sell' = tradeFinal.side === 'buy' ? 'sell' : 'buy';
 
                 console.log(`[BREAKEVEN] Cerrando 50%: ${halfSizeStr} contratos de ${currentSize} total`);
 
@@ -875,7 +894,7 @@ export class TradingService {
         // PASO 3: Crear nuevos SL (al precio de entrada) + TP (al precio final) para el 50% restante
         try {
           // Usar el precio de entrada ORIGINAL guardado en la tabla trades
-          const originalEntryPrice = trade.entry_price ? parseFloat(trade.entry_price.toString()) : null;
+          const originalEntryPrice = tradeFinal.entry_price ? parseFloat(tradeFinal.entry_price.toString()) : null;
           const newStopLoss = originalEntryPrice || alert.entryPrice || breakevenPrice;
           const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
           const formattedStopLoss = parseFloat(newStopLoss.toFixed(pricePlace));
@@ -890,10 +909,10 @@ export class TradingService {
             const remainingSizeStr = remainingSize.toFixed(volumePlace).replace(/\.?0+$/, '');
 
             // Determinar holdSide y side para las nuevas órdenes
-            const bitgetSide: 'buy' | 'sell' = trade.side === 'buy' ? 'buy' : 'sell';
+            const bitgetSide: 'buy' | 'sell' = tradeFinal.side === 'buy' ? 'buy' : 'sell';
 
             // Crear nuevos SL + TP usando setPositionTPSL (para el 50% restante)
-            const takeProfitPrice = trade.take_profit ? parseFloat(trade.take_profit.toString()) : (alert.takeProfit || 0);
+            const takeProfitPrice = tradeFinal.take_profit ? parseFloat(tradeFinal.take_profit.toString()) : (alert.takeProfit || 0);
             
             if (takeProfitPrice > 0) {
               console.log(`[BREAKEVEN]   Nuevo TP: ${takeProfitPrice} para ${remainingSizeStr} contratos`);
@@ -933,8 +952,8 @@ export class TradingService {
             // Si no pudimos cerrar 50% (posición muy pequeña), al menos mover el SL
             console.log(`[BREAKEVEN] ⚠️ Sin posición restante calculada, moviendo SL con modifyPositionStopLoss`);
             let formattedTakeProfit: number | undefined;
-            if (trade.take_profit) {
-              formattedTakeProfit = parseFloat(parseFloat(trade.take_profit.toString()).toFixed(pricePlace));
+            if (tradeFinal.take_profit) {
+              formattedTakeProfit = parseFloat(parseFloat(tradeFinal.take_profit.toString()).toFixed(pricePlace));
             }
             await this.bitgetService.modifyPositionStopLoss(
               decryptedCredentials,
@@ -950,7 +969,7 @@ export class TradingService {
           }
 
           // Actualizar stop loss en base de datos
-          await TradeModel.updateStopLoss(trade.id, newStopLoss);
+          await TradeModel.updateStopLoss(tradeFinal.id, newStopLoss);
           console.log(`[BREAKEVEN] ✅ Stop loss actualizado en DB a ${newStopLoss}`);
         } catch (slError: any) {
           console.error(`[BREAKEVEN] ❌ Error al crear nuevos SL+TP: ${slError.message}`);
@@ -999,14 +1018,24 @@ export class TradingService {
     // Procesar cada suscripción
     for (const subscription of subscriptions) {
       try {
-        // Verificar si existe un ENTRY previo para este trade_id (preferido) o símbolo
+        // Verificar si existe un ENTRY previo para este trade_id + símbolo (preferido)
+        const dbSymbolSLTP = alert.symbol ? alert.symbol.replace(/\.P$/, '') : alert.symbol;
         let hasEntry = false;
         if (alert.trade_id) {
           hasEntry = await TradeModel.hasEntryForTradeId(
             subscription.user_id,
             strategyId,
-            alert.trade_id
+            alert.trade_id,
+            dbSymbolSLTP
           );
+          // Fallback sin símbolo por compatibilidad
+          if (!hasEntry) {
+            hasEntry = await TradeModel.hasEntryForTradeId(
+              subscription.user_id,
+              strategyId,
+              alert.trade_id
+            );
+          }
         }
         
         // Si no se encontró por trade_id, verificar por símbolo
@@ -1014,12 +1043,12 @@ export class TradingService {
           hasEntry = await TradeModel.hasEntryForSymbol(
             subscription.user_id,
             strategyId,
-            alert.symbol
+            dbSymbolSLTP
           );
         }
 
         if (!hasEntry) {
-          console.warn(`[${alert.alertType}] No se encontró ENTRY previo para usuario ${subscription.user_id}, strategy ${strategyId}, symbol ${alert.symbol}, trade_id ${alert.trade_id || 'N/A'}. La alerta será ignorada.`);
+          console.warn(`[${alert.alertType}] No se encontró ENTRY previo para usuario ${subscription.user_id}, strategy ${strategyId}, symbol ${dbSymbolSLTP}, trade_id ${alert.trade_id || 'N/A'}. La alerta será ignorada.`);
           failed++;
           processed++;
           continue;
