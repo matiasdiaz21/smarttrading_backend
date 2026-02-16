@@ -42,6 +42,7 @@ import { NOWPaymentsController } from '../src/controllers/nowpayments.controller
 import { AdminController } from '../src/controllers/admin.controller';
 import { StatsController } from '../src/controllers/stats.controller';
 import { SettingsController } from '../src/controllers/settings.controller';
+import { AiController } from '../src/controllers/ai.controller';
 
 import { NotificationsController } from '../src/controllers/notifications.controller';
 import { MassTradeController } from '../src/controllers/massTrade.controller';
@@ -252,6 +253,24 @@ app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats
 app.get('/api/admin/settings', authenticate, requireAdmin, SettingsController.getAdmin);
 app.put('/api/admin/settings', authenticate, requireAdmin, SettingsController.updateAdmin);
 app.put('/api/admin/settings/stats-strategies', authenticate, requireAdmin, SettingsController.updateStatsStrategies);
+
+// AI Trading routes (user)
+app.get('/api/ai/config', authenticate, AiController.getPublicConfig);
+app.get('/api/ai/predictions', authenticate, AiController.getPredictions);
+app.get('/api/ai/predictions/:id', authenticate, AiController.getPredictionById);
+app.get('/api/ai/stats', authenticate, AiController.getStats);
+app.get('/api/ai/assets', authenticate, AiController.getAssets);
+
+// AI Trading routes (admin)
+app.get('/api/admin/ai/config', authenticate, requireAdmin, AiController.getConfig);
+app.put('/api/admin/ai/config', authenticate, requireAdmin, AiController.updateConfig);
+app.post('/api/admin/ai/analyze', authenticate, requireAdmin, AiController.triggerAnalysis);
+app.get('/api/admin/ai/assets', authenticate, requireAdmin, AiController.getAdminAssets);
+app.post('/api/admin/ai/assets', authenticate, requireAdmin, AiController.addAsset);
+app.put('/api/admin/ai/assets/:id/toggle', authenticate, requireAdmin, AiController.toggleAsset);
+app.delete('/api/admin/ai/assets/:id', authenticate, requireAdmin, AiController.deleteAsset);
+app.put('/api/admin/ai/predictions/:id/resolve', authenticate, requireAdmin, AiController.resolvePrediction);
+app.post('/api/admin/ai/check-results', authenticate, requireAdmin, AiController.forceCheckResults);
 
 
 // Error handler
