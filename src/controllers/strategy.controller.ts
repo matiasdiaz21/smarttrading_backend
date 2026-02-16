@@ -53,7 +53,7 @@ export class StrategyController {
         return;
       }
 
-      const { name, description, warnings, leverage, allowed_symbols } = req.body;
+      const { name, description, warnings, leverage, allowed_symbols, category } = req.body;
 
       if (!name) {
         res.status(400).json({ error: 'Name is required' });
@@ -65,6 +65,7 @@ export class StrategyController {
       const allowedSymbols = Array.isArray(allowed_symbols)
         ? allowed_symbols.filter((s: any) => typeof s === 'string' && s.trim()).map((s: string) => s.trim().toUpperCase())
         : null;
+      const categoryValue = typeof category === 'string' && category.trim() ? category.trim() : 'crypto';
 
       const strategyId = await StrategyModel.create(
         name,
@@ -73,7 +74,8 @@ export class StrategyController {
         webhookSecret,
         req.user.userId,
         leverageValue,
-        allowedSymbols?.length ? allowedSymbols : null
+        allowedSymbols?.length ? allowedSymbols : null,
+        categoryValue
       );
 
       const strategy = await StrategyModel.findById(strategyId);
@@ -92,7 +94,7 @@ export class StrategyController {
       }
 
       const { id } = req.params;
-      const { name, description, warnings, is_active, leverage, allowed_symbols } = req.body;
+      const { name, description, warnings, is_active, leverage, allowed_symbols, category } = req.body;
 
       const strategy = await StrategyModel.findById(parseInt(id));
       if (!strategy) {
@@ -110,6 +112,9 @@ export class StrategyController {
             ? allowed_symbols.filter((s: any) => typeof s === 'string' && s.trim()).map((s: string) => s.trim().toUpperCase())
             : null)
         : undefined;
+      const categoryValue = category !== undefined
+        ? (typeof category === 'string' && category.trim() ? category.trim() : null)
+        : undefined;
 
       await StrategyModel.update(
         parseInt(id),
@@ -118,7 +123,8 @@ export class StrategyController {
         warnings,
         is_active !== undefined ? Boolean(is_active) : undefined,
         leverageValue,
-        allowedSymbols
+        allowedSymbols,
+        categoryValue
       );
 
       const updated = await StrategyModel.findById(parseInt(id));

@@ -20,6 +20,8 @@ export interface Strategy {
   leverage: number;
   /** Símbolos permitidos (ej. ["BTCUSDT","ETHUSDT"]). Null o vacío = todos permitidos. */
   allowed_symbols: string[] | null;
+  /** Categoría de la estrategia: crypto, forex, indices, commodities, otros. */
+  category: string | null;
   created_by: number;
   created_at: Date;
 }
