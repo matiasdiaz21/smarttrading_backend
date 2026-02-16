@@ -244,12 +244,12 @@ export class StatsController {
       });
     });
 
-    // Ordenar por winrate del símbolo (mayor primero) y luego por fecha más reciente
+    // Ordenar por fecha más reciente primero (últimas mejores operaciones de cualquier estrategia/símbolo)
     return bestTrades.sort((a, b) => {
-      if (b.winrate !== a.winrate) {
-        return b.winrate - a.winrate;
-      }
-      return new Date(b.processedAt).getTime() - new Date(a.processedAt).getTime();
+      const timeA = new Date(a.processedAt).getTime();
+      const timeB = new Date(b.processedAt).getTime();
+      if (timeB !== timeA) return timeB - timeA;
+      return b.winrate - a.winrate;
     });
   }
 }
