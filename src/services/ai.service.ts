@@ -250,6 +250,76 @@ async function fetchCurrentPrice(symbol: string, productType: string = 'USDT-FUT
   }
 }
 
+// ===================== Cross-Asset Context =====================
+
+interface CrossAssetContext {
+  btcPrice: number;
+  btcChange24h: number;       // % change
+  btcRsi: number;
+  btcTrend: string;           // 'bullish' | 'bearish' | 'neutral'
+  btcMacdHistogram: number;
+  riskSentiment: string;      // 'risk-on' | 'risk-off' | 'neutral'
+  usdStrengthProxy: string;   // derived from BTC inverse: BTC up = USD weak
+}
+
+/**
+ * Fetch BTC data to derive cross-market context:
+ * - BTC price & trend → risk sentiment (risk-on/risk-off)
+ * - BTC inverse → rough USD strength proxy
+ * Used for commodities (gold inversely correlated with USD) and forex.
+ */
+async function fetchCrossAssetContext(): Promise<CrossAssetContext | null> {
+  try {
+    const [btcCandles, btcPrice] = await Promise.all([
+      fetchCandles('BTCUSDT', '4H', 42, 'USDT-FUTURES'),
+      fetchCurrentPrice('BTCUSDT', 'USDT-FUTURES'),
+    ]);
+
+    const btcCloses = btcCandles.map(c => c.close);
+    const btcRsi = calculateRSI(btcCloses);
+    const btcMacd = calculateMACD(btcCloses);
+    const btcEmas = getEMASummary(btcCloses);
+
+    // 24h change from 4H candles (last 6 candles = 24h)
+    const last6 = btcCandles.slice(-6);
+    const btcChange24h = last6.length > 0
+      ? ((btcPrice - last6[0].open) / last6[0].open) * 100
+      : 0;
+
+    // Trend from EMAs
+    let btcTrend: string = 'neutral';
+    if (btcPrice > btcEmas.ema21 && btcEmas.ema9 > btcEmas.ema21) btcTrend = 'bullish';
+    else if (btcPrice < btcEmas.ema21 && btcEmas.ema9 < btcEmas.ema21) btcTrend = 'bearish';
+
+    // Risk sentiment: BTC bullish + RSI healthy = risk-on; BTC bearish = risk-off
+    let riskSentiment: string = 'neutral';
+    if (btcTrend === 'bullish' && btcRsi > 45 && btcMacd.histogram > 0) riskSentiment = 'risk-on';
+    else if (btcTrend === 'bearish' && btcRsi < 45 && btcMacd.histogram < 0) riskSentiment = 'risk-off';
+
+    // USD proxy: BTC up strongly = weaker USD; BTC down = stronger USD (rough)
+    let usdStrengthProxy: string = 'neutral';
+    if (btcChange24h > 2 && btcTrend === 'bullish') usdStrengthProxy = 'débil (BTC alcista, flujos hacia riesgo)';
+    else if (btcChange24h < -2 && btcTrend === 'bearish') usdStrengthProxy = 'fuerte (BTC bajista, flujos hacia refugio/USD)';
+    else if (btcChange24h > 0.5) usdStrengthProxy = 'ligeramente débil';
+    else if (btcChange24h < -0.5) usdStrengthProxy = 'ligeramente fuerte';
+
+    console.log(`[AI Service] 🌐 Cross-asset: BTC=${btcPrice} (${btcChange24h.toFixed(2)}%), RSI=${btcRsi.toFixed(1)}, Trend=${btcTrend}, Risk=${riskSentiment}, USD=${usdStrengthProxy}`);
+
+    return {
+      btcPrice,
+      btcChange24h: Math.round(btcChange24h * 100) / 100,
+      btcRsi: Math.round(btcRsi * 100) / 100,
+      btcTrend,
+      btcMacdHistogram: btcMacd.histogram,
+      riskSentiment,
+      usdStrengthProxy,
+    };
+  } catch (error: any) {
+    console.warn(`[AI Service] ⚠️ No se pudo obtener contexto cross-asset: ${error.message}`);
+    return null;
+  }
+}
+
 // ===================== Format data for prompt =====================
 
 function formatCandlesForPrompt(candles: Candle[], maxRows: number = 30): string {
@@ -264,7 +334,8 @@ function formatCandlesForPrompt(candles: Candle[], maxRows: number = 30): string
   return lines.join('\n');
 }
 
-function buildAutoPrompt(data: {
+/** Shared technical data used by all prompt builders */
+interface PromptData {
   symbol: string;
   currentPrice: number;
   candles1h: Candle[];
@@ -281,12 +352,12 @@ function buildAutoPrompt(data: {
   ema4h: { ema9: number; ema21: number; ema50: number };
   structure1h: string;
   structure4h: string;
-}): string {
-  const { symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h, atr1h, atr4h, bb1h, bb4h, ema1h, ema4h, structure1h, structure4h } = data;
+  crossAsset?: CrossAssetContext | null;
+}
 
-  // Price change calculations
+/** Shared helper: 24h stats from 1H candles */
+function get24hStats(candles1h: Candle[], currentPrice: number) {
   const last1h = candles1h.slice(-24);
-  const last4h = candles4h.slice(-6);
   const priceChange24h = last1h.length > 0
     ? ((currentPrice - last1h[0].open) / last1h[0].open * 100).toFixed(2)
     : '0';
@@ -297,45 +368,230 @@ function buildAutoPrompt(data: {
     : 0;
   const lastVolume = last1h.length > 0 ? Math.round(last1h[last1h.length - 1].volume) : 0;
   const volRatio = avgVolume1h > 0 ? (lastVolume / avgVolume1h).toFixed(2) : '1.00';
+  return { priceChange24h, high24h, low24h, avgVolume1h, lastVolume, volRatio };
+}
 
-  return `Analyze ${symbol} for a futures trading opportunity.
+/** Shared: technical indicators block */
+function formatTechnicalBlock(d: PromptData): string {
+  return `## Indicadores Técnicos
+- RSI(14) 1H: ${d.rsi1h.toFixed(2)} | 4H: ${d.rsi4h.toFixed(2)}
+- MACD 1H: Line=${d.macd1h.macd}, Signal=${d.macd1h.signal}, Histogram=${d.macd1h.histogram}
+- MACD 4H: Line=${d.macd4h.macd}, Signal=${d.macd4h.signal}, Histogram=${d.macd4h.histogram}
+- ATR(14) 1H: ${d.atr1h} | 4H: ${d.atr4h}
+- Bollinger(20,2) 1H: Mid=${d.bb1h.middle}, Upper=${d.bb1h.upper}, Lower=${d.bb1h.lower}, %B=${d.bb1h.percentB}
+- Bollinger(20,2) 4H: Mid=${d.bb4h.middle}, Upper=${d.bb4h.upper}, Lower=${d.bb4h.lower}, %B=${d.bb4h.percentB}
+- EMA 1H: 9=${d.ema1h.ema9}, 21=${d.ema1h.ema21}, 50=${d.ema1h.ema50}
+- EMA 4H: 9=${d.ema4h.ema9}, 21=${d.ema4h.ema21}, 50=${d.ema4h.ema50}
+- Estructura 1H: ${d.structure1h}
+- Estructura 4H: ${d.structure4h}`;
+}
 
-CURRENT STATE:
-- Symbol: ${symbol}
-- Current Price: ${currentPrice}
-- 24h Change: ${priceChange24h}%
-- 24h High: ${high24h}
-- 24h Low: ${low24h}
-- Last 1H Volume: ${lastVolume} (${volRatio}x average)
-
-TECHNICAL INDICATORS:
-- RSI (14) 1H: ${rsi1h.toFixed(2)} | 4H: ${rsi4h.toFixed(2)}
-- MACD 1H: Line=${macd1h.macd}, Signal=${macd1h.signal}, Histogram=${macd1h.histogram}
-- MACD 4H: Line=${macd4h.macd}, Signal=${macd4h.signal}, Histogram=${macd4h.histogram}
-- ATR (14) 1H: ${atr1h} | 4H: ${atr4h} (usar para SL/TP en múltiplos de ATR)
-- Bollinger (20,2) 1H: Middle=${bb1h.middle}, Upper=${bb1h.upper}, Lower=${bb1h.lower}, %B=${bb1h.percentB}
-- Bollinger (20,2) 4H: Middle=${bb4h.middle}, Upper=${bb4h.upper}, Lower=${bb4h.lower}, %B=${bb4h.percentB}
-- EMA 1H: EMA9=${ema1h.ema9}, EMA21=${ema1h.ema21}, EMA50=${ema1h.ema50}
-- EMA 4H: EMA9=${ema4h.ema9}, EMA21=${ema4h.ema21}, EMA50=${ema4h.ema50}
-- Estructura 1H: ${structure1h}
-- Estructura 4H: ${structure4h}
-
-RECENT 1H CANDLES (last 25):
-${formatCandlesForPrompt(candles1h, 25)}
-
-RECENT 4H CANDLES (last 20):
-${formatCandlesForPrompt(candles4h, 20)}
-
-Based on all the data above, provide your trading recommendation. You MUST respond ONLY with a valid JSON object in this exact format:
+/** JSON response format instruction (shared) */
+const JSON_RESPONSE_FORMAT = `Responde ÚNICAMENTE con JSON válido:
 {
-  "side": "LONG" or "SHORT",
-  "entry_price": <number - recommended entry price>,
-  "stop_loss": <number - stop loss price>,
-  "take_profit": <number - take profit price>,
-  "confidence": <number 0-100 - your confidence level>,
-  "timeframe": "1h" or "4h",
-  "reasoning": "<string - brief explanation of your analysis>"
-}`;
+  "side": "LONG" o "SHORT",
+  "entry_price": número,
+  "stop_loss": número,
+  "take_profit": número,
+  "confidence": número 0-100,
+  "timeframe": "1h" o "4h",
+  "reasoning": "explicación técnica breve incluyendo confluencia, indicadores clave y ATR para SL/TP"
+}
+Si no hay confluencia clara entre timeframes o indicadores, usa confidence < 30.`;
+
+// ===================== CRYPTO Prompt Builder =====================
+
+function buildCryptoPrompt(data: PromptData): string {
+  const stats = get24hStats(data.candles1h, data.currentPrice);
+
+  return `## Análisis técnico: ${data.symbol} (Criptomoneda)
+
+## Estado actual
+- Precio: ${data.currentPrice}
+- Cambio 24h: ${stats.priceChange24h}%
+- Rango 24h: ${stats.low24h} — ${stats.high24h}
+- Volumen última 1H: ${stats.lastVolume} (${stats.volRatio}x promedio)
+
+${formatTechnicalBlock(data)}
+
+## Velas 1H (últimas 25):
+${formatCandlesForPrompt(data.candles1h, 25)}
+
+## Velas 4H (últimas 20):
+${formatCandlesForPrompt(data.candles4h, 20)}
+
+## Instrucciones de análisis (CRYPTO)
+1. Confluencia obligatoria: RSI, MACD histograma y estructura de precio deben alinearse en 1H y 4H.
+2. RSI >70 en ambos TF = sobrecompra (SHORT); RSI <30 = sobreventa (LONG).
+3. MACD: histograma positivo creciente = momentum alcista; negativo decreciente = bajista.
+4. Bollinger %B >1 = sobrecompra; %B <0 = sobreventa. Precio cerca de banda = posible reversión.
+5. SL y TP basados en ATR: SL = 1-1.5×ATR del TF operado, TP = 2-3×ATR.
+6. Crypto se mueve por estructura técnica y momentum. Prioriza patrones de precio > indicadores.
+7. Si la estructura 4H marca dirección, prioriza trades en esa dirección.
+
+${JSON_RESPONSE_FORMAT}`;
+}
+
+// ===================== COMMODITY Prompt Builder =====================
+
+function buildCommodityPrompt(data: PromptData): string {
+  const stats = get24hStats(data.candles1h, data.currentPrice);
+  const cross = data.crossAsset;
+
+  // Determine specific commodity context
+  const sym = data.symbol.toUpperCase();
+  let commodityContext = '';
+  if (sym.includes('XAU')) {
+    commodityContext = `## Contexto específico: ORO (XAUUSDT)
+- El oro es refugio de valor. Sube con incertidumbre, inflación alta y USD débil.
+- Correlación inversa con USD: si USD se fortalece, oro tiende a bajar y viceversa.
+- Sensible a: tipos de interés de la FED (tasas altas = oro baja), yields del Treasury, tensiones geopolíticas.
+- En entornos risk-off (miedo) el oro sube; en risk-on (euforia) el oro baja o consolida.`;
+  } else if (sym.includes('XAG')) {
+    commodityContext = `## Contexto específico: PLATA (XAGUSDT)
+- La plata combina demanda industrial con refugio de valor (más volátil que el oro).
+- Correlación inversa con USD similar al oro pero con mayor beta (movimientos más amplios).
+- Sensible a: demanda industrial, tipos de interés, y ratio oro/plata.`;
+  } else if (sym.includes('WTI') || sym.includes('OIL') || sym.includes('BRENT')) {
+    commodityContext = `## Contexto específico: PETRÓLEO
+- Precio impulsado por oferta/demanda global, decisiones OPEC, geopolítica.
+- USD fuerte tiende a presionar precios a la baja (denominado en USD).
+- Sensible a: inventarios, producción OPEC, tensiones en Medio Oriente, crecimiento global.`;
+  } else {
+    commodityContext = `## Contexto: Commodity genérico
+- Correlación inversa con USD frecuente. Sensible a oferta/demanda y geopolítica.`;
+  }
+
+  let crossAssetBlock = '';
+  if (cross) {
+    crossAssetBlock = `## Contexto inter-mercado (DATOS REALES)
+- BTC precio: ${cross.btcPrice} | Cambio 24h: ${cross.btcChange24h}%
+- BTC RSI(14) 4H: ${cross.btcRsi} | Tendencia: ${cross.btcTrend}
+- BTC MACD Histogram 4H: ${cross.btcMacdHistogram}
+- Sentimiento de riesgo: **${cross.riskSentiment}**
+- Proxy fortaleza USD: **${cross.usdStrengthProxy}**
+
+### Interpretación para commodity:
+- Risk-off (BTC bajista, miedo) → oro/plata tienden a subir como refugio
+- Risk-on (BTC alcista, euforia) → oro puede bajar o consolidar
+- USD fuerte → presión bajista en commodities denominados en USD
+- USD débil → presión alcista en commodities`;
+  }
+
+  return `## Análisis: ${data.symbol} (Commodity)
+
+## Estado actual
+- Precio: ${data.currentPrice}
+- Cambio 24h: ${stats.priceChange24h}%
+- Rango 24h: ${stats.low24h} — ${stats.high24h}
+- Volumen última 1H: ${stats.lastVolume} (${stats.volRatio}x promedio)
+
+${commodityContext}
+
+${crossAssetBlock}
+
+${formatTechnicalBlock(data)}
+
+## Velas 1H (últimas 25):
+${formatCandlesForPrompt(data.candles1h, 25)}
+
+## Velas 4H (últimas 20):
+${formatCandlesForPrompt(data.candles4h, 20)}
+
+## Instrucciones de análisis (COMMODITY)
+1. PRIMERO evalúa el contexto inter-mercado: ¿USD fuerte o débil? ¿Risk-on o risk-off? Esto define el sesgo direccional.
+2. LUEGO verifica confluencia técnica: RSI, MACD y estructura deben alinearse en 1H y 4H EN LA MISMA DIRECCIÓN que el sesgo macro.
+3. Si el técnico contradice el contexto macro (ej. técnico alcista pero USD fuerte), reduce confidence significativamente.
+4. ATR para SL/TP: en commodities usar 1.5-2×ATR para SL, 2-3×ATR para TP (más holgado que crypto por volatilidad macro).
+5. Bollinger %B: en commodities, %B extremos tienen mayor significancia cuando coinciden con cambio en sentimiento USD.
+6. Si la estructura 4H muestra tendencia clara alineada con el contexto macro, alta confianza.
+7. Si no hay datos inter-mercado o son neutrales, opera solo con confluencia técnica pero con confidence reducida (max 60).
+
+${JSON_RESPONSE_FORMAT}`;
+}
+
+// ===================== FOREX Prompt Builder =====================
+
+function buildForexPrompt(data: PromptData): string {
+  const stats = get24hStats(data.candles1h, data.currentPrice);
+  const cross = data.crossAsset;
+
+  // Determine forex pair context
+  const sym = data.symbol.toUpperCase();
+  let pairContext = '';
+  if (sym.includes('EUR')) {
+    pairContext = 'Factores clave: diferencial tipos FED vs BCE, datos empleo/inflación EU vs US, PMI.';
+  } else if (sym.includes('GBP')) {
+    pairContext = 'Factores clave: diferencial tipos FED vs BoE, datos UK (CPI, empleo), Brexit effects.';
+  } else if (sym.includes('JPY')) {
+    pairContext = 'Factores clave: diferencial tipos (carry trade), intervención BoJ, risk sentiment (JPY = refugio).';
+  } else if (sym.includes('AUD') || sym.includes('NZD')) {
+    pairContext = 'Factores clave: precios commodities, datos China, diferencial tipos RBA/RBNZ vs FED.';
+  } else {
+    pairContext = 'Factores clave: fortaleza relativa de divisas, diferenciales de tipos de interés, datos macro.';
+  }
+
+  let crossAssetBlock = '';
+  if (cross) {
+    crossAssetBlock = `## Contexto inter-mercado (DATOS REALES)
+- BTC precio: ${cross.btcPrice} | Cambio 24h: ${cross.btcChange24h}%
+- BTC RSI(14) 4H: ${cross.btcRsi} | Tendencia: ${cross.btcTrend}
+- Sentimiento de riesgo: **${cross.riskSentiment}**
+- Proxy fortaleza USD: **${cross.usdStrengthProxy}**
+
+### Interpretación para forex:
+- Risk-on (BTC alcista) → monedas de riesgo (AUD, NZD) suben; refugios (JPY, CHF) bajan
+- Risk-off (BTC bajista) → JPY y CHF suben; AUD y NZD bajan
+- USD fuerte → pares XXXUSD bajan; pares USDXXX suben
+- USD débil → pares XXXUSD suben; pares USDXXX bajan`;
+  }
+
+  return `## Análisis: ${data.symbol} (Forex)
+
+## Estado actual
+- Precio: ${data.currentPrice}
+- Cambio 24h: ${stats.priceChange24h}%
+- Rango 24h: ${stats.low24h} — ${stats.high24h}
+- Volumen última 1H: ${stats.lastVolume} (${stats.volRatio}x promedio)
+
+## Contexto del par
+${pairContext}
+
+${crossAssetBlock}
+
+${formatTechnicalBlock(data)}
+
+## Velas 1H (últimas 25):
+${formatCandlesForPrompt(data.candles1h, 25)}
+
+## Velas 4H (últimas 20):
+${formatCandlesForPrompt(data.candles4h, 20)}
+
+## Instrucciones de análisis (FOREX)
+1. PRIMERO evalúa sentimiento de riesgo y dirección USD desde los datos inter-mercado.
+2. En forex los movimientos impulados por noticias/datos macro INVALIDAN patrones técnicos rápidamente. Ten esto en cuenta.
+3. Confluencia obligatoria: RSI, MACD y estructura en 1H y 4H deben coincidir.
+4. ATR para SL/TP: forex tiende a ser menos volátil que crypto → SL = 1-1.5×ATR, TP = 2-2.5×ATR.
+5. Si el contexto inter-mercado contradice el técnico, reduce confidence a <40.
+6. Bollinger %B: en forex los retornos a la media son frecuentes; %B extremos son señales fuertes.
+7. Si no hay datos inter-mercado, opera solo con confluencia técnica pero max confidence 55.
+
+${JSON_RESPONSE_FORMAT}`;
+}
+
+// ===================== Unified prompt builder (routes by category) =====================
+
+function buildAutoPrompt(data: PromptData, category: AssetCategory): string {
+  switch (category) {
+    case 'crypto':
+      return buildCryptoPrompt(data);
+    case 'commodities':
+      return buildCommodityPrompt(data);
+    case 'forex':
+      return buildForexPrompt(data);
+    default:
+      return buildCryptoPrompt(data);
+  }
 }
 
 // ===================== Groq API =====================
@@ -492,17 +748,23 @@ export async function analyzeAsset(
     return null;
   }
 
-  // 1. Fetch market data from Bitget (public endpoints, no auth)
-  console.log(`[AI Service] 📊 Obteniendo velas 1H y 4H para ${symbol}...`);
-  const [candles1h, candles4h, currentPrice] = await Promise.all([
-    fetchCandles(symbol, '1H', 168, asset.product_type), // 1 week of 1h candles
-    fetchCandles(symbol, '4H', 42, asset.product_type),  // 1 week of 4h candles
+  // 1. Detect asset category early — determines what data to fetch
+  const assetCategory = getAssetCategory(symbol);
+  console.log(`[AI Service] 📊 [${assetCategory.toUpperCase()}] Obteniendo datos para ${symbol}...`);
+
+  // 2. Fetch market data from Bitget (public endpoints, no auth)
+  // For commodities/forex: also fetch cross-asset context (BTC for risk/USD proxy)
+  const needsCrossAsset = assetCategory !== 'crypto';
+  const [candles1h, candles4h, currentPrice, crossAsset] = await Promise.all([
+    fetchCandles(symbol, '1H', 168, asset.product_type),
+    fetchCandles(symbol, '4H', 42, asset.product_type),
     fetchCurrentPrice(symbol, asset.product_type),
+    needsCrossAsset ? fetchCrossAssetContext() : Promise.resolve(null),
   ]);
 
-  console.log(`[AI Service] 📊 Velas obtenidas: 1H=${candles1h.length}, 4H=${candles4h.length}, Precio=${currentPrice}`);
+  console.log(`[AI Service] 📊 Velas obtenidas: 1H=${candles1h.length}, 4H=${candles4h.length}, Precio=${currentPrice}${crossAsset ? ', Cross-asset: ✅' : ''}`);
 
-  // 2. Calculate technical indicators
+  // 3. Calculate technical indicators
   const closes1h = candles1h.map(c => c.close);
   const closes4h = candles4h.map(c => c.close);
 
@@ -521,13 +783,16 @@ export async function analyzeAsset(
 
   console.log(`[AI Service] 📈 Indicadores: RSI_1H=${rsi1h.toFixed(2)}, RSI_4H=${rsi4h.toFixed(2)}, MACD_1H=${macd1h.macd}, MACD_4H=${macd4h.macd}, ATR_1H=${atr1h}, ATR_4H=${atr4h}`);
 
-  // 3. Build prompt - automatic or from custom template
-  const assetCategory = getAssetCategory(symbol);
-  const categoryInstructions = getCategoryInstructions(assetCategory);
+  // 4. Build prompt — category-specific builder with cross-asset data
+  const promptData: PromptData = {
+    symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h,
+    atr1h, atr4h, bb1h, bb4h, ema1h, ema4h, structure1h, structure4h, crossAsset,
+  };
 
   let userPrompt: string;
   if (config.analysis_prompt_template && config.analysis_prompt_template.trim().length > 0) {
     // Admin provided a custom template with placeholders
+    const categoryInstructions = getCategoryInstructions(assetCategory);
     userPrompt = config.analysis_prompt_template
       .replace(/\{\{symbol\}\}/g, symbol)
       .replace(/\{\{candles_1h\}\}/g, formatCandlesForPrompt(candles1h, 25))
@@ -547,20 +812,15 @@ export async function analyzeAsset(
       .replace(/\{\{current_price\}\}/g, currentPrice.toString())
       .replace(/\{\{asset_category\}\}/g, assetCategory)
       .replace(/\{\{category_instructions\}\}/g, categoryInstructions);
-    // Si el template no incluyó el bloque de contexto por categoría, lo anteponemos
     if (!config.analysis_prompt_template.includes('{{category_instructions}}')) {
       userPrompt = `## Contexto del activo (${assetCategory}):\n${categoryInstructions}\n\n` + userPrompt;
     }
   } else {
-    // Fully automatic prompt - no template needed
-    userPrompt = buildAutoPrompt({
-      symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h,
-      atr1h, atr4h, bb1h, bb4h, ema1h, ema4h, structure1h, structure4h,
-    });
-    userPrompt = `## Contexto del activo (${assetCategory}):\n${categoryInstructions}\n\n` + userPrompt;
+    // Fully automatic: category-specific prompt builder with cross-asset data
+    userPrompt = buildAutoPrompt(promptData, assetCategory);
   }
 
-  // 4. Call Groq — system prompt adapts to asset category
+  // 5. Call Groq — system prompt also adapts to asset category
   const systemPrompt = config.system_prompt && config.system_prompt.trim().length > 0
     ? config.system_prompt
     : getSystemPromptForCategory(assetCategory);
