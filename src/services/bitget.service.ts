@@ -697,6 +697,178 @@ export class BitgetService {
   }
 
   /**
+   * Coloca triggers SL + TPs para una posición que YA existe (sin abrir posición).
+   * Usa los mismos endpoints que openPositionWithFullTPSL:
+   * - SL: place-tpsl-order con pos_loss
+   * - TPs: place-plan-order con normal_plan (permite múltiples parciales)
+   */
+  async setPositionTPSLTriggers(
+    credentials: BitgetCredentials,
+    positionData: {
+      symbol: string;
+      productType: string;
+      marginMode: string;
+      marginCoin: string;
+      side: 'buy' | 'sell';
+      size: string;
+    },
+    tpslData: {
+      stopLossPrice: number;
+      takeProfitPrice: number;
+      breakevenPrice?: number;
+    },
+    contractInfo?: any,
+    logContext?: { userId: number; strategyId: number | null; orderId?: string },
+    currentPrice?: number
+  ): Promise<Array<{ type: string; success: boolean; result?: any; error?: string }>> {
+    const results: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
+
+    try {
+      const holdSide = positionData.side === 'buy' ? 'long' : 'short';
+      const closeSide = positionData.side === 'buy' ? 'sell' : 'buy';
+      const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
+      const volumePlace = contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 2;
+      const minTradeNum = parseFloat(contractInfo?.minTradeNum || '0.01');
+      const sizeMultiplier = parseFloat(contractInfo?.sizeMultiplier || '0.01');
+      const fullSize = parseFloat(positionData.size);
+
+      const formattedSL = parseFloat(tpslData.stopLossPrice.toFixed(pricePlace)).toString();
+      const formattedTP = parseFloat(tpslData.takeProfitPrice.toFixed(pricePlace)).toString();
+      const fullSizeStr = fullSize.toFixed(volumePlace).replace(/\.?0+$/, '');
+
+      const timestamp = Date.now();
+      const baseId = `${timestamp}${Math.floor(Math.random() * 1000)}`;
+      const tpslEndpoint = '/api/v2/mix/order/place-tpsl-order';
+      const planEndpoint = '/api/v2/mix/order/place-plan-order';
+
+      const makeLogCtx = (opType: string, clientOid: string) => logContext ? {
+        userId: logContext.userId, strategyId: logContext.strategyId,
+        symbol: positionData.symbol, operationType: opType,
+        orderId: logContext.orderId, clientOid,
+      } : undefined;
+
+      // SL con place-tpsl-order + pos_loss
+      const slOid = `SL_${positionData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
+      try {
+        const slResult = await this.makeRequest('POST', tpslEndpoint, credentials, {
+          marginCoin: positionData.marginCoin.toUpperCase(),
+          productType: positionData.productType.toUpperCase(),
+          symbol: positionData.symbol.toUpperCase(),
+          planType: 'pos_loss',
+          triggerPrice: formattedSL,
+          triggerType: 'fill_price',
+          executePrice: formattedSL,
+          holdSide,
+          size: fullSizeStr,
+          clientOid: slOid,
+        }, makeLogCtx('stop_loss', slOid));
+        console.log(`[Bitget] ✅ SL colocado en ${formattedSL}`);
+        results.push({ type: 'stop_loss', success: true, result: slResult });
+      } catch (e: any) {
+        console.error(`[Bitget] ❌ Error SL: ${e.message}`);
+        results.push({ type: 'stop_loss', success: false, error: e.message });
+      }
+
+      // Determinar si usar TPs parciales o TP único
+      const usePartialTps = tpslData.breakevenPrice && tpslData.breakevenPrice > 0;
+      
+      if (usePartialTps) {
+        // TPs parciales (50% BE + 50% final) con normal_plan
+        let halfSize = Math.floor((fullSize / 2) / sizeMultiplier) * sizeMultiplier;
+        if (halfSize < minTradeNum) halfSize = minTradeNum;
+        const halfSizeStr = halfSize.toFixed(volumePlace).replace(/\.?0+$/, '');
+        const formattedBE = parseFloat(tpslData.breakevenPrice!.toFixed(pricePlace)).toString();
+
+        // TP breakeven (50%)
+        const tpBeOid = `TP_BE_${positionData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
+        try {
+          const tpBeResult = await this.makeRequest('POST', planEndpoint, credentials, {
+            planType: 'normal_plan',
+            symbol: positionData.symbol.toUpperCase(),
+            productType: positionData.productType.toUpperCase(),
+            marginMode: positionData.marginMode,
+            marginCoin: positionData.marginCoin.toUpperCase(),
+            size: halfSizeStr,
+            price: '0',
+            triggerPrice: formattedBE,
+            triggerType: 'fill_price',
+            side: closeSide,
+            tradeSide: 'close',
+            orderType: 'market',
+            holdSide,
+            clientOid: tpBeOid,
+          }, makeLogCtx('take_profit_partial', tpBeOid));
+          console.log(`[Bitget] ✅ TP_BE colocado en ${formattedBE} (${halfSizeStr})`);
+          results.push({ type: 'take_profit_partial', success: true, result: tpBeResult });
+        } catch (e: any) {
+          console.error(`[Bitget] ❌ Error TP_BE: ${e.message}`);
+          results.push({ type: 'take_profit_partial', success: false, error: e.message });
+        }
+
+        // TP final (50%)
+        const tpFOid = `TP_F_${positionData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
+        try {
+          const tpFResult = await this.makeRequest('POST', planEndpoint, credentials, {
+            planType: 'normal_plan',
+            symbol: positionData.symbol.toUpperCase(),
+            productType: positionData.productType.toUpperCase(),
+            marginMode: positionData.marginMode,
+            marginCoin: positionData.marginCoin.toUpperCase(),
+            size: halfSizeStr,
+            price: '0',
+            triggerPrice: formattedTP,
+            triggerType: 'fill_price',
+            side: closeSide,
+            tradeSide: 'close',
+            orderType: 'market',
+            holdSide,
+            clientOid: tpFOid,
+          }, makeLogCtx('take_profit_final', tpFOid));
+          console.log(`[Bitget] ✅ TP_F colocado en ${formattedTP} (${halfSizeStr})`);
+          results.push({ type: 'take_profit_final', success: true, result: tpFResult });
+        } catch (e: any) {
+          console.error(`[Bitget] ❌ Error TP_F: ${e.message}`);
+          results.push({ type: 'take_profit_final', success: false, error: e.message });
+        }
+      } else {
+        // TP único (100%) con normal_plan
+        const tpOid = `TP_${positionData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
+        try {
+          const tpResult = await this.makeRequest('POST', planEndpoint, credentials, {
+            planType: 'normal_plan',
+            symbol: positionData.symbol.toUpperCase(),
+            productType: positionData.productType.toUpperCase(),
+            marginMode: positionData.marginMode,
+            marginCoin: positionData.marginCoin.toUpperCase(),
+            size: fullSizeStr,
+            price: '0',
+            triggerPrice: formattedTP,
+            triggerType: 'fill_price',
+            side: closeSide,
+            tradeSide: 'close',
+            orderType: 'market',
+            holdSide,
+            clientOid: tpOid,
+          }, makeLogCtx('take_profit', tpOid));
+          console.log(`[Bitget] ✅ TP colocado en ${formattedTP} (${fullSizeStr})`);
+          results.push({ type: 'take_profit', success: true, result: tpResult });
+        } catch (e: any) {
+          console.error(`[Bitget] ❌ Error TP: ${e.message}`);
+          results.push({ type: 'take_profit', success: false, error: e.message });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      console.log(`[Bitget] Triggers: ${successCount}/${results.length} OK`);
+    } catch (error: any) {
+      console.error(`[Bitget] ❌ setPositionTPSLTriggers error: ${error.message}`);
+      results.push({ type: 'general_error', success: false, error: error.message });
+    }
+
+    return results;
+  }
+
+  /**
    * Breakeven simplificado: solo cancela el SL viejo y pone nuevo SL en precio de entrada.
    * Los TPs parciales ya están configurados desde el ENTRY.
    */
