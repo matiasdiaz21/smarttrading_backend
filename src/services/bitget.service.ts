@@ -598,7 +598,7 @@ export class BitgetService {
       const slResult = await placeTriggerWithRetry(slPayload, 'stop_loss', `SL@${formattedSL}`);
       steps.push(slResult);
 
-      // Paso 3: TP en breakeven (50%) — secuencial
+      // Paso 3: TP en breakeven (50%) — SIN reduceOnly para que Bitget respete el size parcial
       const tpBePayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -609,7 +609,6 @@ export class BitgetService {
         executePrice: formattedBE,
         holdSide,
         size: tpPartialSizeStr,
-        reduceOnly: 'YES',
         clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
@@ -617,7 +616,7 @@ export class BitgetService {
       const tpBeResult = await placeTriggerWithRetry(tpBePayload, 'take_profit_partial', `TP_BE@${formattedBE}`);
       steps.push(tpBeResult);
 
-      // Paso 4: TP final (50%) — secuencial
+      // Paso 4: TP final (50%) — SIN reduceOnly para que Bitget respete el size parcial
       const tpFinalPayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -628,7 +627,6 @@ export class BitgetService {
         executePrice: formattedTP,
         holdSide,
         size: tpPartialSizeStr,
-        reduceOnly: 'YES',
         clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
