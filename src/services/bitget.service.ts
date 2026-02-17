@@ -448,12 +448,13 @@ export class BitgetService {
     orderId?: string;
     orderResult?: any;
     tpslResults: Array<{ type: string; success: boolean; result?: any; error?: string }>;
-    method: 'preset_only' | 'preset_sl_plus_partial_tps';
+    method: 'preset_only' | 'preset_sl_plus_partial_tps' | 'plan_sl_plus_partial_tps';
     error?: string;
     breakevenSkipped?: boolean;
     breakevenSkippedReason?: string;
     minSizeForPartial?: string;
     partialTpSize?: string;
+    payloads?: any;
   }> {
     const steps: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
     
@@ -534,7 +535,7 @@ export class BitgetService {
       const formattedBE = parseFloat(tpslData.breakevenPrice!.toFixed(pricePlace)).toString();
       const fullSizeStr = totalSize.toFixed(volDecimals).replace(/\.?0+$/, '') || orderData.size;
 
-      // Paso 1: Abrir posición SIN preset SL (el SL se coloca después como plan "All closable")
+      // Paso 1: Abrir posición SIN preset SL (el SL se coloca después como plan order)
       const openResult = await this.placeOrder(credentials, {
         ...orderData,
         tradeSide: 'open',
@@ -543,11 +544,42 @@ export class BitgetService {
       steps.push({ type: 'open_no_preset', success: true, result: openResult });
       console.log(`[Bitget] ✅ Posición abierta. OrderId: ${openResult.orderId}`);
 
+      // Esperar 800ms para que Bitget registre la posición completamente
+      console.log(`[Bitget] ⏳ Esperando 800ms para que la posición se registre en Bitget...`);
+      await new Promise(resolve => setTimeout(resolve, 800));
+
       const timestamp = Date.now();
       const baseId = `${timestamp}${Math.floor(Math.random() * 1000)}`;
       const tpslEndpoint = '/api/v2/mix/order/place-tpsl-order';
 
-      // Paso 2: SL como plan order con tamaño total (All closable)
+      // Helper para colocar trigger con retry
+      const placeTriggerWithRetry = async (
+        payload: any, opType: string, label: string, maxRetries: number = 2
+      ): Promise<{ type: string; success: boolean; result?: any; error?: string; retries?: number }> => {
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            if (attempt > 0) {
+              console.log(`[Bitget] 🔄 Retry ${attempt}/${maxRetries} para ${label}...`);
+              await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+            }
+            const result = await this.makeRequest('POST', tpslEndpoint, credentials, payload, logContext ? {
+              userId: logContext.userId, strategyId: logContext.strategyId,
+              symbol: orderData.symbol, operationType: opType,
+              orderId: openResult.orderId, clientOid: payload.clientOid,
+            } : undefined);
+            console.log(`[Bitget] ✅ ${label} colocado OK`);
+            return { type: opType, success: true, result, retries: attempt };
+          } catch (e: any) {
+            console.error(`[Bitget] ❌ ${label} intento ${attempt}: ${e.message}`);
+            if (attempt === maxRetries) {
+              return { type: opType, success: false, error: e.message, retries: attempt };
+            }
+          }
+        }
+        return { type: opType, success: false, error: 'Max retries exceeded' };
+      };
+
+      // Paso 2: SL con tamaño total — secuencial primero
       const slPayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -562,16 +594,11 @@ export class BitgetService {
         clientOid: `SL_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
-      const slResult = await this.makeRequest('POST', tpslEndpoint, credentials, slPayload, logContext ? {
-        userId: logContext.userId, strategyId: logContext.strategyId,
-        symbol: orderData.symbol, operationType: 'stop_loss',
-        orderId: openResult.orderId, clientOid: slPayload.clientOid,
-      } : undefined).then(r => ({ type: 'stop_loss' as const, success: true, result: r }))
-        .catch(e => ({ type: 'stop_loss' as const, success: false, error: e.message }));
+      console.log(`[Bitget] 📋 Colocando SL (size=${fullSizeStr}) en ${formattedSL}...`);
+      const slResult = await placeTriggerWithRetry(slPayload, 'stop_loss', `SL@${formattedSL}`);
       steps.push(slResult);
 
-      // Paso 3: Colocar 2 TPs parciales — cada uno con MITAD del order quantity (tpPartialSizeStr), nunca cierre total
-      // reduceOnly: 'YES' indica cierre parcial para que Bitget respete el size (sin ello la UI puede mostrar "All closable")
+      // Paso 3: TP en breakeven (50%) — secuencial
       const tpBePayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -586,6 +613,11 @@ export class BitgetService {
         clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
+      console.log(`[Bitget] 📋 Colocando TP breakeven (size=${tpPartialSizeStr}) en ${formattedBE}...`);
+      const tpBeResult = await placeTriggerWithRetry(tpBePayload, 'take_profit_partial', `TP_BE@${formattedBE}`);
+      steps.push(tpBeResult);
+
+      // Paso 4: TP final (50%) — secuencial
       const tpFinalPayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -600,28 +632,13 @@ export class BitgetService {
         clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
-      console.log(`[Bitget] 📋 SL (size=${fullSizeStr}) + 2 TPs parciales (cada uno size=${tpPartialSizeStr}, mitad de ${orderData.size}): BE (${formattedBE}) + Final (${formattedTP})`);
+      console.log(`[Bitget] 📋 Colocando TP final (size=${tpPartialSizeStr}) en ${formattedTP}...`);
+      const tpFinalResult = await placeTriggerWithRetry(tpFinalPayload, 'take_profit_final', `TP_F@${formattedTP}`);
+      steps.push(tpFinalResult);
 
-      const [tpBeResult, tpFinalResult] = await Promise.all([
-        this.makeRequest('POST', tpslEndpoint, credentials, tpBePayload, logContext ? {
-          userId: logContext.userId, strategyId: logContext.strategyId,
-          symbol: orderData.symbol, operationType: 'take_profit_partial',
-          orderId: openResult.orderId, clientOid: tpBePayload.clientOid,
-        } : undefined).then(r => ({ type: 'take_profit_partial' as const, success: true, result: r }))
-          .catch(e => ({ type: 'take_profit_partial' as const, success: false, error: e.message })),
-
-        this.makeRequest('POST', tpslEndpoint, credentials, tpFinalPayload, logContext ? {
-          userId: logContext.userId, strategyId: logContext.strategyId,
-          symbol: orderData.symbol, operationType: 'take_profit_final',
-          orderId: openResult.orderId, clientOid: tpFinalPayload.clientOid,
-        } : undefined).then(r => ({ type: 'take_profit_final' as const, success: true, result: r }))
-          .catch(e => ({ type: 'take_profit_final' as const, success: false, error: e.message })),
-      ]);
-
-      steps.push(tpBeResult, tpFinalResult);
-
-      const anyTpOk = tpBeResult.success || tpFinalResult.success;
-      console.log(`[Bitget] ${anyTpOk ? '✅' : '❌'} TPs parciales: BE=${tpBeResult.success ? 'OK' : 'FAIL'}, Final=${tpFinalResult.success ? 'OK' : 'FAIL'} (cada uno size=${tpPartialSizeStr})`);
+      const allTriggers = [slResult, tpBeResult, tpFinalResult];
+      const successCount = allTriggers.filter(r => r.success).length;
+      console.log(`[Bitget] ${successCount === 3 ? '✅' : '⚠️'} Triggers: ${successCount}/3 OK | SL=${slResult.success?'OK':'FAIL'} TP_BE=${tpBeResult.success?'OK':'FAIL'} TP_F=${tpFinalResult.success?'OK':'FAIL'}`);
 
       // Payloads enviados a Bitget (para debug en test-orders)
       const placeOrderPayload: any = {
