@@ -112,6 +112,9 @@ export class TradingTestController {
         } : null,
         steps: result.tpslResults,
         error: result.error,
+        breakevenSkipped: result.breakevenSkipped,
+        breakevenSkippedReason: result.breakevenSkippedReason,
+        minSizeForPartial: result.minSizeForPartial,
       });
     } catch (error: any) {
       console.error('[TestOrder] Error:', error.message);

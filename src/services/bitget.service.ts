@@ -450,6 +450,9 @@ export class BitgetService {
     tpslResults: Array<{ type: string; success: boolean; result?: any; error?: string }>;
     method: 'preset_only' | 'preset_sl_plus_partial_tps';
     error?: string;
+    breakevenSkipped?: boolean;
+    breakevenSkippedReason?: string;
+    minSizeForPartial?: string;
   }> {
     const steps: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
     
@@ -495,8 +498,9 @@ export class BitgetService {
       let halfSize = Math.floor((totalSize / 2) / sizeMultiplier) * sizeMultiplier;
       
       if (halfSize < minTradeNum) {
-        // Si 50% es menor que mínimo, fallback: usar preset SL+TP sin parcial
-        console.warn(`[Bitget] ⚠️ 50% (${halfSize}) < mínimo (${minTradeNum}). Fallback a preset SL+TP completo.`);
+        // Si 50% es menor que mínimo, fallback: usar preset SL+TP sin parcial (no se puede TP 50% en BE)
+        const minSizeForPartial = (minTradeNum * 2).toFixed(volumePlace).replace(/\.?0+$/, '');
+        console.warn(`[Bitget] ⚠️ 50% (${halfSize}) < mínimo (${minTradeNum}). Fallback a preset SL+TP completo. Para TP 50% en breakeven use tamaño >= ${minSizeForPartial}.`);
         
         const result = await this.placeOrder(credentials, {
           ...orderData,
@@ -513,6 +517,9 @@ export class BitgetService {
           orderResult: result,
           tpslResults: steps,
           method: 'preset_only',
+          breakevenSkipped: true,
+          breakevenSkippedReason: 'position_size_too_small',
+          minSizeForPartial,
         };
       }
       
