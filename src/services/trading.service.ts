@@ -274,6 +274,9 @@ export class TradingService {
       let actualPositionSize = calculatedSize;
       let shouldOpenPosition = true;
       let result: any = null;
+      let tpslConfigured = false;
+      let tpslError: any = null;
+      let usedOpenWithFullTPSL = false;
 
       console.log(`[TradeService] ⚡ Ejecutando setLeverage + getPositions en PARALELO para ${symbol}...`);
       const [leverageResult, positionsResult] = await Promise.allSettled([
@@ -328,9 +331,9 @@ export class TradingService {
         console.warn(`[TradeService] ⚠️ No se pudo verificar posiciones existentes: ${positionsResult.reason?.message}. Se intentará abrir la posición.`);
       }
       
+      // Mismo flujo que /admin/test-orders: open + TP/SL en un solo método cuando hay SL y TP
       if (shouldOpenPosition) {
         // Generar clientOid único usando timestamp de alta precisión y número aleatorio
-        // Esto previene errores de "Duplicate clientOid" cuando TradingView envía la misma alerta múltiples veces
         const highPrecisionTimestamp = `${Date.now()}_${process.hrtime.bigint()}`;
         const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
         const uniqueClientOid = `ST_${userId}_${strategyId}_${alert.trade_id || 'ENTRY'}_${highPrecisionTimestamp}_${randomSuffix}`;
@@ -344,80 +347,116 @@ export class TradingService {
           price: entryPrice ? entryPrice.toString() : undefined,
           side: bitgetSide,
           tradeSide: alert.tradeSide || 'open',
-          orderType: alert.orderType || 'market',
+          orderType: (alert.orderType || 'market') as 'market' | 'limit',
           force: alert.force || (alert.orderType === 'limit' ? 'gtc' : undefined),
           clientOid: uniqueClientOid,
         };
 
-        try {
-          // Ejecutar orden en Bitget
-          console.log(`[TradeService] 🚀 Ejecutando orden en Bitget para usuario ${userId}...`);
-          console.log(`[TradeService] 📋 Datos de la orden:`, JSON.stringify(orderData, null, 2));
-          
-          result = await this.bitgetService.placeOrder(
-            decryptedCredentials,
-            orderData,
-            {
-              userId,
-              strategyId,
+        if (alert.stopLoss && alert.takeProfit) {
+          // Usar la misma configuración que test-orders: openPositionWithFullTPSL (1 call con preset o open + triggers)
+          try {
+            console.log(`[TradeService] 🚀 Abriendo posición + TP/SL con mismo flujo que test-orders (openPositionWithFullTPSL)...`);
+            const orderDataForOpen = {
+              symbol: symbol.toUpperCase(),
+              productType,
+              marginMode: alert.marginMode || 'isolated',
+              marginCoin: alert.marginCoin || 'USDT',
+              size: calculatedSize,
+              price: orderData.price,
+              side: bitgetSide,
+              orderType: orderData.orderType,
+              clientOid: uniqueClientOid,
+            };
+            const tpslData = {
+              stopLossPrice: parseFloat(alert.stopLoss.toString()),
+              takeProfitPrice: parseFloat(alert.takeProfit.toString()),
+              breakevenPrice: alert.breakeven && parseFloat(alert.breakeven.toString()) > 0 ? parseFloat(alert.breakeven.toString()) : undefined,
+            };
+            const openResult = await this.bitgetService.openPositionWithFullTPSL(
+              decryptedCredentials,
+              orderDataForOpen,
+              tpslData,
+              contractInfo,
+              { userId, strategyId }
+            );
+            if (openResult.success && openResult.orderId) {
+              result = { orderId: openResult.orderId, clientOid: uniqueClientOid };
+              actualPositionSize = calculatedSize;
+              usedOpenWithFullTPSL = true;
+              const steps = openResult.tpslResults || [];
+              const slOk = steps.some((r: any) => (r.type === 'stop_loss' && r.success) || (r.type === 'open_with_sl_tp' && r.success) || (r.type === 'open_with_sl_tp_fallback' && r.success));
+              const tpOk = steps.some((r: any) => ['take_profit', 'take_profit_final', 'take_profit_partial', 'open_with_sl_tp', 'open_with_sl_tp_fallback'].includes(r.type) && r.success);
+              tpslConfigured = slOk && tpOk;
+              if (openResult.breakevenSkipped) {
+                console.log(`[TradeService] ℹ️ Breakeven omitido por tamaño (igual que test-orders): ${openResult.breakevenSkippedReason}`);
+              }
+              console.log(`[TradeService] ✅ Posición + TP/SL con flujo unificado. OrderId: ${openResult.orderId}, TP/SL OK: ${tpslConfigured}`);
+            } else {
+              console.warn(`[TradeService] ⚠️ openPositionWithFullTPSL no retornó success, fallback a placeOrder + TP/SL por separado`);
             }
-          );
+          } catch (openWithTpslError: any) {
+            console.warn(`[TradeService] ⚠️ Error en openPositionWithFullTPSL: ${openWithTpslError.message}. Fallback a placeOrder + TP/SL por separado`);
+          }
+        }
 
-          console.log(`[TradeService] ✅ Orden ejecutada en Bitget. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
-
-          // Optimización: usar calculatedSize directamente en lugar de hacer getPositions extra
-          // Para órdenes market, Bitget llena exactamente el tamaño solicitado
-          actualPositionSize = calculatedSize;
-          console.log(`[TradeService] 📊 Usando tamaño calculado como posición real: ${actualPositionSize} (sin llamada extra a getPositions)`);
-        } catch (orderError: any) {
-          console.error(`[TradeService] ❌ Error al ejecutar orden: ${orderError.message}`);
-          
-          // Si el error es por clientOid duplicado, verificar si la posición existe
-          if (orderError.message && orderError.message.includes('Duplicate clientOid')) {
-            console.log(`[TradeService] 🔍 Error de clientOid duplicado. Verificando si la posición ya existe...`);
+        if (!usedOpenWithFullTPSL) {
+          try {
+            console.log(`[TradeService] 🚀 Ejecutando orden en Bitget para usuario ${userId}...`);
+            console.log(`[TradeService] 📋 Datos de la orden:`, JSON.stringify(orderData, null, 2));
             
-            try {
-              const positions = await this.bitgetService.getPositions(
-                decryptedCredentials,
-                symbol,
-                productType
-              );
-              
-              if (positions && positions.length > 0) {
-                const matchingPosition = positions.find((p: any) => 
-                  p.symbol === symbol && 
-                  p.holdSide === holdSide
+            result = await this.bitgetService.placeOrder(
+              decryptedCredentials,
+              orderData,
+              {
+                userId,
+                strategyId,
+              }
+            );
+
+            console.log(`[TradeService] ✅ Orden ejecutada en Bitget. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
+
+            actualPositionSize = calculatedSize;
+            console.log(`[TradeService] 📊 Usando tamaño calculado como posición real: ${actualPositionSize}`);
+          } catch (orderError: any) {
+            console.error(`[TradeService] ❌ Error al ejecutar orden: ${orderError.message}`);
+            if (orderError.message && orderError.message.includes('Duplicate clientOid')) {
+              console.log(`[TradeService] 🔍 Error de clientOid duplicado. Verificando si la posición ya existe...`);
+              try {
+                const positions = await this.bitgetService.getPositions(
+                  decryptedCredentials,
+                  symbol,
+                  productType
                 );
-                
-                if (matchingPosition) {
-                  existingPosition = matchingPosition;
-                  actualPositionSize = matchingPosition.total || matchingPosition.available || calculatedSize;
-                  console.log(`[TradeService] ✅ Posición encontrada con tamaño ${actualPositionSize}. Se configurarán TP/SL.`);
-                  // Usar el positionId de la posición existente como orderId para los logs
-                  if (matchingPosition.positionId || matchingPosition.id) {
-                    result = { orderId: matchingPosition.positionId || matchingPosition.id };
+                if (positions && positions.length > 0) {
+                  const matchingPosition = positions.find((p: any) =>
+                    p.symbol === symbol && p.holdSide === holdSide
+                  );
+                  if (matchingPosition) {
+                    existingPosition = matchingPosition;
+                    actualPositionSize = matchingPosition.total || matchingPosition.available || calculatedSize;
+                    console.log(`[TradeService] ✅ Posición encontrada con tamaño ${actualPositionSize}. Se configurarán TP/SL.`);
+                    if (matchingPosition.positionId || matchingPosition.id) {
+                      result = { orderId: matchingPosition.positionId || matchingPosition.id };
+                    }
+                  } else {
+                    throw orderError;
                   }
                 } else {
                   throw orderError;
                 }
-              } else {
+              } catch (recheckError: any) {
+                console.error(`[TradeService] ❌ No se pudo verificar la posición después del error: ${recheckError.message}`);
                 throw orderError;
               }
-            } catch (recheckError: any) {
-              console.error(`[TradeService] ❌ No se pudo verificar la posición después del error: ${recheckError.message}`);
+            } else {
               throw orderError;
             }
-          } else {
-            throw orderError;
           }
         }
       }
 
-      // Configurar Stop Loss y Take Profit si están disponibles
-      let tpslConfigured = false;
-      let tpslError: any = null;
-      
-      if (alert.stopLoss && alert.takeProfit) {
+      // Configurar Stop Loss y Take Profit si están disponibles (solo si no se usó openPositionWithFullTPSL)
+      if (alert.stopLoss && alert.takeProfit && !usedOpenWithFullTPSL) {
         try {
           console.log(`[TradeService] 📊 Configurando órdenes TP/SL avanzadas para ${symbol}...`);
           console.log(`[TradeService]   Stop Loss: ${alert.stopLoss}`);
