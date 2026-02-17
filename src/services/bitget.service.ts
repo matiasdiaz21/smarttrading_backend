@@ -528,25 +528,50 @@ export class BitgetService {
         };
       }
       
-      const halfSizeStr = halfSize.toFixed(volumePlace).replace(/\.?0+$/, '');
+      // Tamaño parcial 50%: asegurar string con decimales (ej. "0.01") para que Bitget no interprete como "All closable"
+      const volDecimals = Math.max(volumePlace, 2);
+      const halfSizeStr = halfSize >= minTradeNumRounded
+        ? halfSize.toFixed(volDecimals).replace(/\.?0+$/, '') || halfSize.toFixed(volDecimals)
+        : minTradeNumRounded.toFixed(volDecimals);
       const formattedBE = parseFloat(tpslData.breakevenPrice!.toFixed(pricePlace)).toString();
-      
-      // Paso 1: Abrir posición con SL preset (atómico)
+      const fullSizeStr = totalSize.toFixed(volDecimals).replace(/\.?0+$/, '') || orderData.size;
+
+      // Paso 1: Abrir posición SIN preset SL (el SL se coloca después como plan "All closable")
       const openResult = await this.placeOrder(credentials, {
         ...orderData,
         tradeSide: 'open',
-        presetStopLossPrice: formattedSL,
       }, logContext ? { ...logContext, orderId: undefined } : undefined);
-      
-      steps.push({ type: 'open_with_preset_sl', success: true, result: openResult });
-      console.log(`[Bitget] ✅ Posición abierta con SL preset. OrderId: ${openResult.orderId}`);
-      
-      // Paso 2: Colocar 2 TPs parciales en paralelo
+
+      steps.push({ type: 'open_no_preset', success: true, result: openResult });
+      console.log(`[Bitget] ✅ Posición abierta. OrderId: ${openResult.orderId}`);
+
       const timestamp = Date.now();
       const baseId = `${timestamp}${Math.floor(Math.random() * 1000)}`;
-      
       const tpslEndpoint = '/api/v2/mix/order/place-tpsl-order';
-      
+
+      // Paso 2: SL como plan order con tamaño total (All closable) — Bitget muestra "All closable" cuando size = posición
+      const slPayload = {
+        marginCoin: orderData.marginCoin.toUpperCase(),
+        productType: orderData.productType.toUpperCase(),
+        symbol: orderData.symbol.toUpperCase(),
+        planType: 'pos_loss',
+        triggerPrice: formattedSL,
+        triggerType: 'fill_price',
+        executePrice: formattedSL,
+        holdSide,
+        size: fullSizeStr,
+        clientOid: `SL_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
+      };
+
+      const slResult = await this.makeRequest('POST', tpslEndpoint, credentials, slPayload, logContext ? {
+        userId: logContext.userId, strategyId: logContext.strategyId,
+        symbol: orderData.symbol, operationType: 'stop_loss',
+        orderId: openResult.orderId, clientOid: slPayload.clientOid,
+      } : undefined).then(r => ({ type: 'stop_loss' as const, success: true, result: r }))
+        .catch(e => ({ type: 'stop_loss' as const, success: false, error: e.message }));
+      steps.push(slResult);
+
+      // Paso 3: Colocar 2 TPs parciales (cada uno size = 0.01 / 50%) para que en UI no salga "All closable"
       const tpBePayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -559,7 +584,7 @@ export class BitgetService {
         size: halfSizeStr,
         clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
-      
+
       const tpFinalPayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -572,9 +597,9 @@ export class BitgetService {
         size: halfSizeStr,
         clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
-      
-      console.log(`[Bitget] 📋 Colocando 2 TPs parciales en paralelo: TP 50% en BE (${formattedBE}) + TP 50% final (${formattedTP})`);
-      
+
+      console.log(`[Bitget] 📋 SL (size=${fullSizeStr}) + 2 TPs parciales (cada uno size=${halfSizeStr}): BE (${formattedBE}) + Final (${formattedTP})`);
+
       const [tpBeResult, tpFinalResult] = await Promise.all([
         this.makeRequest('POST', tpslEndpoint, credentials, tpBePayload, logContext ? {
           userId: logContext.userId, strategyId: logContext.strategyId,
@@ -582,7 +607,7 @@ export class BitgetService {
           orderId: openResult.orderId, clientOid: tpBePayload.clientOid,
         } : undefined).then(r => ({ type: 'take_profit_partial' as const, success: true, result: r }))
           .catch(e => ({ type: 'take_profit_partial' as const, success: false, error: e.message })),
-        
+
         this.makeRequest('POST', tpslEndpoint, credentials, tpFinalPayload, logContext ? {
           userId: logContext.userId, strategyId: logContext.strategyId,
           symbol: orderData.symbol, operationType: 'take_profit_final',
@@ -590,19 +615,19 @@ export class BitgetService {
         } : undefined).then(r => ({ type: 'take_profit_final' as const, success: true, result: r }))
           .catch(e => ({ type: 'take_profit_final' as const, success: false, error: e.message })),
       ]);
-      
+
       steps.push(tpBeResult, tpFinalResult);
-      
+
       const anyTpOk = tpBeResult.success || tpFinalResult.success;
       console.log(`[Bitget] ${anyTpOk ? '✅' : '❌'} TPs parciales: BE=${tpBeResult.success ? 'OK' : 'FAIL'}, Final=${tpFinalResult.success ? 'OK' : 'FAIL'} (cada uno size=${halfSizeStr})`);
-      
+
       return {
-        success: true, // La posición se abrió con SL, eso es lo crítico
+        success: true,
         orderId: openResult.orderId,
         orderResult: openResult,
         tpslResults: steps,
-        method: 'preset_sl_plus_partial_tps',
-        partialTpSize: halfSizeStr, // Tamaño de cada TP parcial (50%)
+        method: 'plan_sl_plus_partial_tps',
+        partialTpSize: halfSizeStr,
       };
       
     } catch (error: any) {
