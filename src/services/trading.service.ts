@@ -247,7 +247,25 @@ export class TradingService {
       } else {
         console.log(`[TradeService] 📏 Tamaño solicitado: ${requestedSize}, Tamaño calculado: ${calculatedSize}`);
       }
-      
+
+      // Si la señal tiene breakeven y el usuario tiene TP parcial, asegurar tamaño >= 2× minTradeNum
+      // para poder colocar TP 50% en breakeven + TP 50% en take profit (Bitget exige mínimo por orden)
+      const usePartialTp = strategySubscription.use_partial_tp !== false;
+      if (alert.breakeven && parseFloat(alert.breakeven.toString()) > 0 && usePartialTp) {
+        const minTradeNum = parseFloat(contractInfo.minTradeNum || '0.01');
+        const minSizeForPartial = 2 * minTradeNum;
+        if (parseFloat(calculatedSize) < minSizeForPartial - 1e-8) {
+          const previousSize = calculatedSize;
+          calculatedSize = this.bitgetService.calculateOrderSize(
+            minSizeForPartial.toString(),
+            contractInfo.minTradeNum,
+            contractInfo.sizeMultiplier
+          );
+          const approxUsdt = entryPrice ? (parseFloat(calculatedSize) * parseFloat(entryPrice.toString())).toFixed(2) : '?';
+          console.log(`[TradeService] 📊 Breakeven activo: tamaño ajustado al mínimo para TP 50%/50% (≥ 2× min): ${previousSize} → ${calculatedSize} contratos (~${approxUsdt} USDT)`);
+        }
+      }
+
       // Configurar el apalancamiento Y verificar posiciones existentes EN PARALELO
       // (Optimización: antes eran 2 llamadas secuenciales + 500ms delay = ~1.5s, ahora ~0.5s)
       const holdSide = alert.side === 'LONG' || alert.side === 'buy' ? 'long' : 'short';
