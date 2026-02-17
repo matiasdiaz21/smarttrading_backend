@@ -552,9 +552,9 @@ export class BitgetService {
       const baseId = `${timestamp}${Math.floor(Math.random() * 1000)}`;
       const tpslEndpoint = '/api/v2/mix/order/place-tpsl-order';
 
-      // Helper para colocar trigger con retry
+      // Helper para colocar trigger con retry (endpoint configurable)
       const placeTriggerWithRetry = async (
-        payload: any, opType: string, label: string, maxRetries: number = 2
+        endpoint: string, payload: any, opType: string, label: string, maxRetries: number = 2
       ): Promise<{ type: string; success: boolean; result?: any; error?: string; retries?: number }> => {
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           try {
@@ -562,7 +562,7 @@ export class BitgetService {
               console.log(`[Bitget] 🔄 Retry ${attempt}/${maxRetries} para ${label}...`);
               await new Promise(resolve => setTimeout(resolve, 500 * attempt));
             }
-            const result = await this.makeRequest('POST', tpslEndpoint, credentials, payload, logContext ? {
+            const result = await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
               userId: logContext.userId, strategyId: logContext.strategyId,
               symbol: orderData.symbol, operationType: opType,
               orderId: openResult.orderId, clientOid: payload.clientOid,
@@ -579,7 +579,7 @@ export class BitgetService {
         return { type: opType, success: false, error: 'Max retries exceeded' };
       };
 
-      // Paso 2: SL con tamaño total — secuencial primero
+      // Paso 2: SL con place-tpsl-order + pos_loss (posición completa, solo 1 por posición)
       const slPayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -590,48 +590,61 @@ export class BitgetService {
         executePrice: formattedSL,
         holdSide,
         size: fullSizeStr,
-        reduceOnly: 'YES',
         clientOid: `SL_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
       console.log(`[Bitget] 📋 Colocando SL (size=${fullSizeStr}) en ${formattedSL}...`);
-      const slResult = await placeTriggerWithRetry(slPayload, 'stop_loss', `SL@${formattedSL}`);
+      const slResult = await placeTriggerWithRetry(tpslEndpoint, slPayload, 'stop_loss', `SL@${formattedSL}`);
       steps.push(slResult);
 
-      // Paso 3: TP en breakeven (50%) — SIN reduceOnly para que Bitget respete el size parcial
+      // --- TPs parciales via place-plan-order (normal_plan) ---
+      // pos_profit solo permite 1 por posición ("Entire TP/SL").
+      // normal_plan permite múltiples trigger orders independientes con size parcial.
+      const planEndpoint = '/api/v2/mix/order/place-plan-order';
+      const closeSide = orderData.side === 'buy' ? 'sell' : 'buy';
+
+      // Paso 3: TP en breakeven (50%) — trigger order parcial
       const tpBePayload = {
-        marginCoin: orderData.marginCoin.toUpperCase(),
-        productType: orderData.productType.toUpperCase(),
+        planType: 'normal_plan',
         symbol: orderData.symbol.toUpperCase(),
-        planType: 'pos_profit',
+        productType: orderData.productType.toUpperCase(),
+        marginMode: orderData.marginMode || 'isolated',
+        marginCoin: orderData.marginCoin.toUpperCase(),
+        size: tpPartialSizeStr,
+        price: '0',
         triggerPrice: formattedBE,
         triggerType: 'fill_price',
-        executePrice: formattedBE,
+        side: closeSide,
+        tradeSide: 'close',
+        orderType: 'market',
         holdSide,
-        size: tpPartialSizeStr,
         clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
-      console.log(`[Bitget] 📋 Colocando TP breakeven (size=${tpPartialSizeStr}) en ${formattedBE}...`);
-      const tpBeResult = await placeTriggerWithRetry(tpBePayload, 'take_profit_partial', `TP_BE@${formattedBE}`);
+      console.log(`[Bitget] 📋 Colocando TP breakeven via plan-order (size=${tpPartialSizeStr}) en ${formattedBE}...`);
+      const tpBeResult = await placeTriggerWithRetry(planEndpoint, tpBePayload, 'take_profit_partial', `TP_BE@${formattedBE}`);
       steps.push(tpBeResult);
 
-      // Paso 4: TP final (50%) — SIN reduceOnly para que Bitget respete el size parcial
+      // Paso 4: TP final (50%) — trigger order parcial
       const tpFinalPayload = {
-        marginCoin: orderData.marginCoin.toUpperCase(),
-        productType: orderData.productType.toUpperCase(),
+        planType: 'normal_plan',
         symbol: orderData.symbol.toUpperCase(),
-        planType: 'pos_profit',
+        productType: orderData.productType.toUpperCase(),
+        marginMode: orderData.marginMode || 'isolated',
+        marginCoin: orderData.marginCoin.toUpperCase(),
+        size: tpPartialSizeStr,
+        price: '0',
         triggerPrice: formattedTP,
         triggerType: 'fill_price',
-        executePrice: formattedTP,
+        side: closeSide,
+        tradeSide: 'close',
+        orderType: 'market',
         holdSide,
-        size: tpPartialSizeStr,
         clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
-      console.log(`[Bitget] 📋 Colocando TP final (size=${tpPartialSizeStr}) en ${formattedTP}...`);
-      const tpFinalResult = await placeTriggerWithRetry(tpFinalPayload, 'take_profit_final', `TP_F@${formattedTP}`);
+      console.log(`[Bitget] 📋 Colocando TP final via plan-order (size=${tpPartialSizeStr}) en ${formattedTP}...`);
+      const tpFinalResult = await placeTriggerWithRetry(planEndpoint, tpFinalPayload, 'take_profit_final', `TP_F@${formattedTP}`);
       steps.push(tpFinalResult);
 
       const allTriggers = [slResult, tpBeResult, tpFinalResult];
@@ -664,8 +677,9 @@ export class BitgetService {
         payloads: {
           endpoint_place_order: 'POST /api/v2/mix/order/place-order',
           placeOrder: placeOrderPayload,
-          endpoint_place_tpsl: 'POST /api/v2/mix/order/place-tpsl-order',
+          endpoint_sl: 'POST /api/v2/mix/order/place-tpsl-order',
           stopLoss: slPayload,
+          endpoint_tp_plan: 'POST /api/v2/mix/order/place-plan-order',
           takeProfitBreakeven: tpBePayload,
           takeProfitFinal: tpFinalPayload,
         },
