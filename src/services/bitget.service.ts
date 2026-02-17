@@ -547,7 +547,7 @@ export class BitgetService {
       const baseId = `${timestamp}${Math.floor(Math.random() * 1000)}`;
       const tpslEndpoint = '/api/v2/mix/order/place-tpsl-order';
 
-      // Paso 2: SL como plan order con tamaño total (All closable) — Bitget muestra "All closable" cuando size = posición
+      // Paso 2: SL como plan order con tamaño total (All closable)
       const slPayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -558,6 +558,7 @@ export class BitgetService {
         executePrice: formattedSL,
         holdSide,
         size: fullSizeStr,
+        reduceOnly: 'YES',
         clientOid: `SL_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
@@ -570,6 +571,7 @@ export class BitgetService {
       steps.push(slResult);
 
       // Paso 3: Colocar 2 TPs parciales — cada uno con MITAD del order quantity (tpPartialSizeStr), nunca cierre total
+      // reduceOnly: 'YES' indica cierre parcial para que Bitget respete el size (sin ello la UI puede mostrar "All closable")
       const tpBePayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -580,6 +582,7 @@ export class BitgetService {
         executePrice: formattedBE,
         holdSide,
         size: tpPartialSizeStr,
+        reduceOnly: 'YES',
         clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
@@ -593,6 +596,7 @@ export class BitgetService {
         executePrice: formattedTP,
         holdSide,
         size: tpPartialSizeStr,
+        reduceOnly: 'YES',
         clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
