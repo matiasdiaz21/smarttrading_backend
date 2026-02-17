@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { AiConfigModel, AiConfigRow } from '../models/AiConfig';
 import { AiAssetModel, AiAssetRow } from '../models/AiAsset';
-import { AiPredictionModel } from '../models/AiPrediction';
+import { AiPredictionModel, AiPredictionRow } from '../models/AiPrediction';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const BITGET_API_URL = 'https://api.bitget.com';
@@ -111,6 +111,90 @@ function calculateMACD(
   };
 }
 
+/** ATR(14): Average True Range para volatilidad y tamaños de SL/TP */
+function calculateATR(candles: Candle[], period: number = 14): number {
+  if (candles.length < period + 1) return 0;
+  const tr: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const high = candles[i].high;
+    const low = candles[i].low;
+    const prevClose = candles[i - 1].close;
+    tr.push(Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose)));
+  }
+  const atrValues: number[] = [];
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += tr[i];
+  atrValues.push(sum / period);
+  for (let i = period; i < tr.length; i++) {
+    atrValues.push((atrValues[atrValues.length - 1] * (period - 1) + tr[i]) / period);
+  }
+  const last = atrValues[atrValues.length - 1];
+  return Math.round(last * 100000) / 100000;
+}
+
+/** Bollinger Bands (20, 2): middle=SMA20, upper/lower, %B = (close - lower)/(upper - lower) */
+function calculateBollingerBands(
+  closes: number[],
+  period: number = 20,
+  stdDevMult: number = 2
+): { middle: number; upper: number; lower: number; percentB: number } {
+  if (closes.length < period) {
+    const c = closes[closes.length - 1];
+    return { middle: c, upper: c, lower: c, percentB: 0.5 };
+  }
+  const slice = closes.slice(-period);
+  const middle = slice.reduce((a, b) => a + b, 0) / period;
+  const variance = slice.reduce((s, p) => s + (p - middle) ** 2, 0) / period;
+  const std = Math.sqrt(variance);
+  const upper = middle + stdDevMult * std;
+  const lower = middle - stdDevMult * std;
+  const lastClose = closes[closes.length - 1];
+  const bandWidth = upper - lower;
+  const percentB = bandWidth === 0 ? 0.5 : (lastClose - lower) / bandWidth;
+  return {
+    middle: Math.round(middle * 100000) / 100000,
+    upper: Math.round(upper * 100000) / 100000,
+    lower: Math.round(lower * 100000) / 100000,
+    percentB: Math.round(percentB * 1000) / 1000,
+  };
+}
+
+function lastEmaValue(ema: number[], period: number): number {
+  const idx = ema.length - 1;
+  if (idx < period - 1 || ema[idx] == null) return 0;
+  return Math.round(ema[idx] * 100000) / 100000;
+}
+
+/** Últimos valores de EMA(9), EMA(21), EMA(50) para alineación de tendencia */
+function getEMASummary(closes: number[]): { ema9: number; ema21: number; ema50: number } {
+  const ema9 = calculateEMA(closes, 9);
+  const ema21 = calculateEMA(closes, 21);
+  const ema50 = calculateEMA(closes, 50);
+  return {
+    ema9: lastEmaValue(ema9, 9),
+    ema21: lastEmaValue(ema21, 21),
+    ema50: lastEmaValue(ema50, 50),
+  };
+}
+
+/** Descripción técnica: precio vs EMAs y estructura (alcista/bajista/lateral) */
+function describePriceStructure(
+  close: number,
+  ema9: number,
+  ema21: number,
+  ema50: number
+): string {
+  if (!ema21 || !ema50) return 'EMAs insuficientes';
+  const above21 = close > ema21;
+  const above50 = close > ema50;
+  const ema21Above50 = ema21 > ema50;
+  if (above21 && above50 && ema21Above50) return 'Alcista: precio > EMA21 > EMA50';
+  if (!above21 && !above50 && !ema21Above50) return 'Bajista: precio < EMA21 < EMA50';
+  if (above50 && !above21) return 'Corrección en tendencia alcista: precio entre EMA21 y EMA50';
+  if (!above50 && above21) return 'Rebote en tendencia bajista: precio entre EMA50 y EMA21';
+  return 'Lateral o cruces recientes; confirmar con RSI/MACD';
+}
+
 // ===================== Bitget Market Data =====================
 
 async function fetchCandles(
@@ -123,7 +207,7 @@ async function fetchCandles(
     const response = await axios.get(`${BITGET_API_URL}/api/v2/mix/market/candles`, {
       params: {
         symbol: symbol.toUpperCase(),
-        productType: productType.toLowerCase(),
+        productType: productType.toUpperCase(),
         granularity,
         limit: String(limit),
       },
@@ -152,7 +236,7 @@ async function fetchCurrentPrice(symbol: string, productType: string = 'USDT-FUT
     const response = await axios.get(`${BITGET_API_URL}/api/v2/mix/market/ticker`, {
       params: {
         symbol: symbol.toUpperCase(),
-        productType: productType.toLowerCase(),
+        productType: productType.toUpperCase(),
       },
     });
 
@@ -189,8 +273,16 @@ function buildAutoPrompt(data: {
   rsi4h: number;
   macd1h: { macd: number; signal: number; histogram: number };
   macd4h: { macd: number; signal: number; histogram: number };
+  atr1h: number;
+  atr4h: number;
+  bb1h: { middle: number; upper: number; lower: number; percentB: number };
+  bb4h: { middle: number; upper: number; lower: number; percentB: number };
+  ema1h: { ema9: number; ema21: number; ema50: number };
+  ema4h: { ema9: number; ema21: number; ema50: number };
+  structure1h: string;
+  structure4h: string;
 }): string {
-  const { symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h } = data;
+  const { symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h, atr1h, atr4h, bb1h, bb4h, ema1h, ema4h, structure1h, structure4h } = data;
 
   // Price change calculations
   const last1h = candles1h.slice(-24);
@@ -217,10 +309,16 @@ CURRENT STATE:
 - Last 1H Volume: ${lastVolume} (${volRatio}x average)
 
 TECHNICAL INDICATORS:
-- RSI (14) 1H: ${rsi1h.toFixed(2)}
-- RSI (14) 4H: ${rsi4h.toFixed(2)}
+- RSI (14) 1H: ${rsi1h.toFixed(2)} | 4H: ${rsi4h.toFixed(2)}
 - MACD 1H: Line=${macd1h.macd}, Signal=${macd1h.signal}, Histogram=${macd1h.histogram}
 - MACD 4H: Line=${macd4h.macd}, Signal=${macd4h.signal}, Histogram=${macd4h.histogram}
+- ATR (14) 1H: ${atr1h} | 4H: ${atr4h} (usar para SL/TP en múltiplos de ATR)
+- Bollinger (20,2) 1H: Middle=${bb1h.middle}, Upper=${bb1h.upper}, Lower=${bb1h.lower}, %B=${bb1h.percentB}
+- Bollinger (20,2) 4H: Middle=${bb4h.middle}, Upper=${bb4h.upper}, Lower=${bb4h.lower}, %B=${bb4h.percentB}
+- EMA 1H: EMA9=${ema1h.ema9}, EMA21=${ema1h.ema21}, EMA50=${ema1h.ema50}
+- EMA 4H: EMA9=${ema4h.ema9}, EMA21=${ema4h.ema21}, EMA50=${ema4h.ema50}
+- Estructura 1H: ${structure1h}
+- Estructura 4H: ${structure4h}
 
 RECENT 1H CANDLES (last 25):
 ${formatCandlesForPrompt(candles1h, 25)}
@@ -378,8 +476,16 @@ export async function analyzeAsset(
   const rsi4h = calculateRSI(closes4h);
   const macd1h = calculateMACD(closes1h);
   const macd4h = calculateMACD(closes4h);
+  const atr1h = calculateATR(candles1h, 14);
+  const atr4h = calculateATR(candles4h, 14);
+  const bb1h = calculateBollingerBands(closes1h, 20, 2);
+  const bb4h = calculateBollingerBands(closes4h, 20, 2);
+  const ema1h = getEMASummary(closes1h);
+  const ema4h = getEMASummary(closes4h);
+  const structure1h = describePriceStructure(currentPrice, ema1h.ema9, ema1h.ema21, ema1h.ema50);
+  const structure4h = describePriceStructure(currentPrice, ema4h.ema9, ema4h.ema21, ema4h.ema50);
 
-  console.log(`[AI Service] 📈 Indicadores: RSI_1H=${rsi1h.toFixed(2)}, RSI_4H=${rsi4h.toFixed(2)}, MACD_1H=${macd1h.macd}, MACD_4H=${macd4h.macd}`);
+  console.log(`[AI Service] 📈 Indicadores: RSI_1H=${rsi1h.toFixed(2)}, RSI_4H=${rsi4h.toFixed(2)}, MACD_1H=${macd1h.macd}, MACD_4H=${macd4h.macd}, ATR_1H=${atr1h}, ATR_4H=${atr4h}`);
 
   // 3. Build prompt - automatic or from custom template
   const assetCategory = getAssetCategory(symbol);
@@ -396,6 +502,14 @@ export async function analyzeAsset(
       .replace(/\{\{rsi_4h\}\}/g, rsi4h.toFixed(2))
       .replace(/\{\{macd_1h\}\}/g, `MACD: ${macd1h.macd}, Signal: ${macd1h.signal}, Histogram: ${macd1h.histogram}`)
       .replace(/\{\{macd_4h\}\}/g, `MACD: ${macd4h.macd}, Signal: ${macd4h.signal}, Histogram: ${macd4h.histogram}`)
+      .replace(/\{\{atr_1h\}\}/g, atr1h.toString())
+      .replace(/\{\{atr_4h\}\}/g, atr4h.toString())
+      .replace(/\{\{bb_1h\}\}/g, `Middle: ${bb1h.middle}, Upper: ${bb1h.upper}, Lower: ${bb1h.lower}, %B: ${bb1h.percentB}`)
+      .replace(/\{\{bb_4h\}\}/g, `Middle: ${bb4h.middle}, Upper: ${bb4h.upper}, Lower: ${bb4h.lower}, %B: ${bb4h.percentB}`)
+      .replace(/\{\{ema_1h\}\}/g, `EMA9: ${ema1h.ema9}, EMA21: ${ema1h.ema21}, EMA50: ${ema1h.ema50}`)
+      .replace(/\{\{ema_4h\}\}/g, `EMA9: ${ema4h.ema9}, EMA21: ${ema4h.ema21}, EMA50: ${ema4h.ema50}`)
+      .replace(/\{\{structure_1h\}\}/g, structure1h)
+      .replace(/\{\{structure_4h\}\}/g, structure4h)
       .replace(/\{\{current_price\}\}/g, currentPrice.toString())
       .replace(/\{\{asset_category\}\}/g, assetCategory)
       .replace(/\{\{category_instructions\}\}/g, categoryInstructions);
@@ -405,7 +519,10 @@ export async function analyzeAsset(
     }
   } else {
     // Fully automatic prompt - no template needed
-    userPrompt = buildAutoPrompt({ symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h });
+    userPrompt = buildAutoPrompt({
+      symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h,
+      atr1h, atr4h, bb1h, bb4h, ema1h, ema4h, structure1h, structure4h,
+    });
     userPrompt = `## Contexto del activo (${assetCategory}):\n${categoryInstructions}\n\n` + userPrompt;
   }
 
@@ -520,84 +637,188 @@ export async function runFullAnalysis(): Promise<{
 
 // ===================== Check Prediction Results =====================
 
+/**
+ * Fetch 5-minute candles from a start timestamp to now.
+ * Bitget limits to 200 candles per request (~16.6 hours at 5min).
+ * Paginates automatically if the prediction is older.
+ */
+async function fetchCandlesSince(
+  symbol: string,
+  startTimeMs: number,
+  productType: string = 'USDT-FUTURES'
+): Promise<Candle[]> {
+  const allCandles: Candle[] = [];
+  const granularity = '5min';
+  const maxPerRequest = 200;
+  const candleIntervalMs = 5 * 60 * 1000; // 5 minutes
+  let currentStart = startTimeMs;
+  const now = Date.now();
+
+  while (currentStart < now) {
+    try {
+      const response = await axios.get(`${BITGET_API_URL}/api/v2/mix/market/candles`, {
+        params: {
+          symbol: symbol.toUpperCase(),
+          productType: productType.toUpperCase(),
+          granularity,
+          startTime: String(currentStart),
+          endTime: String(now),
+          limit: String(maxPerRequest),
+        },
+      });
+
+      if (response.data.code === '00000' && Array.isArray(response.data.data) && response.data.data.length > 0) {
+        const candles: Candle[] = response.data.data.map((c: any[]) => ({
+          timestamp: parseInt(c[0]),
+          open: parseFloat(c[1]),
+          high: parseFloat(c[2]),
+          low: parseFloat(c[3]),
+          close: parseFloat(c[4]),
+          volume: parseFloat(c[5]),
+        }));
+
+        // Bitget returns newest first, reverse to oldest first
+        candles.reverse();
+        allCandles.push(...candles);
+
+        if (candles.length < maxPerRequest) {
+          break; // No more data
+        }
+
+        // Move start to after the last candle we received
+        const lastTs = candles[candles.length - 1].timestamp;
+        currentStart = lastTs + candleIntervalMs;
+      } else {
+        break;
+      }
+    } catch (error: any) {
+      console.error(`[AI Service] Error fetching 5min candles for ${symbol} from ${currentStart}: ${error.message}`);
+      break;
+    }
+
+    // Small delay to respect rate limits
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  return allCandles;
+}
+
+/**
+ * Walk through candles chronologically and determine if SL or TP was hit.
+ * Returns the first hit found. If both are hit in the same candle, SL wins (conservative).
+ */
+function resolveWithCandles(
+  candles: Candle[],
+  prediction: AiPredictionRow
+): { status: 'won' | 'lost'; resultPrice: number; pnlPercent: number; hitTimestamp: number } | null {
+  const { side, entry_price, stop_loss, take_profit } = prediction;
+
+  for (const candle of candles) {
+    let hitSL = false;
+    let hitTP = false;
+
+    if (side === 'LONG') {
+      // LONG: SL hit if low <= stop_loss, TP hit if high >= take_profit
+      hitSL = candle.low <= stop_loss;
+      hitTP = candle.high >= take_profit;
+    } else {
+      // SHORT: SL hit if high >= stop_loss, TP hit if low <= take_profit
+      hitSL = candle.high >= stop_loss;
+      hitTP = candle.low <= take_profit;
+    }
+
+    // If both hit in same candle, SL takes priority (worst case / conservative)
+    if (hitSL && hitTP) {
+      const pnl = side === 'LONG'
+        ? ((stop_loss - entry_price) / entry_price) * 100
+        : ((entry_price - stop_loss) / entry_price) * 100;
+      return { status: 'lost', resultPrice: stop_loss, pnlPercent: Math.round(pnl * 100) / 100, hitTimestamp: candle.timestamp };
+    }
+
+    if (hitSL) {
+      const pnl = side === 'LONG'
+        ? ((stop_loss - entry_price) / entry_price) * 100
+        : ((entry_price - stop_loss) / entry_price) * 100;
+      return { status: 'lost', resultPrice: stop_loss, pnlPercent: Math.round(pnl * 100) / 100, hitTimestamp: candle.timestamp };
+    }
+
+    if (hitTP) {
+      const pnl = side === 'LONG'
+        ? ((take_profit - entry_price) / entry_price) * 100
+        : ((entry_price - take_profit) / entry_price) * 100;
+      return { status: 'won', resultPrice: take_profit, pnlPercent: Math.round(pnl * 100) / 100, hitTimestamp: candle.timestamp };
+    }
+  }
+
+  return null; // Neither SL nor TP hit yet
+}
+
 export async function checkPredictionResults(): Promise<{
   checked: number;
   resolved: number;
   results: Array<{ id: number; symbol: string; status: string; pnl: number }>;
 }> {
+  // Expire old ones first
+  await AiPredictionModel.expireOld();
+
   const activePredictions = await AiPredictionModel.findActive();
 
   if (activePredictions.length === 0) {
     return { checked: 0, resolved: 0, results: [] };
   }
 
-  console.log(`[AI Service] 🔍 Verificando ${activePredictions.length} predicciones activas...`);
-
-  // Expire old ones first
-  await AiPredictionModel.expireOld();
-
-  // Get unique symbols
-  const symbols = [...new Set(activePredictions.map(p => p.symbol))];
-
-  // Fetch current prices for all symbols in parallel
-  const priceMap: Record<string, number> = {};
-  await Promise.all(
-    symbols.map(async (symbol) => {
-      try {
-        priceMap[symbol] = await fetchCurrentPrice(symbol);
-      } catch (error: any) {
-        console.error(`[AI Service] Error getting price for ${symbol}: ${error.message}`);
-      }
-    })
-  );
+  console.log(`[AI Service] 🔍 Verificando ${activePredictions.length} predicciones activas con velas históricas...`);
 
   const results: Array<{ id: number; symbol: string; status: string; pnl: number }> = [];
   let resolved = 0;
 
   for (const prediction of activePredictions) {
-    const currentPrice = priceMap[prediction.symbol];
-    if (!currentPrice) continue;
-
-    // Check if expired
-    if (new Date(prediction.expires_at) < new Date()) {
-      await AiPredictionModel.updateStatus(prediction.id, 'expired', 'auto', currentPrice);
-      resolved++;
-      results.push({ id: prediction.id, symbol: prediction.symbol, status: 'expired', pnl: 0 });
-      continue;
-    }
-
-    let status: 'won' | 'lost' | null = null;
-    let pnlPercent = 0;
-
-    if (prediction.side === 'LONG') {
-      // LONG: won if price >= TP, lost if price <= SL
-      if (currentPrice >= prediction.take_profit) {
-        status = 'won';
-        pnlPercent = ((prediction.take_profit - prediction.entry_price) / prediction.entry_price) * 100;
-      } else if (currentPrice <= prediction.stop_loss) {
-        status = 'lost';
-        pnlPercent = ((prediction.stop_loss - prediction.entry_price) / prediction.entry_price) * 100;
+    try {
+      // Check if expired first
+      if (new Date(prediction.expires_at) < new Date()) {
+        let currentPrice: number | undefined;
+        try { currentPrice = await fetchCurrentPrice(prediction.symbol); } catch {}
+        await AiPredictionModel.updateStatus(prediction.id, 'expired', 'auto', currentPrice);
+        resolved++;
+        results.push({ id: prediction.id, symbol: prediction.symbol, status: 'expired', pnl: 0 });
+        console.log(`[AI Service] ⏰ Predicción #${prediction.id} ${prediction.symbol}: expirada`);
+        continue;
       }
-    } else {
-      // SHORT: won if price <= TP, lost if price >= SL
-      if (currentPrice <= prediction.take_profit) {
-        status = 'won';
-        pnlPercent = ((prediction.entry_price - prediction.take_profit) / prediction.entry_price) * 100;
-      } else if (currentPrice >= prediction.stop_loss) {
-        status = 'lost';
-        pnlPercent = ((prediction.entry_price - prediction.stop_loss) / prediction.entry_price) * 100;
+
+      // Fetch 5min candles from prediction creation time to now
+      const startMs = new Date(prediction.created_at).getTime();
+      console.log(`[AI Service] 📊 #${prediction.id} ${prediction.symbol} ${prediction.side}: obteniendo velas 5min desde ${new Date(startMs).toISOString()}...`);
+
+      const candles = await fetchCandlesSince(prediction.symbol, startMs);
+
+      if (candles.length === 0) {
+        console.warn(`[AI Service] ⚠️ #${prediction.id} ${prediction.symbol}: sin velas disponibles, omitiendo`);
+        continue;
       }
+
+      console.log(`[AI Service] 📊 #${prediction.id}: ${candles.length} velas de 5min obtenidas (${new Date(candles[0].timestamp).toISOString()} → ${new Date(candles[candles.length - 1].timestamp).toISOString()})`);
+
+      // Walk candles to find first SL or TP hit
+      const result = resolveWithCandles(candles, prediction);
+
+      if (result) {
+        await AiPredictionModel.updateStatus(prediction.id, result.status, 'auto', result.resultPrice, result.pnlPercent);
+        resolved++;
+        results.push({ id: prediction.id, symbol: prediction.symbol, status: result.status, pnl: result.pnlPercent });
+        const hitTime = new Date(result.hitTimestamp).toISOString();
+        console.log(`[AI Service] ${result.status === 'won' ? '✅' : '❌'} Predicción #${prediction.id} ${prediction.symbol}: ${result.status} a ${result.resultPrice} (${result.pnlPercent}%) — tocó ${result.status === 'won' ? 'TP' : 'SL'} en vela ${hitTime}`);
+      } else {
+        console.log(`[AI Service] ⏳ Predicción #${prediction.id} ${prediction.symbol}: SL/TP no tocados aún (SL=${prediction.stop_loss}, TP=${prediction.take_profit})`);
+      }
+    } catch (error: any) {
+      console.error(`[AI Service] ❌ Error verificando predicción #${prediction.id} ${prediction.symbol}: ${error.message}`);
     }
 
-    if (status) {
-      await AiPredictionModel.updateStatus(prediction.id, status, 'auto', currentPrice, Math.round(pnlPercent * 100) / 100);
-      resolved++;
-      results.push({ id: prediction.id, symbol: prediction.symbol, status, pnl: Math.round(pnlPercent * 100) / 100 });
-      console.log(`[AI Service] ${status === 'won' ? '✅' : '❌'} Predicción #${prediction.id} ${prediction.symbol}: ${status} (${pnlPercent.toFixed(2)}%)`);
-    }
+    // Small delay between predictions to respect rate limits
+    await new Promise(resolve => setTimeout(resolve, 300));
   }
 
-  console.log(`[AI Service] 🔍 Verificación completa: ${results.length} resueltas de ${activePredictions.length} activas`);
+  console.log(`[AI Service] 🔍 Verificación completa: ${resolved} resueltas de ${activePredictions.length} activas`);
 
   return { checked: activePredictions.length, resolved, results };
 }
