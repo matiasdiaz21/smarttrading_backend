@@ -940,10 +940,11 @@ async function fetchCandlesSince(
   productType: string = 'USDT-FUTURES'
 ): Promise<Candle[]> {
   const allCandles: Candle[] = [];
-  const granularity = '5min';
+  const granularity = '5m'; // Bitget exige "5m", no "5min"
   const maxPerRequest = 200;
   const candleIntervalMs = 5 * 60 * 1000; // 5 minutes
-  let currentStart = startTimeMs;
+  // Bitget: "time unit must be rounded down" — redondear al inicio de vela 5m
+  let currentStart = Math.floor(startTimeMs / candleIntervalMs) * candleIntervalMs;
   const now = Date.now();
 
   while (currentStart < now) {
@@ -961,12 +962,12 @@ async function fetchCandlesSince(
 
       if (response.data.code === '00000' && Array.isArray(response.data.data) && response.data.data.length > 0) {
         const candles: Candle[] = response.data.data.map((c: any[]) => ({
-          timestamp: parseInt(c[0]),
-          open: parseFloat(c[1]),
-          high: parseFloat(c[2]),
-          low: parseFloat(c[3]),
-          close: parseFloat(c[4]),
-          volume: parseFloat(c[5]),
+          timestamp: parseInt(String(c[0])),
+          open: parseFloat(String(c[1])),
+          high: parseFloat(String(c[2])),
+          low: parseFloat(String(c[3])),
+          close: parseFloat(String(c[4])),
+          volume: parseFloat(String(c[5])),
         }));
 
         // Bitget returns newest first, reverse to oldest first
@@ -977,18 +978,20 @@ async function fetchCandlesSince(
           break; // No more data
         }
 
-        // Move start to after the last candle we received
         const lastTs = candles[candles.length - 1].timestamp;
         currentStart = lastTs + candleIntervalMs;
       } else {
+        const msg = response.data?.msg || 'sin datos';
+        if (allCandles.length === 0 && response.data?.code !== '00000') {
+          console.warn(`[AI Service] Bitget candles ${symbol}: code=${response.data?.code} msg=${msg}`);
+        }
         break;
       }
     } catch (error: any) {
-      console.error(`[AI Service] Error fetching 5min candles for ${symbol} from ${currentStart}: ${error.message}`);
+      console.error(`[AI Service] Error fetching 5m candles for ${symbol} from ${currentStart}: ${error.message}`);
       break;
     }
 
-    // Small delay to respect rate limits
     await new Promise(resolve => setTimeout(resolve, 200));
   }
 
