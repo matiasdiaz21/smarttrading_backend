@@ -1608,9 +1608,10 @@ export class BitgetService {
       const endpoint = `/api/v2/mix/order/orders-plan-pending?${queryString}`;
 
       const result = await this.makeRequest('GET', endpoint, credentials);
-      const orders = result?.entrustedList || result || [];
-      console.log(`[Bitget] 📋 Órdenes trigger pendientes para ${symbol}: ${Array.isArray(orders) ? orders.length : 0}`);
-      return Array.isArray(orders) ? orders : [];
+      const orders = result?.entrustedList ?? result?.data?.entrustedList ?? (Array.isArray(result) ? result : []);
+      const list = Array.isArray(orders) ? orders : [];
+      console.log(`[Bitget] 📋 Órdenes trigger pendientes para ${symbol}: ${list.length}`);
+      return list;
     } catch (error: any) {
       console.error(`[Bitget] ❌ Error al obtener órdenes trigger pendientes: ${error.message}`);
       return [];

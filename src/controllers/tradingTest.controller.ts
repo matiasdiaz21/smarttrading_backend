@@ -369,6 +369,60 @@ export class TradingTestController {
   }
 
   /**
+   * POST /api/admin/trading/cancel-triggers
+   * Cancela todas las órdenes trigger (TP/SL) pendientes para un símbolo.
+   * Útil cuando la posición se cerró por otro medio y quedaron triggers huérfanos.
+   */
+  static async cancelTriggers(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const {
+        credential_id,
+        symbol,
+        product_type,
+        margin_coin,
+      } = req.body;
+
+      if (!credential_id || !symbol) {
+        res.status(400).json({ error: 'credential_id y symbol son requeridos' });
+        return;
+      }
+
+      const userId = req.user!.userId;
+      const credentials = await CredentialsModel.findById(credential_id, userId);
+      if (!credentials) {
+        res.status(404).json({ error: 'Credencial no encontrada' });
+        return;
+      }
+
+      const decryptedCredentials = BitgetService.getDecryptedCredentials({
+        api_key: credentials.api_key,
+        api_secret: credentials.api_secret,
+        passphrase: credentials.passphrase,
+      });
+
+      const productType = (product_type || 'USDT-FUTURES').toUpperCase();
+      const marginCoin = (margin_coin || 'USDT').toUpperCase();
+
+      const result = await bitgetService.cancelAllTriggerOrders(
+        decryptedCredentials,
+        symbol.toUpperCase(),
+        productType,
+        marginCoin,
+        { userId, strategyId: null }
+      );
+
+      res.json({
+        success: true,
+        cancelled: result.cancelled,
+        failed: result.failed,
+      });
+    } catch (error: any) {
+      console.error('[CancelTriggers] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
    * GET /api/admin/trading/credentials
    * Lista las credenciales del admin (solo id y nombre)
    */

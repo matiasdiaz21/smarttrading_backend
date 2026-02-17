@@ -177,6 +177,7 @@ app.get('/api/admin/trading/ticker', authenticate, requireAdmin, TradingTestCont
 app.post('/api/admin/trading/test-open', authenticate, requireAdmin, TradingTestController.testOpenPosition);
 app.post('/api/admin/trading/test-breakeven', authenticate, requireAdmin, TradingTestController.testBreakeven);
 app.post('/api/admin/trading/test-close', authenticate, requireAdmin, TradingTestController.testClosePosition);
+app.post('/api/admin/trading/cancel-triggers', authenticate, requireAdmin, TradingTestController.cancelTriggers);
 
 // Error handler
 app.use((err: any, req: Request, res: Response, next: any) => {
