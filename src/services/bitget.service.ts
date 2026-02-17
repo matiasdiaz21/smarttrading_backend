@@ -528,11 +528,9 @@ export class BitgetService {
         };
       }
       
-      // Tamaño parcial 50%: asegurar string con decimales (ej. "0.01") para que Bitget no interprete como "All closable"
+      // Tamaño para cada TP parcial = exactamente la MITAD del order quantity total (nunca el cierre total)
       const volDecimals = Math.max(volumePlace, 2);
-      const halfSizeStr = halfSize >= minTradeNumRounded
-        ? halfSize.toFixed(volDecimals).replace(/\.?0+$/, '') || halfSize.toFixed(volDecimals)
-        : minTradeNumRounded.toFixed(volDecimals);
+      const tpPartialSizeStr = halfSize.toFixed(volDecimals).replace(/\.?0+$/, '') || halfSize.toFixed(volDecimals);
       const formattedBE = parseFloat(tpslData.breakevenPrice!.toFixed(pricePlace)).toString();
       const fullSizeStr = totalSize.toFixed(volDecimals).replace(/\.?0+$/, '') || orderData.size;
 
@@ -571,7 +569,7 @@ export class BitgetService {
         .catch(e => ({ type: 'stop_loss' as const, success: false, error: e.message }));
       steps.push(slResult);
 
-      // Paso 3: Colocar 2 TPs parciales (cada uno size = 0.01 / 50%) para que en UI no salga "All closable"
+      // Paso 3: Colocar 2 TPs parciales — cada uno con MITAD del order quantity (tpPartialSizeStr), nunca cierre total
       const tpBePayload = {
         marginCoin: orderData.marginCoin.toUpperCase(),
         productType: orderData.productType.toUpperCase(),
@@ -581,7 +579,7 @@ export class BitgetService {
         triggerType: 'fill_price',
         executePrice: formattedBE,
         holdSide,
-        size: halfSizeStr,
+        size: tpPartialSizeStr,
         clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
@@ -594,11 +592,11 @@ export class BitgetService {
         triggerType: 'fill_price',
         executePrice: formattedTP,
         holdSide,
-        size: halfSizeStr,
+        size: tpPartialSizeStr,
         clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
       };
 
-      console.log(`[Bitget] 📋 SL (size=${fullSizeStr}) + 2 TPs parciales (cada uno size=${halfSizeStr}): BE (${formattedBE}) + Final (${formattedTP})`);
+      console.log(`[Bitget] 📋 SL (size=${fullSizeStr}) + 2 TPs parciales (cada uno size=${tpPartialSizeStr}, mitad de ${orderData.size}): BE (${formattedBE}) + Final (${formattedTP})`);
 
       const [tpBeResult, tpFinalResult] = await Promise.all([
         this.makeRequest('POST', tpslEndpoint, credentials, tpBePayload, logContext ? {
@@ -619,15 +617,15 @@ export class BitgetService {
       steps.push(tpBeResult, tpFinalResult);
 
       const anyTpOk = tpBeResult.success || tpFinalResult.success;
-      console.log(`[Bitget] ${anyTpOk ? '✅' : '❌'} TPs parciales: BE=${tpBeResult.success ? 'OK' : 'FAIL'}, Final=${tpFinalResult.success ? 'OK' : 'FAIL'} (cada uno size=${halfSizeStr})`);
-
+      console.log(`[Bitget] ${anyTpOk ? '✅' : '❌'} TPs parciales: BE=${tpBeResult.success ? 'OK' : 'FAIL'}, Final=${tpFinalResult.success ? 'OK' : 'FAIL'} (cada uno size=${tpPartialSizeStr})`);
+      
       return {
         success: true,
         orderId: openResult.orderId,
         orderResult: openResult,
         tpslResults: steps,
         method: 'plan_sl_plus_partial_tps',
-        partialTpSize: halfSizeStr,
+        partialTpSize: tpPartialSizeStr,
       };
       
     } catch (error: any) {
