@@ -35,7 +35,7 @@ export class BitgetService {
   private apiBaseUrl: string;
 
   constructor() {
-    this.apiBaseUrl = config.bitget.apiBaseUrl;
+    this.apiBaseUrl = config.bitget.apiBaseUrl.replace(/\/+$/, '');
   }
 
   private generateSignature(
@@ -272,7 +272,7 @@ export class BitgetService {
         {
           params: {
             symbol,
-            productType: productType.toLowerCase(),
+            productType: productType.toUpperCase(),
           },
         }
       );
@@ -426,7 +426,7 @@ export class BitgetService {
 
     const payload: any = {
       symbol: tpslData.symbol.toUpperCase(),
-      productType: tpslData.productType.toLowerCase(),
+      productType: tpslData.productType.toUpperCase(),
       marginCoin: tpslData.marginCoin.toUpperCase(),
       planType: tpslData.planType,
       triggerPrice: tpslData.triggerPrice,
@@ -578,6 +578,29 @@ export class BitgetService {
       const endpoint = '/api/v2/mix/order/place-tpsl-order';
       
       console.log(`[Bitget] 🚀 Configurando TP/SL en PARALELO para ${symbol} ${holdSide}...`);
+
+      // If positionSize not provided, query current position to get total size
+      if (!positionSize) {
+        try {
+          console.log(`[Bitget] 📋 positionSize no proporcionado, consultando posición abierta...`);
+          const posResponse = await this.makeRequest('GET',
+            `/api/v2/mix/position/single-position?symbol=${symbol.toUpperCase()}&productType=${productType.toUpperCase()}&marginCoin=${marginCoin.toUpperCase()}`,
+            credentials
+          );
+          const positions = posResponse?.data || [];
+          const pos = positions.find((p: any) => p.holdSide === holdSide);
+          if (pos && pos.total) {
+            positionSize = pos.total;
+            console.log(`[Bitget] ✅ Tamaño de posición obtenido: ${positionSize}`);
+          } else {
+            console.error(`[Bitget] ❌ No se encontró posición ${holdSide} para ${symbol}. No se puede configurar TP/SL.`);
+            return [];
+          }
+        } catch (posError: any) {
+          console.error(`[Bitget] ❌ Error al obtener posición: ${posError.message}. No se puede configurar TP/SL sin tamaño.`);
+          return [];
+        }
+      }
       
       // Aplicar precisión de precio según contractInfo
       const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
@@ -617,28 +640,28 @@ export class BitgetService {
       const tpClientOid = `TP_${symbol.substring(0, 8)}_${baseId}_${tpRandom}`.substring(0, 64); // Limitar a 64 caracteres
       const tpPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
-        productType: productType.toLowerCase(),
+        productType: productType.toUpperCase(),
         symbol: symbol.toUpperCase(),
         planType: 'pos_profit',
         triggerPrice: formattedTP.toString(),
         triggerType: 'fill_price',
         executePrice: formattedTP.toString(),
         holdSide,
-        size: positionSize || 'all',
+        size: positionSize,
         clientOid: tpClientOid,
       };
 
       const slClientOid = `SL_${symbol.substring(0, 8)}_${baseId}_${slRandom}`.substring(0, 64);
       const slPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
-        productType: productType.toLowerCase(),
+        productType: productType.toUpperCase(),
         symbol: symbol.toUpperCase(),
         planType: 'pos_loss',
         triggerPrice: formattedSL.toString(),
         triggerType: 'fill_price',
         executePrice: formattedSL.toString(),
         holdSide,
-        size: positionSize || 'all',
+        size: positionSize,
         clientOid: slClientOid,
       };
       
@@ -818,7 +841,7 @@ export class BitgetService {
         const slClientOid = `SL_${symbol.substring(0, 8)}_${baseId}_${slRandom}`.substring(0, 64);
         const slPayload: any = {
           marginCoin: marginCoin.toUpperCase(),
-          productType: productType.toLowerCase(),
+          productType: productType.toUpperCase(),
           symbol: symbol.toUpperCase(),
           planType: 'pos_loss',
           triggerPrice: formattedSL.toString(),
@@ -850,7 +873,7 @@ export class BitgetService {
         const tpClientOid = `TP_F_${symbol.substring(0, 8)}_${baseId}_${tpRandom}`.substring(0, 64);
         const tpPayload: any = {
           marginCoin: marginCoin.toUpperCase(),
-          productType: productType.toLowerCase(),
+          productType: productType.toUpperCase(),
           symbol: symbol.toUpperCase(),
           planType: 'pos_profit',
           triggerPrice: formattedTP.toString(),
@@ -958,7 +981,7 @@ export class BitgetService {
       const endpoint = '/api/v2/mix/order/place-pos-tpsl';
       const payload: any = {
         marginCoin,
-        productType: productType.toLowerCase(), // Bitget requiere lowercase
+        productType: productType.toUpperCase(),
         symbol,
         holdSide,
       };
@@ -1028,7 +1051,7 @@ export class BitgetService {
   ): Promise<any[]> {
     try {
       const params: any = {
-        productType: productType.toLowerCase(),
+        productType: productType.toUpperCase(),
         symbol: symbol.toUpperCase(),
       };
       if (planType) {
@@ -1088,7 +1111,7 @@ export class BitgetService {
           try {
             const payload = {
               symbol: symbol.toUpperCase(),
-              productType: productType.toLowerCase(),
+              productType: productType.toUpperCase(),
               marginCoin: marginCoin.toUpperCase(),
               orderId: orderId,
             };
