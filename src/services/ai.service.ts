@@ -312,6 +312,34 @@ async function callGroq(
   }
 }
 
+// ===================== Asset category (crypto / forex / commodities) =====================
+
+export type AssetCategory = 'crypto' | 'forex' | 'commodities';
+
+export function getAssetCategory(symbol: string): AssetCategory {
+  const s = symbol.toUpperCase();
+  // Commodities: oro, plata, petróleo
+  if (/^XAU|^XAG|^WTI|^BRENT|^OIL|^COPPER|^NATURALGAS/i.test(s)) return 'commodities';
+  // Forex: pares típicos (6 caracteres, dos códigos de moneda)
+  const forexPairs = /^(EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD)(USD|EUR|GBP|JPY|CHF|AUD|NZD|CAD)$/;
+  if (s.length >= 6 && s.length <= 8 && forexPairs.test(s)) return 'forex';
+  // Por defecto: crypto (BTCUSDT, ETHUSDT, etc.)
+  return 'crypto';
+}
+
+function getCategoryInstructions(category: AssetCategory): string {
+  switch (category) {
+    case 'crypto':
+      return 'Activo de criptomoneda. El precio suele seguir tendencias técnicas, sentimiento de mercado y flujos. Prioriza el análisis técnico (velas, RSI, MACD) y la estructura de precio.';
+    case 'forex':
+      return 'Par forex: el precio se mueve por fortaleza del dólar (USD), datos macroeconómicos (empleo, inflación, PIB), decisiones de bancos centrales (FED, BCE, BoJ) y noticias geopolíticas. Combina el análisis técnico con el contexto macro; si no hay datos macro recientes en el prompt, prioriza la estructura técnica pero ten en cuenta que los movimientos pueden ser más impulsados por noticias y datos que en crypto.';
+    case 'commodities':
+      return 'Commodity (ej. oro, plata, petróleo): el precio reacciona al dólar (USD), inflación, tipos de interés, oferta/demanda y noticias geopolíticas. Combina el análisis técnico con el contexto macro (fortaleza del USD, datos de la FED, tensión geopolítica). En commodities la correlación inversa con el dólar es frecuente.';
+    default:
+      return getCategoryInstructions('crypto');
+  }
+}
+
 // ===================== Main Analysis Function =====================
 
 export async function analyzeAsset(
@@ -354,6 +382,9 @@ export async function analyzeAsset(
   console.log(`[AI Service] 📈 Indicadores: RSI_1H=${rsi1h.toFixed(2)}, RSI_4H=${rsi4h.toFixed(2)}, MACD_1H=${macd1h.macd}, MACD_4H=${macd4h.macd}`);
 
   // 3. Build prompt - automatic or from custom template
+  const assetCategory = getAssetCategory(symbol);
+  const categoryInstructions = getCategoryInstructions(assetCategory);
+
   let userPrompt: string;
   if (config.analysis_prompt_template && config.analysis_prompt_template.trim().length > 0) {
     // Admin provided a custom template with placeholders
@@ -365,16 +396,23 @@ export async function analyzeAsset(
       .replace(/\{\{rsi_4h\}\}/g, rsi4h.toFixed(2))
       .replace(/\{\{macd_1h\}\}/g, `MACD: ${macd1h.macd}, Signal: ${macd1h.signal}, Histogram: ${macd1h.histogram}`)
       .replace(/\{\{macd_4h\}\}/g, `MACD: ${macd4h.macd}, Signal: ${macd4h.signal}, Histogram: ${macd4h.histogram}`)
-      .replace(/\{\{current_price\}\}/g, currentPrice.toString());
+      .replace(/\{\{current_price\}\}/g, currentPrice.toString())
+      .replace(/\{\{asset_category\}\}/g, assetCategory)
+      .replace(/\{\{category_instructions\}\}/g, categoryInstructions);
+    // Si el template no incluyó el bloque de contexto por categoría, lo anteponemos
+    if (!config.analysis_prompt_template.includes('{{category_instructions}}')) {
+      userPrompt = `## Contexto del activo (${assetCategory}):\n${categoryInstructions}\n\n` + userPrompt;
+    }
   } else {
     // Fully automatic prompt - no template needed
     userPrompt = buildAutoPrompt({ symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h });
+    userPrompt = `## Contexto del activo (${assetCategory}):\n${categoryInstructions}\n\n` + userPrompt;
   }
 
   // 4. Call Groq
   const systemPrompt = config.system_prompt && config.system_prompt.trim().length > 0
     ? config.system_prompt
-    : `You are an expert cryptocurrency and futures trading analyst. You analyze technical indicators (RSI, MACD), candlestick patterns, price action, support/resistance levels, and volume to provide high-quality trading signals. You only recommend trades when you have high confidence. Always provide precise entry, stop loss, and take profit prices. Respond ONLY in valid JSON format.`;
+    : `You are an expert trading analyst with experience in cryptocurrencies, forex and commodities. You analyze technical data (candles, RSI, MACD) and provide precise predictions with entry, stop loss and take profit levels. Your approach adapts to the asset type: for crypto focus on technical structure and sentiment; for forex and commodities consider USD strength, macro data and central bank policy as they drive price. Always respond in valid JSON format only.`;
 
   console.log(`[AI Service] 🤖 Consultando Groq (${config.groq_model})...`);
   const { response, tokensUsed, rawResponse } = await callGroq(
