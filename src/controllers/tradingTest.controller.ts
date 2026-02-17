@@ -116,6 +116,7 @@ export class TradingTestController {
         breakevenSkippedReason: result.breakevenSkippedReason,
         minSizeForPartial: result.minSizeForPartial,
         partialTpSize: result.partialTpSize,
+        payloads: result.payloads ?? undefined,
       });
     } catch (error: any) {
       console.error('[TestOrder] Error:', error.message);

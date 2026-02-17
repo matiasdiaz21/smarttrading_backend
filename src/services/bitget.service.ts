@@ -618,7 +618,23 @@ export class BitgetService {
 
       const anyTpOk = tpBeResult.success || tpFinalResult.success;
       console.log(`[Bitget] ${anyTpOk ? '✅' : '❌'} TPs parciales: BE=${tpBeResult.success ? 'OK' : 'FAIL'}, Final=${tpFinalResult.success ? 'OK' : 'FAIL'} (cada uno size=${tpPartialSizeStr})`);
-      
+
+      // Payloads enviados a Bitget (para debug en test-orders)
+      const placeOrderPayload: any = {
+        symbol: orderData.symbol,
+        productType: orderData.productType,
+        marginMode: orderData.marginMode,
+        marginCoin: orderData.marginCoin,
+        size: orderData.size,
+        side: orderData.side,
+        orderType: orderData.orderType,
+        tradeSide: 'open',
+        holdSide,
+        clientOid: orderData.clientOid,
+      };
+      if (orderData.orderType === 'limit') placeOrderPayload.force = 'gtc';
+      if (orderData.price) placeOrderPayload.price = orderData.price;
+
       return {
         success: true,
         orderId: openResult.orderId,
@@ -626,6 +642,14 @@ export class BitgetService {
         tpslResults: steps,
         method: 'plan_sl_plus_partial_tps',
         partialTpSize: tpPartialSizeStr,
+        payloads: {
+          endpoint_place_order: 'POST /api/v2/mix/order/place-order',
+          placeOrder: placeOrderPayload,
+          endpoint_place_tpsl: 'POST /api/v2/mix/order/place-tpsl-order',
+          stopLoss: slPayload,
+          takeProfitBreakeven: tpBePayload,
+          takeProfitFinal: tpFinalPayload,
+        },
       };
       
     } catch (error: any) {
