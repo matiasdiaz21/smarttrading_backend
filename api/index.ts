@@ -46,6 +46,7 @@ import { AiController } from '../src/controllers/ai.controller';
 
 import { NotificationsController } from '../src/controllers/notifications.controller';
 import { MassTradeController } from '../src/controllers/massTrade.controller';
+import { TradingTestController } from '../src/controllers/tradingTest.controller';
 import { authenticate, requireAdmin } from '../src/middleware/auth';
 import { authLimiter, webhookLimiter } from '../src/middleware/rateLimit';
 
@@ -272,6 +273,14 @@ app.delete('/api/admin/ai/assets/:id', authenticate, requireAdmin, AiController.
 app.put('/api/admin/ai/predictions/:id/resolve', authenticate, requireAdmin, AiController.resolvePrediction);
 app.post('/api/admin/ai/check-results', authenticate, requireAdmin, AiController.forceCheckResults);
 
+// Trading Test routes (admin)
+app.get('/api/admin/trading/credentials', authenticate, requireAdmin, TradingTestController.getCredentials);
+app.get('/api/admin/trading/positions', authenticate, requireAdmin, TradingTestController.getPositions);
+app.get('/api/admin/trading/pending-triggers', authenticate, requireAdmin, TradingTestController.getPendingTriggers);
+app.get('/api/admin/trading/ticker', authenticate, requireAdmin, TradingTestController.getTicker);
+app.post('/api/admin/trading/test-open', authenticate, requireAdmin, TradingTestController.testOpenPosition);
+app.post('/api/admin/trading/test-breakeven', authenticate, requireAdmin, TradingTestController.testBreakeven);
+app.post('/api/admin/trading/test-close', authenticate, requireAdmin, TradingTestController.testClosePosition);
 
 // Error handler
 app.use((err: any, req: Request, res: Response, next: any) => {

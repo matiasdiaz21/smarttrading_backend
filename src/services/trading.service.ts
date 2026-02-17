@@ -414,15 +414,14 @@ export class TradingService {
           console.log(`[TradeService] 📊 Partial TP habilitado: ${usePartialTp}`);
           
           if (alert.breakeven && alert.breakeven > 0 && usePartialTp) {
-            console.log(`[TradeService] 🎯 Configurando estrategia con breakeven (TP 50% en breakeven, TP 50% en takeProfit)`);
-            
-            tpslResults = await this.bitgetService.setAdvancedPositionTPSL(
+            // Intentar primero: SL + TP 50% breakeven + TP 50% final en una sola pasada (sin depender de alerta BREAKEVEN)
+            const partialAtOpen = await this.bitgetService.setPositionTPSLWithPartialAtOpen(
               decryptedCredentials,
               symbol,
               bitgetSide,
-              alert.stopLoss,
-              alert.breakeven,
-              alert.takeProfit,
+              parseFloat(alert.stopLoss.toString()),
+              parseFloat(alert.breakeven.toString()),
+              parseFloat(alert.takeProfit.toString()),
               actualPositionSize,
               productType,
               alert.marginCoin || 'USDT',
@@ -432,8 +431,35 @@ export class TradingService {
                 strategyId,
                 orderId: result?.orderId,
               },
-              entryPrice ? parseFloat(entryPrice.toString()) : undefined // Optimización: evita getTickerPrice
+              entryPrice ? parseFloat(entryPrice.toString()) : undefined
             );
+
+            if (partialAtOpen.success) {
+              console.log(`[TradeService] ✅ TP/SL con parcial configurados al abrir (SL + TP 50% BE + TP 50% final). No se requiere alerta BREAKEVEN.`);
+              tpslResults = partialAtOpen.results;
+            } else if (partialAtOpen.fallbackRecommended) {
+              console.log(`[TradeService] 🎯 Fallback: configurando SL + TP 100% (breakeven se procesará cuando TradingView envíe BREAKEVEN)`);
+              tpslResults = await this.bitgetService.setAdvancedPositionTPSL(
+                decryptedCredentials,
+                symbol,
+                bitgetSide,
+                alert.stopLoss,
+                alert.breakeven,
+                alert.takeProfit,
+                actualPositionSize,
+                productType,
+                alert.marginCoin || 'USDT',
+                contractInfo,
+                {
+                  userId,
+                  strategyId,
+                  orderId: result?.orderId,
+                },
+                entryPrice ? parseFloat(entryPrice.toString()) : undefined
+              );
+            } else {
+              tpslResults = partialAtOpen.results;
+            }
           } else {
             // Si no hay breakeven, usar el método básico (TP 100% en takeProfit)
             console.log(`[TradeService] 🎯 Configurando estrategia básica (TP 100% en takeProfit, sin breakeven)`);
@@ -459,7 +485,7 @@ export class TradingService {
           
           // Verificar si TP y SL se configuraron exitosamente
           const slSuccess = Array.isArray(tpslResults) ? tpslResults.some(r => r.type === 'stop_loss' && r.success) : false;
-          const tpSuccess = Array.isArray(tpslResults) ? tpslResults.some(r => (r.type === 'take_profit' || r.type === 'take_profit_final') && r.success) : false;
+          const tpSuccess = Array.isArray(tpslResults) ? tpslResults.some(r => (r.type === 'take_profit' || r.type === 'take_profit_final' || r.type === 'take_profit_partial') && r.success) : false;
           
           if (slSuccess && tpSuccess) {
             console.log(`[TradeService] ✅ Todas las órdenes TP/SL configuradas exitosamente en Bitget`);

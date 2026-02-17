@@ -29,6 +29,7 @@ import { StatsController } from './controllers/stats.controller';
 import { SettingsController } from './controllers/settings.controller';
 import { NotificationsController } from './controllers/notifications.controller';
 import { MassTradeController } from './controllers/massTrade.controller';
+import { TradingTestController } from './controllers/tradingTest.controller';
 import { authenticate, requireAdmin } from './middleware/auth';
 import { authLimiter, webhookLimiter } from './middleware/rateLimit';
 import { config } from './config';
@@ -167,6 +168,15 @@ app.post('/api/admin/bitget-operation-logs/:id/unreview', AdminController.markLo
 app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats);
 app.get('/api/admin/settings', authenticate, requireAdmin, SettingsController.getAdmin);
 app.put('/api/admin/settings', authenticate, requireAdmin, SettingsController.updateAdmin);
+
+// Trading Test routes (admin)
+app.get('/api/admin/trading/credentials', authenticate, requireAdmin, TradingTestController.getCredentials);
+app.get('/api/admin/trading/positions', authenticate, requireAdmin, TradingTestController.getPositions);
+app.get('/api/admin/trading/pending-triggers', authenticate, requireAdmin, TradingTestController.getPendingTriggers);
+app.get('/api/admin/trading/ticker', authenticate, requireAdmin, TradingTestController.getTicker);
+app.post('/api/admin/trading/test-open', authenticate, requireAdmin, TradingTestController.testOpenPosition);
+app.post('/api/admin/trading/test-breakeven', authenticate, requireAdmin, TradingTestController.testBreakeven);
+app.post('/api/admin/trading/test-close', authenticate, requireAdmin, TradingTestController.testClosePosition);
 
 // Error handler
 app.use((err: any, req: Request, res: Response, next: any) => {
