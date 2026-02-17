@@ -325,6 +325,13 @@ export async function analyzeAsset(
     throw new Error('Groq API key no configurada');
   }
 
+  // 0. Check if there's already an active prediction for this symbol
+  const hasActive = await AiPredictionModel.hasActiveBySymbol(symbol);
+  if (hasActive) {
+    console.log(`[AI Service] ⏭️ ${symbol} ya tiene una predicción activa. Omitiendo.`);
+    return null;
+  }
+
   // 1. Fetch market data from Bitget (public endpoints, no auth)
   console.log(`[AI Service] 📊 Obteniendo velas 1H y 4H para ${symbol}...`);
   const [candles1h, candles4h, currentPrice] = await Promise.all([
@@ -398,6 +405,8 @@ export async function analyzeAsset(
     groq_model: config.groq_model,
     groq_tokens_used: tokensUsed,
     raw_ai_response: rawResponse,
+    system_prompt_used: systemPrompt,
+    user_prompt_used: userPrompt,
   });
 
   console.log(`[AI Service] 💾 Predicción guardada con ID ${predictionId}`);

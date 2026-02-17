@@ -21,6 +21,8 @@ export interface AiPredictionRow {
   groq_model: string | null;
   groq_tokens_used: number | null;
   raw_ai_response: string | null;
+  system_prompt_used: string | null;
+  user_prompt_used: string | null;
   created_at: Date;
 }
 
@@ -51,16 +53,19 @@ export class AiPredictionModel {
     groq_model: string | null;
     groq_tokens_used: number | null;
     raw_ai_response: string | null;
+    system_prompt_used: string | null;
+    user_prompt_used: string | null;
   }): Promise<number> {
     const [result] = await pool.execute(
       `INSERT INTO ai_predictions 
-       (asset_id, symbol, side, timeframe, entry_price, stop_loss, take_profit, confidence, reasoning, status, price_at_prediction, expires_at, groq_model, groq_tokens_used, raw_ai_response) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`,
+       (asset_id, symbol, side, timeframe, entry_price, stop_loss, take_profit, confidence, reasoning, status, price_at_prediction, expires_at, groq_model, groq_tokens_used, raw_ai_response, system_prompt_used, user_prompt_used) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.asset_id, data.symbol, data.side, data.timeframe,
         data.entry_price, data.stop_loss, data.take_profit, data.confidence,
         data.reasoning, data.price_at_prediction, data.expires_at,
         data.groq_model, data.groq_tokens_used, data.raw_ai_response,
+        data.system_prompt_used || null, data.user_prompt_used || null,
       ]
     );
     return (result as any).insertId;
@@ -129,6 +134,15 @@ export class AiPredictionModel {
 
   static async findActive(): Promise<AiPredictionRow[]> {
     return this.findAll({ status: 'active', limit: 200 });
+  }
+
+  /** Check if there's an active prediction for a given symbol */
+  static async hasActiveBySymbol(symbol: string): Promise<boolean> {
+    const [rows] = await pool.execute(
+      `SELECT id FROM ai_predictions WHERE symbol = ? AND status = 'active' LIMIT 1`,
+      [symbol]
+    );
+    return (rows as any[]).length > 0;
   }
 
   static async updateStatus(
