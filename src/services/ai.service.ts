@@ -438,6 +438,40 @@ function getCategoryInstructions(category: AssetCategory): string {
   }
 }
 
+/**
+ * System prompt específico por tipo de activo.
+ * Cada categoría recibe instrucciones de rol y metodología acordes al mercado.
+ */
+function getSystemPromptForCategory(category: AssetCategory): string {
+  const baseRules = `Requisitos generales:
+1. Solo dar señal cuando haya confluencia entre timeframes (RSI, MACD y estructura alineados en 1H y 4H).
+2. Usar ATR para justificar distancia de stop loss y take profit (ej. SL a 1-2 ATR, TP a 2-3 ATR).
+3. Considerar %B de Bollinger y posición del precio respecto a bandas.
+4. Si la estructura 4H es alcista/bajista, priorizar operaciones en la misma dirección.
+5. Si no hay confluencia clara, devolver confidence < 30.
+6. Responder ÚNICAMENTE en JSON válido.`;
+
+  switch (category) {
+    case 'crypto':
+      return `Eres un analista técnico especializado en criptomonedas y futuros crypto. Tu análisis es estrictamente técnico y multi-timeframe (1H + 4H). Utilizas RSI, MACD, Bollinger Bands, EMAs (9/21/50), ATR y estructura de precio. En crypto el precio sigue principalmente patrones técnicos, momentum, sentimiento de mercado y flujos de capital. No necesitas considerar factores macro salvo eventos extremos (regulación, hacks). Prioriza: estructura técnica > indicadores de momentum > volumen.
+
+${baseRules}`;
+
+    case 'forex':
+      return `Eres un analista de trading especializado en mercados forex. Tu análisis combina técnico multi-timeframe (1H + 4H) con contexto macroeconómico. Utilizas RSI, MACD, Bollinger Bands, EMAs (9/21/50), ATR y estructura de precio. En forex los movimientos están impulsados por: fortaleza relativa de divisas (DXY/USD), decisiones de bancos centrales (FED, BCE, BoE, BoJ), datos macroeconómicos (NFP, CPI, PIB, empleo) y diferencial de tipos de interés. Prioriza: estructura técnica + dirección macro del par. Si los datos técnicos del prompt no muestran confluencia clara, reduce la confianza porque en forex los movimientos impulsados por noticias pueden invalidar patrones técnicos rápidamente.
+
+${baseRules}`;
+
+    case 'commodities':
+      return `Eres un analista de trading especializado en commodities (oro, plata, petróleo, etc.). Tu análisis combina técnico multi-timeframe (1H + 4H) con factores fundamentales propios de materias primas. Utilizas RSI, MACD, Bollinger Bands, EMAs (9/21/50), ATR y estructura de precio. En commodities los drivers clave son: fortaleza del dólar (USD) — correlación inversa frecuente especialmente en oro —, política monetaria de la FED (tipos de interés, QE/QT), inflación y expectativas de inflación, tensiones geopolíticas (guerras, sanciones), y oferta/demanda global. Para oro específicamente: es refugio de valor, sube con incertidumbre y baja con dólar fuerte y yields altos. Prioriza: estructura técnica + contexto USD/macro. Si la estructura 4H muestra tendencia clara, operaciones en esa dirección tienen mayor probabilidad.
+
+${baseRules}`;
+
+    default:
+      return getSystemPromptForCategory('crypto');
+  }
+}
+
 // ===================== Main Analysis Function =====================
 
 export async function analyzeAsset(
@@ -526,12 +560,12 @@ export async function analyzeAsset(
     userPrompt = `## Contexto del activo (${assetCategory}):\n${categoryInstructions}\n\n` + userPrompt;
   }
 
-  // 4. Call Groq
+  // 4. Call Groq — system prompt adapts to asset category
   const systemPrompt = config.system_prompt && config.system_prompt.trim().length > 0
     ? config.system_prompt
-    : `You are an expert trading analyst with experience in cryptocurrencies, forex and commodities. You analyze technical data (candles, RSI, MACD) and provide precise predictions with entry, stop loss and take profit levels. Your approach adapts to the asset type: for crypto focus on technical structure and sentiment; for forex and commodities consider USD strength, macro data and central bank policy as they drive price. Always respond in valid JSON format only.`;
+    : getSystemPromptForCategory(assetCategory);
 
-  console.log(`[AI Service] 🤖 Consultando Groq (${config.groq_model})...`);
+  console.log(`[AI Service] 🤖 Consultando Groq (${config.groq_model}) — categoría: ${assetCategory}...`);
   const { response, tokensUsed, rawResponse } = await callGroq(
     config.groq_api_key,
     config.groq_model,
