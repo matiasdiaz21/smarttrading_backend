@@ -161,9 +161,16 @@ export class AiController {
   /** POST /api/admin/ai/assets - Add asset */
   static async addAsset(req: AuthRequest, res: Response): Promise<void> {
     try {
-      const { symbol, display_name, product_type } = req.body;
+      const { symbol, display_name, product_type, category } = req.body;
       if (!symbol) {
         res.status(400).json({ error: 'Symbol es requerido' });
+        return;
+      }
+
+      // Validate category if provided
+      const validCategories = ['crypto', 'forex', 'commodities'];
+      if (category && !validCategories.includes(category)) {
+        res.status(400).json({ error: `Categoría inválida. Debe ser: ${validCategories.join(', ')}` });
         return;
       }
 
@@ -178,7 +185,8 @@ export class AiController {
         symbol,
         display_name || null,
         req.user?.userId || null,
-        product_type || 'USDT-FUTURES'
+        product_type || 'USDT-FUTURES',
+        category || 'crypto'
       );
       const asset = await AiAssetModel.findById(id);
       res.status(201).json(asset);

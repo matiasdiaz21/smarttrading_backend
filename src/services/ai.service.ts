@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { AiConfigModel, AiConfigRow } from '../models/AiConfig';
-import { AiAssetModel, AiAssetRow } from '../models/AiAsset';
+import { AiAssetModel, AiAssetRow, AssetCategory } from '../models/AiAsset';
 import { AiPredictionModel, AiPredictionRow } from '../models/AiPrediction';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -666,11 +666,9 @@ async function callGroq(
   }
 }
 
-// ===================== Asset category (crypto / forex / commodities) =====================
+// ===================== Asset category fallback (used when DB category is missing) =====================
 
-export type AssetCategory = 'crypto' | 'forex' | 'commodities';
-
-export function getAssetCategory(symbol: string): AssetCategory {
+function guessAssetCategory(symbol: string): AssetCategory {
   const s = symbol.toUpperCase();
   // Commodities: oro, plata, petróleo
   if (/^XAU|^XAG|^WTI|^BRENT|^OIL|^COPPER|^NATURALGAS/i.test(s)) return 'commodities';
@@ -748,8 +746,8 @@ export async function analyzeAsset(
     return null;
   }
 
-  // 1. Detect asset category early — determines what data to fetch
-  const assetCategory = getAssetCategory(symbol);
+  // 1. Detect asset category from DB (fallback to guess from symbol name)
+  const assetCategory: AssetCategory = asset.category || guessAssetCategory(symbol);
   console.log(`[AI Service] 📊 [${assetCategory.toUpperCase()}] Obteniendo datos para ${symbol}...`);
 
   // 2. Fetch market data from Bitget (public endpoints, no auth)

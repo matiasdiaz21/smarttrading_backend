@@ -1,11 +1,14 @@
 import pool from '../config/database';
 
+export type AssetCategory = 'crypto' | 'forex' | 'commodities';
+
 export interface AiAssetRow {
   id: number;
   symbol: string;
   display_name: string | null;
   is_enabled: boolean;
   product_type: string;
+  category: AssetCategory;
   added_by: number | null;
   created_at: Date;
 }
@@ -35,10 +38,10 @@ export class AiAssetModel {
     return { ...arr[0], is_enabled: !!arr[0].is_enabled };
   }
 
-  static async create(symbol: string, displayName: string | null, addedBy: number | null, productType: string = 'USDT-FUTURES'): Promise<number> {
+  static async create(symbol: string, displayName: string | null, addedBy: number | null, productType: string = 'USDT-FUTURES', category: AssetCategory = 'crypto'): Promise<number> {
     const [result] = await pool.execute(
-      'INSERT INTO ai_assets (symbol, display_name, is_enabled, product_type, added_by) VALUES (?, ?, 1, ?, ?)',
-      [symbol.toUpperCase(), displayName, productType, addedBy]
+      'INSERT INTO ai_assets (symbol, display_name, is_enabled, product_type, category, added_by) VALUES (?, ?, 1, ?, ?, ?)',
+      [symbol.toUpperCase(), displayName, productType, category, addedBy]
     );
     return (result as any).insertId;
   }
