@@ -316,8 +316,13 @@ export class TradingTestController {
       });
 
       const positions = await bitgetService.getPositions(decryptedCredentials, undefined, productType);
-      const openPositions = Array.isArray(positions) 
-        ? positions.filter((p: any) => parseFloat(p.total || p.size || '0') > 0)
+      const openPositions = Array.isArray(positions)
+        ? positions
+            .filter((p: any) => parseFloat(p.total || p.size || '0') > 0)
+            .map((p: any) => ({
+              ...p,
+              averageOpenPrice: p.averageOpenPrice ?? p.openPriceAvg ?? p.openAvgPrice ?? null,
+            }))
         : [];
 
       res.json(openPositions);
