@@ -138,6 +138,25 @@ export class TradeModel {
   }
 
   /**
+   * Último ENTRY abierto para usuario/estrategia/símbolo (para BREAKEVEN sin trade_id).
+   */
+  static async findLastEntryByUserStrategySymbol(
+    userId: number,
+    strategyId: number,
+    symbol: string
+  ): Promise<Trade | null> {
+    const [rows] = await pool.execute(
+      `SELECT * FROM trades 
+       WHERE user_id = ? AND strategy_id = ? AND symbol = ? 
+         AND alert_type = 'ENTRY' AND status IN ('pending', 'filled')
+       ORDER BY executed_at DESC LIMIT 1`,
+      [userId, strategyId, symbol]
+    );
+    const arr = rows as Trade[];
+    return arr[0] || null;
+  }
+
+  /**
    * Obtiene las últimas operaciones cerradas (STOP_LOSS o TAKE_PROFIT) para un usuario
    */
   static async findClosedTradesByUserId(userId: number, limit = 10): Promise<Trade[]> {

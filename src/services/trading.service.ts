@@ -114,6 +114,12 @@ export class TradingService {
         passphrase: credentials.passphrase,
       });
 
+      // Normalizar campos que pueden venir en snake_case desde TradingView/Pine (mismo criterio que test-orders)
+      if (alert.stopLoss == null && (alert as any).stop_loss != null) alert.stopLoss = (alert as any).stop_loss;
+      if (alert.takeProfit == null && (alert as any).take_profit != null) alert.takeProfit = (alert as any).take_profit;
+      if (alert.entryPrice == null && (alert as any).entry_price != null) alert.entryPrice = (alert as any).entry_price;
+      if (alert.breakeven == null && (alert as any).breakeven != null) alert.breakeven = (alert as any).breakeven;
+
       // Preparar datos de la orden
       // Para ENTRY, usar entryPrice si está disponible, sino usar price
       const entryPrice = alert.entryPrice || alert.price;
@@ -352,8 +358,8 @@ export class TradingService {
           clientOid: uniqueClientOid,
         };
 
-        if (alert.stopLoss && alert.takeProfit) {
-          // Usar la misma configuración que test-orders: openPositionWithFullTPSL (1 call con preset o open + triggers)
+        if (alert.stopLoss != null && alert.takeProfit != null) {
+          // Mismo flujo que /admin/test-orders: openPositionWithFullTPSL (open + SL + TP en un solo método)
           try {
             console.log(`[TradeService] 🚀 Abriendo posición + TP/SL con mismo flujo que test-orders (openPositionWithFullTPSL)...`);
             const orderDataForOpen = {
@@ -737,12 +743,18 @@ export class TradingService {
           continue;
         }
 
-        // Buscar el trade en DB
-        const trade = await TradeModel.findByTradeIdAndUser(subscription.user_id, strategyId, alert.trade_id!, dbSymbol);
-        const tradeFinal = trade || await TradeModel.findByTradeIdAndUser(subscription.user_id, strategyId, alert.trade_id!);
+        // Buscar el trade en DB (por trade_id si viene, si no por último ENTRY del símbolo)
+        let tradeFinal: any = null;
+        if (alert.trade_id) {
+          tradeFinal = await TradeModel.findByTradeIdAndUser(subscription.user_id, strategyId, alert.trade_id, dbSymbol)
+            || await TradeModel.findByTradeIdAndUser(subscription.user_id, strategyId, alert.trade_id);
+        }
+        if (!tradeFinal) {
+          tradeFinal = await TradeModel.findLastEntryByUserStrategySymbol(subscription.user_id, strategyId, dbSymbol);
+        }
 
         if (!tradeFinal) {
-          console.warn(`[BREAKEVEN] Trade no encontrado para usuario ${subscription.user_id}, trade_id ${alert.trade_id}, symbol ${dbSymbol}`);
+          console.warn(`[BREAKEVEN] Trade no encontrado para usuario ${subscription.user_id}, trade_id ${alert.trade_id || 'N/A'}, symbol ${dbSymbol}`);
           failed++;
           continue;
         }

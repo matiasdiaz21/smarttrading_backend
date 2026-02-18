@@ -246,10 +246,10 @@ export class WebhookController {
         );
         console.log(`[Webhook] ✅ Resultado del procesamiento:`, JSON.stringify(result, null, 2));
       } else if (alert.alertType === 'BREAKEVEN') {
-        // Validar campos requeridos para BREAKEVEN
-        if (!alert.trade_id || !alert.entryPrice) {
+        // trade_id recomendado para asociar al ENTRY; entryPrice no es obligatorio (se obtiene de Bitget/DB)
+        if (!alert.symbol) {
           res.status(400).json({
-            error: 'Missing required fields for BREAKEVEN: trade_id and entryPrice are required',
+            error: 'Missing required field for BREAKEVEN: symbol is required',
           });
           return;
         }
