@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import { AiConfigModel } from '../models/AiConfig';
 import { AiAssetModel } from '../models/AiAsset';
 import { AiPredictionModel } from '../models/AiPrediction';
+import { GroqModel } from '../models/GroqModel';
 import { runFullAnalysis, checkPredictionResults } from '../services/ai.service';
 
 export class AiController {
@@ -148,6 +149,17 @@ export class AiController {
     }
   }
 
+  /** GET /api/admin/ai/groq-models - List Groq models for config dropdown */
+  static async getGroqModels(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const activeOnly = req.query.active === '1' || req.query.active === 'true';
+      const models = await GroqModel.findAll(activeOnly);
+      res.json(models);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   /** GET /api/admin/ai/assets - List all assets (admin, including disabled) */
   static async getAdminAssets(req: AuthRequest, res: Response): Promise<void> {
     try {
@@ -190,6 +202,46 @@ export class AiController {
       );
       const asset = await AiAssetModel.findById(id);
       res.status(201).json(asset);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /** PUT /api/admin/ai/assets/:id - Update asset */
+  static async updateAsset(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const id = parseInt(req.params.id);
+      const { symbol, display_name, is_enabled, product_type, category } = req.body;
+
+      const asset = await AiAssetModel.findById(id);
+      if (!asset) {
+        res.status(404).json({ error: 'Activo no encontrado' });
+        return;
+      }
+
+      const validCategories = ['crypto', 'forex', 'commodities'];
+      if (category !== undefined && !validCategories.includes(category)) {
+        res.status(400).json({ error: `Categoría inválida. Debe ser: ${validCategories.join(', ')}` });
+        return;
+      }
+
+      if (symbol !== undefined && symbol.trim() !== asset.symbol) {
+        const existing = await AiAssetModel.findBySymbol(symbol.trim());
+        if (existing && existing.id !== id) {
+          res.status(409).json({ error: `El símbolo ${symbol.toUpperCase()} ya existe en otro activo` });
+          return;
+        }
+      }
+
+      await AiAssetModel.update(id, {
+        symbol: symbol !== undefined ? symbol.trim().toUpperCase() : undefined,
+        display_name: display_name !== undefined ? (display_name.trim() || null) : undefined,
+        is_enabled: is_enabled !== undefined ? !!is_enabled : undefined,
+        product_type: product_type !== undefined ? product_type : undefined,
+        category: category !== undefined ? category : undefined,
+      });
+      const updated = await AiAssetModel.findById(id);
+      res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

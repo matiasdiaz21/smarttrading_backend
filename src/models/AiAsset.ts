@@ -50,6 +50,40 @@ export class AiAssetModel {
     await pool.execute('UPDATE ai_assets SET is_enabled = NOT is_enabled WHERE id = ?', [id]);
   }
 
+  static async update(id: number, data: Partial<{
+    symbol: string;
+    display_name: string | null;
+    is_enabled: boolean;
+    product_type: string;
+    category: AssetCategory;
+  }>): Promise<void> {
+    const updates: string[] = [];
+    const values: any[] = [];
+    if (data.symbol !== undefined) {
+      updates.push('symbol = ?');
+      values.push(data.symbol.toUpperCase());
+    }
+    if (data.display_name !== undefined) {
+      updates.push('display_name = ?');
+      values.push(data.display_name);
+    }
+    if (data.is_enabled !== undefined) {
+      updates.push('is_enabled = ?');
+      values.push(data.is_enabled ? 1 : 0);
+    }
+    if (data.product_type !== undefined) {
+      updates.push('product_type = ?');
+      values.push(data.product_type);
+    }
+    if (data.category !== undefined) {
+      updates.push('category = ?');
+      values.push(data.category);
+    }
+    if (updates.length === 0) return;
+    values.push(id);
+    await pool.execute(`UPDATE ai_assets SET ${updates.join(', ')} WHERE id = ?`, values);
+  }
+
   static async delete(id: number): Promise<void> {
     await pool.execute('DELETE FROM ai_assets WHERE id = ?', [id]);
   }

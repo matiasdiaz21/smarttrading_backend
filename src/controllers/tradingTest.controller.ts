@@ -276,10 +276,13 @@ export class TradingTestController {
         clientOid: `CLOSE_${symbol.substring(0, 8)}_${timestamp}`.substring(0, 64),
       }, { userId, strategyId: null });
 
+      const triggersAfterClose = await bitgetService.getPendingTriggerOrders(decryptedCredentials, symbol.toUpperCase(), productType);
+
       res.json({
         success: true,
         closedSize: positionSize,
         cancelledTriggers: cancelResult,
+        remainingTriggers: triggersAfterClose.length,
         closeOrder: closeResult,
       });
     } catch (error: any) {
@@ -415,6 +418,7 @@ export class TradingTestController {
         success: true,
         cancelled: result.cancelled,
         failed: result.failed,
+        remaining: result.remaining,
       });
     } catch (error: any) {
       console.error('[CancelTriggers] Error:', error.message);

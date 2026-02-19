@@ -1758,30 +1758,47 @@ export class BitgetService {
     }
   }
 
-  // Obtener órdenes trigger pendientes (TP/SL) para un símbolo
+  // Obtener órdenes trigger pendientes (TP/SL) para un símbolo.
+  // Si no se pasa planType, se consulta por cada tipo (pos_loss, pos_profit, normal_plan) y se fusionan
+  // para no perder órdenes que la API solo devuelve al filtrar por tipo.
   async getPendingTriggerOrders(
     credentials: BitgetCredentials,
     symbol: string,
     productType: string = 'USDT-FUTURES',
-    planType?: string // 'pos_profit' | 'pos_loss' | undefined (all)
+    planType?: string // 'pos_profit' | 'pos_loss' | 'normal_plan' | undefined (all)
   ): Promise<any[]> {
-    try {
+    const fetchByPlanType = async (type?: string): Promise<any[]> => {
       const params: any = {
         productType: productType.toUpperCase(),
         symbol: symbol.toUpperCase(),
       };
-      if (planType) {
-        params.planType = planType;
-      }
-
-      const queryString = Object.keys(params)
-        .map(key => `${key}=${params[key]}`)
-        .join('&');
+      if (type) params.planType = type;
+      const queryString = Object.keys(params).map(key => `${key}=${params[key]}`).join('&');
       const endpoint = `/api/v2/mix/order/orders-plan-pending?${queryString}`;
-
       const result = await this.makeRequest('GET', endpoint, credentials);
       const orders = result?.entrustedList ?? result?.data?.entrustedList ?? (Array.isArray(result) ? result : []);
-      const list = Array.isArray(orders) ? orders : [];
+      return Array.isArray(orders) ? orders : [];
+    };
+
+    try {
+      let list: any[];
+      if (planType) {
+        list = await fetchByPlanType(planType);
+      } else {
+        // Obtener por cada tipo y fusionar por orderId para no duplicar
+        const [allList, posLoss, posProfit, normalPlan] = await Promise.all([
+          fetchByPlanType(undefined),
+          fetchByPlanType('pos_loss'),
+          fetchByPlanType('pos_profit'),
+          fetchByPlanType('normal_plan'),
+        ]);
+        const byId = new Map<string, any>();
+        for (const o of [...allList, ...posLoss, ...posProfit, ...normalPlan]) {
+          const id = o.orderId || o.id;
+          if (id && !byId.has(id)) byId.set(id, o);
+        }
+        list = Array.from(byId.values());
+      }
       console.log(`[Bitget] 📋 Órdenes trigger pendientes para ${symbol}: ${list.length}`);
       return list;
     } catch (error: any) {
@@ -1790,7 +1807,8 @@ export class BitgetService {
     }
   }
 
-  // Cancelar todas las órdenes trigger (TP/SL) pendientes para un símbolo
+  // Cancelar todas las órdenes trigger (TP/SL) pendientes para un símbolo.
+  // Usa listado por tipo (pos_loss, pos_profit, normal_plan) y hace una segunda pasada si quedan pendientes.
   async cancelAllTriggerOrders(
     credentials: BitgetCredentials,
     symbol: string,
@@ -1801,60 +1819,61 @@ export class BitgetService {
       strategyId: number | null;
       orderId?: string;
     }
-  ): Promise<{ cancelled: number; failed: number }> {
+  ): Promise<{ cancelled: number; failed: number; remaining: number }> {
+    const endpoint = '/api/v2/mix/order/cancel-plan-order';
+    const cancelOne = async (order: any): Promise<boolean> => {
+      const orderId = order.orderId || order.id;
+      if (!orderId) return false;
+      try {
+        await this.makeRequest('POST', endpoint, credentials, {
+          symbol: symbol.toUpperCase(),
+          productType: productType.toUpperCase(),
+          marginCoin: marginCoin.toUpperCase(),
+          orderId,
+        }, logContext ? {
+          userId: logContext.userId,
+          strategyId: logContext.strategyId,
+          symbol,
+          operationType: 'cancelTriggerOrder',
+          orderId: logContext.orderId,
+        } : undefined);
+        console.log(`[Bitget] ✅ Orden trigger ${orderId} (${order.planType || 'unknown'}) cancelada`);
+        return true;
+      } catch (e: any) {
+        console.error(`[Bitget] ❌ Error al cancelar orden trigger ${orderId}: ${e.message}`);
+        return false;
+      }
+    };
+
     try {
       console.log(`[Bitget] 🗑️ Cancelando todas las órdenes trigger para ${symbol}...`);
-
-      // Obtener todas las órdenes trigger pendientes
-      const pendingOrders = await this.getPendingTriggerOrders(credentials, symbol, productType);
+      let pendingOrders = await this.getPendingTriggerOrders(credentials, symbol, productType);
 
       if (pendingOrders.length === 0) {
         console.log(`[Bitget] ℹ️ No hay órdenes trigger pendientes para cancelar en ${symbol}`);
-        return { cancelled: 0, failed: 0 };
+        return { cancelled: 0, failed: 0, remaining: 0 };
       }
 
       console.log(`[Bitget] 📋 Encontradas ${pendingOrders.length} órdenes trigger pendientes para cancelar`);
 
-      const endpoint = '/api/v2/mix/order/cancel-plan-order';
+      const results = await Promise.all(pendingOrders.map(cancelOne));
+      let cancelled = results.filter(r => r === true).length;
+      let failed = results.length - cancelled;
 
-      // Cancelar todas las órdenes en PARALELO (optimización: antes era secuencial)
-      const results = await Promise.all(
-        pendingOrders.map(async (order) => {
-          const orderId = order.orderId || order.id;
-          if (!orderId) {
-            console.warn(`[Bitget] ⚠️ Orden sin ID, omitiendo`);
-            return false;
-          }
-          try {
-            const payload = {
-              symbol: symbol.toUpperCase(),
-              productType: productType.toUpperCase(),
-              marginCoin: marginCoin.toUpperCase(),
-              orderId: orderId,
-            };
-            await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
-              userId: logContext.userId,
-              strategyId: logContext.strategyId,
-              symbol: symbol,
-              operationType: 'cancelTriggerOrder',
-              orderId: logContext.orderId,
-            } : undefined);
-            console.log(`[Bitget] ✅ Orden trigger ${orderId} (${order.planType || 'unknown'}) cancelada`);
-            return true;
-          } catch (cancelError: any) {
-            console.error(`[Bitget] ❌ Error al cancelar orden trigger ${orderId}: ${cancelError.message}`);
-            return false;
-          }
-        })
-      );
+      const stillPending = await this.getPendingTriggerOrders(credentials, symbol, productType);
+      if (stillPending.length > 0) {
+        console.log(`[Bitget] 🔄 Segunda pasada: ${stillPending.length} triggers aún pendientes`);
+        const retryResults = await Promise.all(stillPending.map(cancelOne));
+        cancelled += retryResults.filter(r => r === true).length;
+        failed += retryResults.filter(r => r === false).length;
+      }
 
-      const cancelled = results.filter(r => r === true).length;
-      const failed = results.length - cancelled;
-      console.log(`[Bitget] 🗑️ Resultado: ${cancelled} canceladas, ${failed} fallidas de ${pendingOrders.length} (en paralelo)`);
-      return { cancelled, failed };
+      const remaining = await this.getPendingTriggerOrders(credentials, symbol, productType).then(l => l.length);
+      console.log(`[Bitget] 🗑️ Resultado: ${cancelled} canceladas, ${failed} fallidas, ${remaining} restantes`);
+      return { cancelled, failed, remaining };
     } catch (error: any) {
       console.error(`[Bitget] ❌ Error al cancelar órdenes trigger: ${error.message}`);
-      return { cancelled: 0, failed: 0 };
+      return { cancelled: 0, failed: 0, remaining: 0 };
     }
   }
 

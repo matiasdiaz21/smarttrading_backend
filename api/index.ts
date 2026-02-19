@@ -264,12 +264,14 @@ app.get('/api/ai/assets', authenticate, AiController.getAssets);
 
 // AI Trading routes (admin)
 app.get('/api/admin/ai/config', authenticate, requireAdmin, AiController.getConfig);
-app.put('/api/admin/ai/config', authenticate, requireAdmin, AiController.updateConfig);
-app.post('/api/admin/ai/analyze', authenticate, requireAdmin, AiController.triggerAnalysis);
-app.get('/api/admin/ai/assets', authenticate, requireAdmin, AiController.getAdminAssets);
-app.post('/api/admin/ai/assets', authenticate, requireAdmin, AiController.addAsset);
-app.put('/api/admin/ai/assets/:id/toggle', authenticate, requireAdmin, AiController.toggleAsset);
-app.delete('/api/admin/ai/assets/:id', authenticate, requireAdmin, AiController.deleteAsset);
+  app.put('/api/admin/ai/config', authenticate, requireAdmin, AiController.updateConfig);
+  app.get('/api/admin/ai/groq-models', authenticate, requireAdmin, AiController.getGroqModels);
+  app.post('/api/admin/ai/analyze', authenticate, requireAdmin, AiController.triggerAnalysis);
+  app.get('/api/admin/ai/assets', authenticate, requireAdmin, AiController.getAdminAssets);
+  app.post('/api/admin/ai/assets', authenticate, requireAdmin, AiController.addAsset);
+  app.put('/api/admin/ai/assets/:id', authenticate, requireAdmin, AiController.updateAsset);
+  app.put('/api/admin/ai/assets/:id/toggle', authenticate, requireAdmin, AiController.toggleAsset);
+  app.delete('/api/admin/ai/assets/:id', authenticate, requireAdmin, AiController.deleteAsset);
 app.put('/api/admin/ai/predictions/:id/resolve', authenticate, requireAdmin, AiController.resolvePrediction);
 app.post('/api/admin/ai/check-results', authenticate, requireAdmin, AiController.forceCheckResults);
 
