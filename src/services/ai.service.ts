@@ -165,19 +165,25 @@ function lastEmaValue(ema: number[], period: number): number {
   return Math.round(ema[idx] * 100000) / 100000;
 }
 
-/** Últimos valores de EMA(9), EMA(21), EMA(50) para alineación de tendencia */
-function getEMASummary(closes: number[]): { ema9: number; ema21: number; ema50: number } {
+/** Últimos valores de EMA(9), EMA(21), EMA(30), EMA(50), EMA(100) para tendencia y SMC */
+function getEMASummary(closes: number[]): {
+  ema9: number; ema21: number; ema30: number; ema50: number; ema100: number;
+} {
   const ema9 = calculateEMA(closes, 9);
   const ema21 = calculateEMA(closes, 21);
+  const ema30 = calculateEMA(closes, 30);
   const ema50 = calculateEMA(closes, 50);
+  const ema100 = calculateEMA(closes, 100);
   return {
     ema9: lastEmaValue(ema9, 9),
     ema21: lastEmaValue(ema21, 21),
+    ema30: lastEmaValue(ema30, 30),
     ema50: lastEmaValue(ema50, 50),
+    ema100: lastEmaValue(ema100, 100),
   };
 }
 
-/** Descripción técnica: precio vs EMAs y estructura (alcista/bajista/lateral) */
+/** Descripción técnica: precio vs EMAs 9/21/50 (alcista/bajista/lateral) */
 function describePriceStructure(
   close: number,
   ema9: number,
@@ -193,6 +199,35 @@ function describePriceStructure(
   if (above50 && !above21) return 'Corrección en tendencia alcista: precio entre EMA21 y EMA50';
   if (!above50 && above21) return 'Rebote en tendencia bajista: precio entre EMA50 y EMA21';
   return 'Lateral o cruces recientes; confirmar con RSI/MACD';
+}
+
+/** Estructura tipo Smart Money: EMAs 30/50/100 como filtro de tendencia y zonas de rechazo */
+function describeSMCStructure(
+  close: number,
+  ema30: number,
+  ema50: number,
+  ema100: number
+): string {
+  if (!ema30 || !ema50 || !ema100) return 'EMAs 30/50/100 insuficientes';
+  const above30 = close > ema30;
+  const above50 = close > ema50;
+  const above100 = close > ema100;
+  const alignBull = ema30 > ema50 && ema50 > ema100;
+  const alignBear = ema30 < ema50 && ema50 < ema100;
+  const dist30 = Math.abs(close - ema30) / ema30;
+  const dist50 = Math.abs(close - ema50) / ema50;
+  const near30 = dist30 <= 0.005;
+  const near50 = dist50 <= 0.005;
+  if (above30 && above50 && above100 && alignBull) return 'Tendencia alcista SMC: precio > EMA30 > EMA50 > EMA100';
+  if (!above30 && !above50 && !above100 && alignBear) return 'Tendencia bajista SMC: precio < EMA30 < EMA50 < EMA100';
+  if (above100 && !above30 && alignBear) return 'Posible rechazo bajista en EMA30: precio bajo EMA30, estructura 4H bajista';
+  if (!above100 && above30 && alignBull) return 'Posible rechazo alcista en EMA30: precio sobre EMA30, estructura 4H alcista';
+  if (near30 && above50) return 'Precio en zona EMA30; rechazo alcista aquí apoyaría LONG';
+  if (near30 && !above50) return 'Precio en zona EMA30; rechazo bajista aquí apoyaría SHORT';
+  if (near50) return 'Precio en zona EMA50; posible zona de rechazo o cambio de tendencia';
+  if (above50 && !alignBull) return 'Precio sobre EMA50 pero EMAs no alineadas; esperar confluencia';
+  if (!above50 && !alignBear) return 'Precio bajo EMA50 pero EMAs no alineadas; esperar confluencia';
+  return 'Estructura SMC no clara; confirmar con RSI/MACD y velas';
 }
 
 // ===================== Bitget Market Data =====================
@@ -348,10 +383,12 @@ interface PromptData {
   atr4h: number;
   bb1h: { middle: number; upper: number; lower: number; percentB: number };
   bb4h: { middle: number; upper: number; lower: number; percentB: number };
-  ema1h: { ema9: number; ema21: number; ema50: number };
-  ema4h: { ema9: number; ema21: number; ema50: number };
+  ema1h: { ema9: number; ema21: number; ema30: number; ema50: number; ema100: number };
+  ema4h: { ema9: number; ema21: number; ema30: number; ema50: number; ema100: number };
   structure1h: string;
   structure4h: string;
+  smc_structure1h: string;
+  smc_structure4h: string;
   crossAsset?: CrossAssetContext | null;
 }
 
@@ -371,7 +408,7 @@ function get24hStats(candles1h: Candle[], currentPrice: number) {
   return { priceChange24h, high24h, low24h, avgVolume1h, lastVolume, volRatio };
 }
 
-/** Shared: technical indicators block */
+/** Shared: technical indicators block (incl. EMAs 30/50/100 y estructura SMC) */
 function formatTechnicalBlock(d: PromptData): string {
   return `## Indicadores Técnicos
 - RSI(14) 1H: ${d.rsi1h.toFixed(2)} | 4H: ${d.rsi4h.toFixed(2)}
@@ -380,10 +417,12 @@ function formatTechnicalBlock(d: PromptData): string {
 - ATR(14) 1H: ${d.atr1h} | 4H: ${d.atr4h}
 - Bollinger(20,2) 1H: Mid=${d.bb1h.middle}, Upper=${d.bb1h.upper}, Lower=${d.bb1h.lower}, %B=${d.bb1h.percentB}
 - Bollinger(20,2) 4H: Mid=${d.bb4h.middle}, Upper=${d.bb4h.upper}, Lower=${d.bb4h.lower}, %B=${d.bb4h.percentB}
-- EMA 1H: 9=${d.ema1h.ema9}, 21=${d.ema1h.ema21}, 50=${d.ema1h.ema50}
-- EMA 4H: 9=${d.ema4h.ema9}, 21=${d.ema4h.ema21}, 50=${d.ema4h.ema50}
+- EMA 1H: 9=${d.ema1h.ema9}, 21=${d.ema1h.ema21}, 30=${d.ema1h.ema30}, 50=${d.ema1h.ema50}, 100=${d.ema1h.ema100}
+- EMA 4H: 9=${d.ema4h.ema9}, 21=${d.ema4h.ema21}, 30=${d.ema4h.ema30}, 50=${d.ema4h.ema50}, 100=${d.ema4h.ema100}
 - Estructura 1H: ${d.structure1h}
-- Estructura 4H: ${d.structure4h}`;
+- Estructura 4H: ${d.structure4h}
+- Estructura SMC 1H (EMAs 30/50/100): ${d.smc_structure1h}
+- Estructura SMC 4H (EMAs 30/50/100): ${d.smc_structure4h}`;
 }
 
 /** JSON response format instruction (shared) */
@@ -421,13 +460,13 @@ ${formatCandlesForPrompt(data.candles1h, 25)}
 ${formatCandlesForPrompt(data.candles4h, 20)}
 
 ## Instrucciones de análisis (CRYPTO)
-1. Confluencia obligatoria: RSI, MACD histograma y estructura de precio deben alinearse en 1H y 4H.
-2. RSI >70 en ambos TF = sobrecompra (SHORT); RSI <30 = sobreventa (LONG).
-3. MACD: histograma positivo creciente = momentum alcista; negativo decreciente = bajista.
-4. Bollinger %B >1 = sobrecompra; %B <0 = sobreventa. Precio cerca de banda = posible reversión.
-5. SL y TP basados en ATR: SL = 1-1.5×ATR del TF operado, TP = 2-3×ATR.
-6. Crypto se mueve por estructura técnica y momentum. Prioriza patrones de precio > indicadores.
-7. Si la estructura 4H marca dirección, prioriza trades en esa dirección.
+1. Confluencia obligatoria: RSI, MACD histograma, estructura de precio y estructura SMC (EMAs 30/50/100) en 1H y 4H.
+2. Smart Money: usar EMAs 30/50/100 como filtro de tendencia (precio > EMA30 > EMA50 > EMA100 = alcista; lo contrario = bajista). Rechazos en EMA30 o EMA50 con vela de confirmación son zonas de entrada; priorizar BOS (continuación) en dirección de tendencia; CHoCH (reversión) solo con confirmación clara.
+3. RSI >70 en ambos TF = sobrecompra (SHORT); RSI <30 = sobreventa (LONG).
+4. MACD: histograma positivo creciente = momentum alcista; negativo decreciente = bajista.
+5. Bollinger %B >1 = sobrecompra; %B <0 = sobreventa. Precio cerca de banda = posible reversión.
+6. SL y TP basados en ATR: SL = 1-1.5×ATR del TF operado, TP = 2-3×ATR.
+7. Si la estructura 4H o SMC 4H marca dirección, prioriza trades en esa dirección.
 
 ${JSON_RESPONSE_FORMAT}`;
 }
@@ -698,16 +737,17 @@ function getCategoryInstructions(category: AssetCategory): string {
  */
 function getSystemPromptForCategory(category: AssetCategory): string {
   const baseRules = `Requisitos generales:
-1. Solo dar señal cuando haya confluencia entre timeframes (RSI, MACD y estructura alineados en 1H y 4H).
-2. Usar ATR para justificar distancia de stop loss y take profit (ej. SL a 1-2 ATR, TP a 2-3 ATR).
-3. Considerar %B de Bollinger y posición del precio respecto a bandas.
-4. Si la estructura 4H es alcista/bajista, priorizar operaciones en la misma dirección.
-5. Si no hay confluencia clara, devolver confidence < 30.
-6. Responder ÚNICAMENTE en JSON válido.`;
+1. Solo dar señal cuando haya confluencia entre timeframes (RSI, MACD, estructura y estructura SMC en 1H y 4H).
+2. Smart Money: EMAs 30/50/100 como filtro de tendencia; rechazos en EMA30 o EMA50 como zonas de entrada con confirmación en velas.
+3. Usar ATR para SL/TP (ej. SL 1-1.5*ATR, TP 2-3*ATR).
+4. Considerar %B de Bollinger y posición del precio respecto a bandas.
+5. Si la estructura 4H (clásica o SMC) es alcista/bajista, priorizar operaciones en la misma dirección.
+6. Si no hay confluencia clara, devolver confidence < 30.
+7. Responder ÚNICAMENTE en JSON válido.`;
 
   switch (category) {
     case 'crypto':
-      return `Eres un analista técnico especializado en criptomonedas y futuros crypto. Tu análisis es estrictamente técnico y multi-timeframe (1H + 4H). Utilizas RSI, MACD, Bollinger Bands, EMAs (9/21/50), ATR y estructura de precio. En crypto el precio sigue principalmente patrones técnicos, momentum, sentimiento de mercado y flujos de capital. No necesitas considerar factores macro salvo eventos extremos (regulación, hacks). Prioriza: estructura técnica > indicadores de momentum > volumen.
+      return `Eres un analista técnico especializado en criptomonedas y futuros crypto. Tu análisis es estrictamente técnico y multi-timeframe (1H + 4H). Utilizas RSI, MACD, Bollinger Bands, EMAs (9/21/30/50/100), ATR, estructura de precio y conceptos Smart Money (SMC). En crypto prioriza: estructura SMC y EMAs 30/50/100 para tendencia y rechazos (rechazo en EMA30 o EMA50 = zona de entrada con confirmación); BOS = continuación en dirección de tendencia; CHoCH = reversión solo con confirmación. Luego indicadores (RSI, MACD) y volumen.
 
 ${baseRules}`;
 
@@ -778,13 +818,15 @@ export async function analyzeAsset(
   const ema4h = getEMASummary(closes4h);
   const structure1h = describePriceStructure(currentPrice, ema1h.ema9, ema1h.ema21, ema1h.ema50);
   const structure4h = describePriceStructure(currentPrice, ema4h.ema9, ema4h.ema21, ema4h.ema50);
+  const smc_structure1h = describeSMCStructure(currentPrice, ema1h.ema30, ema1h.ema50, ema1h.ema100);
+  const smc_structure4h = describeSMCStructure(currentPrice, ema4h.ema30, ema4h.ema50, ema4h.ema100);
 
   console.log(`[AI Service] 📈 Indicadores: RSI_1H=${rsi1h.toFixed(2)}, RSI_4H=${rsi4h.toFixed(2)}, MACD_1H=${macd1h.macd}, MACD_4H=${macd4h.macd}, ATR_1H=${atr1h}, ATR_4H=${atr4h}`);
 
   // 4. Build prompt — category-specific builder with cross-asset data
   const promptData: PromptData = {
     symbol, currentPrice, candles1h, candles4h, rsi1h, rsi4h, macd1h, macd4h,
-    atr1h, atr4h, bb1h, bb4h, ema1h, ema4h, structure1h, structure4h, crossAsset,
+    atr1h, atr4h, bb1h, bb4h, ema1h, ema4h, structure1h, structure4h, smc_structure1h, smc_structure4h, crossAsset,
   };
 
   let userPrompt: string;
@@ -803,10 +845,12 @@ export async function analyzeAsset(
       .replace(/\{\{atr_4h\}\}/g, atr4h.toString())
       .replace(/\{\{bb_1h\}\}/g, `Middle: ${bb1h.middle}, Upper: ${bb1h.upper}, Lower: ${bb1h.lower}, %B: ${bb1h.percentB}`)
       .replace(/\{\{bb_4h\}\}/g, `Middle: ${bb4h.middle}, Upper: ${bb4h.upper}, Lower: ${bb4h.lower}, %B: ${bb4h.percentB}`)
-      .replace(/\{\{ema_1h\}\}/g, `EMA9: ${ema1h.ema9}, EMA21: ${ema1h.ema21}, EMA50: ${ema1h.ema50}`)
-      .replace(/\{\{ema_4h\}\}/g, `EMA9: ${ema4h.ema9}, EMA21: ${ema4h.ema21}, EMA50: ${ema4h.ema50}`)
+      .replace(/\{\{ema_1h\}\}/g, `EMA9: ${ema1h.ema9}, EMA21: ${ema1h.ema21}, EMA30: ${ema1h.ema30}, EMA50: ${ema1h.ema50}, EMA100: ${ema1h.ema100}`)
+      .replace(/\{\{ema_4h\}\}/g, `EMA9: ${ema4h.ema9}, EMA21: ${ema4h.ema21}, EMA30: ${ema4h.ema30}, EMA50: ${ema4h.ema50}, EMA100: ${ema4h.ema100}`)
       .replace(/\{\{structure_1h\}\}/g, structure1h)
       .replace(/\{\{structure_4h\}\}/g, structure4h)
+      .replace(/\{\{smc_structure_1h\}\}/g, smc_structure1h)
+      .replace(/\{\{smc_structure_4h\}\}/g, smc_structure4h)
       .replace(/\{\{current_price\}\}/g, currentPrice.toString())
       .replace(/\{\{asset_category\}\}/g, assetCategory)
       .replace(/\{\{category_instructions\}\}/g, categoryInstructions);
