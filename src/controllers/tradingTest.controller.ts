@@ -20,7 +20,6 @@ export class TradingTestController {
         entry_price,
         stop_loss,
         take_profit,
-        breakeven,
         order_type,
         margin_mode,
         product_type,
@@ -93,7 +92,6 @@ export class TradingTestController {
         {
           stopLossPrice: parseFloat(stop_loss),
           takeProfitPrice: parseFloat(take_profit),
-          breakevenPrice: breakeven ? parseFloat(breakeven) : undefined,
         },
         contractInfo,
         { userId, strategyId: null }
@@ -112,10 +110,6 @@ export class TradingTestController {
         } : null,
         steps: result.tpslResults,
         error: result.error,
-        breakevenSkipped: result.breakevenSkipped,
-        breakevenSkippedReason: result.breakevenSkippedReason,
-        minSizeForPartial: result.minSizeForPartial,
-        partialTpSize: result.partialTpSize,
         payloads: result.payloads ?? undefined,
       });
     } catch (error: any) {

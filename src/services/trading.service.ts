@@ -376,7 +376,6 @@ export class TradingService {
             const tpslData = {
               stopLossPrice: parseFloat(alert.stopLoss.toString()),
               takeProfitPrice: parseFloat(alert.takeProfit.toString()),
-              breakevenPrice: alert.breakeven && parseFloat(alert.breakeven.toString()) > 0 ? parseFloat(alert.breakeven.toString()) : undefined,
             };
             const openResult = await this.bitgetService.openPositionWithFullTPSL(
               decryptedCredentials,
@@ -390,13 +389,8 @@ export class TradingService {
               actualPositionSize = calculatedSize;
               usedOpenWithFullTPSL = true;
               const steps = openResult.tpslResults || [];
-              const slOk = steps.some((r: any) => (r.type === 'stop_loss' && r.success) || (r.type === 'open_with_sl_tp' && r.success) || (r.type === 'open_with_sl_tp_fallback' && r.success));
-              const tpOk = steps.some((r: any) => ['take_profit', 'take_profit_final', 'take_profit_partial', 'open_with_sl_tp', 'open_with_sl_tp_fallback'].includes(r.type) && r.success);
-              tpslConfigured = slOk && tpOk;
-              if (openResult.breakevenSkipped) {
-                console.log(`[TradeService] ℹ️ Breakeven omitido por tamaño (igual que test-orders): ${openResult.breakevenSkippedReason}`);
-              }
-              console.log(`[TradeService] ✅ Posición + TP/SL con flujo unificado. OrderId: ${openResult.orderId}, TP/SL OK: ${tpslConfigured}`);
+              tpslConfigured = steps.some((r: any) => r.type === 'open_with_sl_tp' && r.success);
+              console.log(`[TradeService] ✅ Posición + TP/SL (1 call preset). OrderId: ${openResult.orderId}, TP/SL OK: ${tpslConfigured}`);
             } else {
               console.warn(`[TradeService] ⚠️ openPositionWithFullTPSL no retornó success, fallback a placeOrder + TP/SL por separado`);
             }
