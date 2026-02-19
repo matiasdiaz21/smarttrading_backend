@@ -521,9 +521,34 @@ export class BitgetService {
         orderType: 'limit',
       }, logContext ? { ...logContext, orderId: undefined } : undefined);
       steps.push({ type: 'limit_open_sl', success: true, result: openResult });
-      console.log(`[Bitget] ✅ Limit open + SL. OrderId: ${openResult.orderId}`);
+      console.log(`[Bitget] ✅ Limit open + SL. OrderId: ${openResult.orderId}. Esperando fill antes de colocar TP 50%+50%...`);
 
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Esperar a que la orden de apertura esté filled (polling)
+      const pollIntervalMs = 2000;
+      const maxAttempts = 30; // 60 s máximo
+      let orderFilled = false;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+        try {
+          const detail = await this.getOrderStatus(credentials, openResult.orderId, orderData.symbol, orderData.productType);
+          const state = (detail && (detail.state || detail.status)) || '';
+          if (state === 'filled') {
+            orderFilled = true;
+            console.log(`[Bitget] ✅ Orden de apertura filled (intento ${attempt}). Colocando TP 50% + 50%...`);
+            break;
+          }
+          if (state === 'canceled' || state === 'cancelled') {
+            throw new Error('La orden de apertura fue cancelada');
+          }
+          console.log(`[Bitget] ⏳ Orden estado: ${state}, reintento ${attempt}/${maxAttempts}`);
+        } catch (e: any) {
+          if (attempt === maxAttempts) throw e;
+          console.warn(`[Bitget] Poll order status: ${e.message}`);
+        }
+      }
+      if (!orderFilled) {
+        throw new Error('Timeout: la orden de apertura no se llenó en 60s. Colocá manualmente las limit de cierre 50%+50% cuando esté filled.');
+      }
 
       // 2) Orden limit cierre 50% en TP parcial
       const closePartialResult = await this.placeOrder(credentials, {
