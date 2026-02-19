@@ -20,6 +20,7 @@ export class TradingTestController {
         entry_price,
         stop_loss,
         take_profit,
+        take_profit_partial,
         order_type,
         margin_mode,
         product_type,
@@ -29,6 +30,11 @@ export class TradingTestController {
       // Validaciones
       if (!credential_id || !symbol || !side || !size || !stop_loss || !take_profit) {
         res.status(400).json({ error: 'Campos requeridos: credential_id, symbol, side, size, stop_loss, take_profit' });
+        return;
+      }
+      const useLimitPartial = !!(order_type === 'limit' && entry_price && take_profit_partial);
+      if (take_profit_partial && (!entry_price || order_type !== 'limit')) {
+        res.status(400).json({ error: 'Para TP parcial 50%+50% se requiere order_type=limit y entry_price' });
         return;
       }
 
@@ -75,7 +81,12 @@ export class TradingTestController {
       const timestamp = Date.now();
       const clientOid = `TEST_${symbol.substring(0, 8)}_${timestamp}_${Math.floor(Math.random() * 10000)}`.substring(0, 64);
 
-      // Ejecutar flujo optimizado
+      const tpslPayload: { stopLossPrice: number; takeProfitPrice: number; takeProfitPartialPrice?: number } = {
+        stopLossPrice: parseFloat(stop_loss),
+        takeProfitPrice: parseFloat(take_profit),
+      };
+      if (take_profit_partial) tpslPayload.takeProfitPartialPrice = parseFloat(take_profit_partial);
+
       const result = await bitgetService.openPositionWithFullTPSL(
         decryptedCredentials,
         {
@@ -84,15 +95,12 @@ export class TradingTestController {
           marginMode: margin_mode || 'isolated',
           marginCoin,
           size: calculatedSize,
-          price: entry_price ? entry_price.toString() : undefined,
+          price: useLimitPartial ? String(entry_price) : (entry_price ? String(entry_price) : undefined),
           side,
-          orderType: order_type || 'market',
+          orderType: useLimitPartial ? 'limit' : (order_type || 'market'),
           clientOid,
         },
-        {
-          stopLossPrice: parseFloat(stop_loss),
-          takeProfitPrice: parseFloat(take_profit),
-        },
+        tpslPayload,
         contractInfo,
         { userId, strategyId: null }
       );

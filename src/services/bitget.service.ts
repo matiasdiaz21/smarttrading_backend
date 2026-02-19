@@ -413,9 +413,10 @@ export class BitgetService {
   }
 
   /**
-   * Abre posición con TP/SL en una sola llamada a Bitget (place-order con preset).
-   * Mínimo uso de recursos: 1 call por posición. TP/SL se eliminan automáticamente al cerrar.
-   * No se usan triggers (evita huérfanos y múltiples llamadas).
+   * Abre posición LIMIT con SL y TP parcial 50% + TP final 50%.
+   * Solo place-order (órdenes limit). Sin triggers.
+   * 1) Limit open + presetStopLossPrice
+   * 2) Tras breve espera: 2 órdenes limit de cierre (50% en TP parcial, 50% en TP final).
    */
   async openPositionWithFullTPSL(
     credentials: BitgetCredentials,
@@ -425,7 +426,7 @@ export class BitgetService {
       marginMode: string;
       marginCoin: string;
       size: string;
-      price?: string;
+      price: string;
       side: 'buy' | 'sell';
       orderType: 'limit' | 'market';
       clientOid?: string;
@@ -433,6 +434,8 @@ export class BitgetService {
     tpslData: {
       stopLossPrice: number;
       takeProfitPrice: number;
+      /** Precio del take profit parcial (50%). Si no se pasa, se usa un solo TP 100% en takeProfitPrice (1 sola llamada con preset). */
+      takeProfitPartialPrice?: number;
     },
     contractInfo?: any,
     logContext?: {
@@ -444,34 +447,126 @@ export class BitgetService {
     orderId?: string;
     orderResult?: any;
     tpslResults: Array<{ type: string; success: boolean; result?: any; error?: string }>;
-    method: 'preset_only';
+    method: 'limit_open_sl_plus_limit_tp50_tp50' | 'preset_only';
     error?: string;
     payloads?: any;
   }> {
     const steps: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
+    const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
+    const volumePlace = contractInfo?.volumePlace ? parseInt(contractInfo.volumePlace) : 2;
+    const sizeMultiplier = parseFloat(contractInfo?.sizeMultiplier || '0.01');
+    const minTradeNum = parseFloat(contractInfo?.minTradeNum || '0.01');
+    const totalSize = parseFloat(String(orderData.size));
+    const hasPartialTP = tpslData.takeProfitPartialPrice != null && tpslData.takeProfitPartialPrice > 0;
+
     try {
-      const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
       const formattedSL = parseFloat(tpslData.stopLossPrice.toFixed(pricePlace)).toString();
       const formattedTP = parseFloat(tpslData.takeProfitPrice.toFixed(pricePlace)).toString();
 
-      const result = await this.placeOrder(credentials, {
+      // Sin TP parcial: 1 llamada con preset SL + TP
+      if (!hasPartialTP) {
+        const result = await this.placeOrder(credentials, {
+          ...orderData,
+          tradeSide: 'open',
+          presetStopLossPrice: formattedSL,
+          presetStopSurplusPrice: formattedTP,
+        }, logContext ? { ...logContext, orderId: undefined } : undefined);
+        steps.push({ type: 'open_with_sl_tp', success: true, result });
+        return {
+          success: true,
+          orderId: result.orderId,
+          orderResult: result,
+          tpslResults: steps,
+          method: 'preset_only',
+          payloads: { endpoint: 'POST /api/v2/mix/order/place-order', presetStopLossPrice: formattedSL, presetStopSurplusPrice: formattedTP },
+        };
+      }
+
+      const formattedTPPartial = parseFloat(tpslData.takeProfitPartialPrice!.toFixed(pricePlace)).toString();
+      const halfSizeRaw = Math.floor((totalSize / 2) / sizeMultiplier) * sizeMultiplier;
+      const halfSize = Math.max(parseFloat(halfSizeRaw.toFixed(8)), minTradeNum);
+      const halfSizeStr = halfSize.toFixed(volumePlace).replace(/\.?0+$/, '') || halfSize.toFixed(volumePlace);
+      const canDoPartial = totalSize >= 2 * minTradeNum - 1e-8 && halfSize >= minTradeNum - 1e-8;
+
+      if (!canDoPartial) {
+        const result = await this.placeOrder(credentials, {
+          ...orderData,
+          tradeSide: 'open',
+          presetStopLossPrice: formattedSL,
+          presetStopSurplusPrice: formattedTP,
+        }, logContext ? { ...logContext, orderId: undefined } : undefined);
+        steps.push({ type: 'open_with_sl_tp_fallback', success: true, result });
+        return {
+          success: true,
+          orderId: result.orderId,
+          orderResult: result,
+          tpslResults: steps,
+          method: 'preset_only',
+          payloads: { endpoint: 'POST /api/v2/mix/order/place-order', presetStopLossPrice: formattedSL, presetStopSurplusPrice: formattedTP },
+        };
+      }
+
+      const holdSide = orderData.side === 'buy' ? 'long' : 'short';
+      const closeSide = orderData.side === 'buy' ? 'buy' : 'sell';
+      const tradeSideClose = 'close' as const;
+      const timestamp = Date.now();
+      const baseId = `${timestamp}_${Math.floor(Math.random() * 10000)}`;
+
+      // 1) Orden LIMIT de apertura con stop loss (sin preset TP)
+      const openResult = await this.placeOrder(credentials, {
         ...orderData,
         tradeSide: 'open',
         presetStopLossPrice: formattedSL,
-        presetStopSurplusPrice: formattedTP,
+        price: orderData.price,
+        orderType: 'limit',
       }, logContext ? { ...logContext, orderId: undefined } : undefined);
+      steps.push({ type: 'limit_open_sl', success: true, result: openResult });
+      console.log(`[Bitget] ✅ Limit open + SL. OrderId: ${openResult.orderId}`);
 
-      steps.push({ type: 'open_with_sl_tp', success: true, result });
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // 2) Orden limit cierre 50% en TP parcial
+      const closePartialResult = await this.placeOrder(credentials, {
+        symbol: orderData.symbol,
+        productType: orderData.productType,
+        marginMode: orderData.marginMode,
+        marginCoin: orderData.marginCoin,
+        size: halfSizeStr,
+        price: formattedTPPartial,
+        side: closeSide,
+        tradeSide: tradeSideClose,
+        orderType: 'limit',
+        holdSide,
+        clientOid: `TP50_${orderData.symbol.substring(0, 8)}_${baseId}`.substring(0, 64),
+      }, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
+      steps.push({ type: 'limit_close_50_tp_partial', success: true, result: closePartialResult });
+
+      // 3) Orden limit cierre 50% en TP final
+      const closeFinalResult = await this.placeOrder(credentials, {
+        symbol: orderData.symbol,
+        productType: orderData.productType,
+        marginMode: orderData.marginMode,
+        marginCoin: orderData.marginCoin,
+        size: halfSizeStr,
+        price: formattedTP,
+        side: closeSide,
+        tradeSide: tradeSideClose,
+        orderType: 'limit',
+        holdSide,
+        clientOid: `TP50_${orderData.symbol.substring(0, 8)}_${baseId}_f`.substring(0, 64),
+      }, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
+      steps.push({ type: 'limit_close_50_tp_final', success: true, result: closeFinalResult });
+
       return {
         success: true,
-        orderId: result.orderId,
-        orderResult: result,
+        orderId: openResult.orderId,
+        orderResult: openResult,
         tpslResults: steps,
-        method: 'preset_only',
+        method: 'limit_open_sl_plus_limit_tp50_tp50',
         payloads: {
-          endpoint: 'POST /api/v2/mix/order/place-order',
-          presetStopLossPrice: formattedSL,
-          presetStopSurplusPrice: formattedTP,
+          open: { presetStopLossPrice: formattedSL, price: orderData.price, size: orderData.size },
+          closePartial: { price: formattedTPPartial, size: halfSizeStr },
+          closeFinal: { price: formattedTP, size: halfSizeStr },
         },
       };
     } catch (error: any) {
@@ -479,7 +574,7 @@ export class BitgetService {
       return {
         success: false,
         tpslResults: steps,
-        method: 'preset_only',
+        method: hasPartialTP ? 'limit_open_sl_plus_limit_tp50_tp50' : 'preset_only',
         error: error.message,
       };
     }

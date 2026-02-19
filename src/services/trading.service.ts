@@ -373,10 +373,17 @@ export class TradingService {
               orderType: orderData.orderType,
               clientOid: uniqueClientOid,
             };
-            const tpslData = {
+            const tpslData: { stopLossPrice: number; takeProfitPrice: number; takeProfitPartialPrice?: number } = {
               stopLossPrice: parseFloat(alert.stopLoss.toString()),
               takeProfitPrice: parseFloat(alert.takeProfit.toString()),
             };
+            if (alert.breakeven != null && parseFloat(alert.breakeven.toString()) > 0) {
+              tpslData.takeProfitPartialPrice = parseFloat(alert.breakeven.toString());
+            }
+            if (tpslData.takeProfitPartialPrice != null && orderDataForOpen.orderType !== 'limit') {
+              orderDataForOpen.orderType = 'limit';
+              orderDataForOpen.price = orderData.price ?? String(alert.entry_price ?? '');
+            }
             const openResult = await this.bitgetService.openPositionWithFullTPSL(
               decryptedCredentials,
               orderDataForOpen,
@@ -389,8 +396,8 @@ export class TradingService {
               actualPositionSize = calculatedSize;
               usedOpenWithFullTPSL = true;
               const steps = openResult.tpslResults || [];
-              tpslConfigured = steps.some((r: any) => r.type === 'open_with_sl_tp' && r.success);
-              console.log(`[TradeService] ✅ Posición + TP/SL (1 call preset). OrderId: ${openResult.orderId}, TP/SL OK: ${tpslConfigured}`);
+              tpslConfigured = steps.some((r: any) => (r.type === 'open_with_sl_tp' && r.success) || (r.type === 'limit_open_sl' && r.success));
+              console.log(`[TradeService] ✅ Posición + TP/SL. Method: ${openResult.method}. OrderId: ${openResult.orderId}, TP/SL OK: ${tpslConfigured}`);
             } else {
               console.warn(`[TradeService] ⚠️ openPositionWithFullTPSL no retornó success, fallback a placeOrder + TP/SL por separado`);
             }
