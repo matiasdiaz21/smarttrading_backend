@@ -339,6 +339,7 @@ export class BitgetService {
       clientOid?: string;
       presetStopLossPrice?: string;
       presetStopSurplusPrice?: string;
+      reduceOnly?: string;
     },
     logContext?: {
       userId: number;
@@ -386,6 +387,10 @@ export class BitgetService {
 
     if (orderData.presetStopSurplusPrice) {
       orderPayload.presetStopSurplusPrice = orderData.presetStopSurplusPrice;
+    }
+
+    if (orderData.reduceOnly) {
+      orderPayload.reduceOnly = orderData.reduceOnly;
     }
 
     const result = await this.makeRequest(
@@ -530,11 +535,12 @@ export class BitgetService {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
         try {
-          const detail = await this.getOrderStatus(credentials, openResult.orderId, orderData.symbol, orderData.productType);
+          const raw = await this.getOrderStatus(credentials, openResult.orderId, orderData.symbol, orderData.productType);
+          const detail = raw && (raw.entrustedList && raw.entrustedList[0]) ? raw.entrustedList[0] : raw;
           const state = (detail && (detail.state || detail.status)) || '';
           if (state === 'filled') {
             orderFilled = true;
-            console.log(`[Bitget] ✅ Orden de apertura filled (intento ${attempt}). Colocando TP 50% + 50%...`);
+            console.log(`[Bitget] ✅ Orden de apertura filled (intento ${attempt}). Colocando órdenes TP 50% (precio ${formattedTPPartial}) y TP 50% (precio ${formattedTP}), size cada una: ${halfSizeStr}`);
             break;
           }
           if (state === 'canceled' || state === 'cancelled') {
@@ -550,8 +556,8 @@ export class BitgetService {
         throw new Error('Timeout: la orden de apertura no se llenó en 60s. Colocá manualmente las limit de cierre 50%+50% cuando esté filled.');
       }
 
-      // 2) Orden limit cierre 50% en TP parcial
-      const closePartialResult = await this.placeOrder(credentials, {
+      // 2) Orden limit de cierre 50% en TP parcial (mitad del trade — toma 50% ganancias aquí)
+      const closePartialPayload = {
         symbol: orderData.symbol,
         productType: orderData.productType,
         marginMode: orderData.marginMode,
@@ -560,14 +566,17 @@ export class BitgetService {
         price: formattedTPPartial,
         side: closeSide,
         tradeSide: tradeSideClose,
-        orderType: 'limit',
+        orderType: 'limit' as const,
         holdSide,
+        reduceOnly: 'YES',
         clientOid: `TP50_${orderData.symbol.substring(0, 8)}_${baseId}`.substring(0, 64),
-      }, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
+      };
+      console.log(`[Bitget] 📤 Colocando orden TP 50% (partial): place-order close, size=${halfSizeStr}, price=${formattedTPPartial}, holdSide=${holdSide}`);
+      const closePartialResult = await this.placeOrder(credentials, closePartialPayload, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
       steps.push({ type: 'limit_close_50_tp_partial', success: true, result: closePartialResult });
 
-      // 3) Orden limit cierre 50% en TP final
-      const closeFinalResult = await this.placeOrder(credentials, {
+      // 3) Orden limit de cierre 50% en TP final
+      const closeFinalPayload = {
         symbol: orderData.symbol,
         productType: orderData.productType,
         marginMode: orderData.marginMode,
@@ -576,10 +585,13 @@ export class BitgetService {
         price: formattedTP,
         side: closeSide,
         tradeSide: tradeSideClose,
-        orderType: 'limit',
+        orderType: 'limit' as const,
         holdSide,
+        reduceOnly: 'YES',
         clientOid: `TP50_${orderData.symbol.substring(0, 8)}_${baseId}_f`.substring(0, 64),
-      }, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
+      };
+      console.log(`[Bitget] 📤 Colocando orden TP 50% (final): place-order close, size=${halfSizeStr}, price=${formattedTP}, holdSide=${holdSide}`);
+      const closeFinalResult = await this.placeOrder(credentials, closeFinalPayload, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
       steps.push({ type: 'limit_close_50_tp_final', success: true, result: closeFinalResult });
 
       return {
