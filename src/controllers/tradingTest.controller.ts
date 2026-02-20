@@ -81,11 +81,21 @@ export class TradingTestController {
       const timestamp = Date.now();
       const clientOid = `TEST_${symbol.substring(0, 8)}_${timestamp}_${Math.floor(Math.random() * 10000)}`.substring(0, 64);
 
+      // Calcular partial take profit (breakeven) si se omitió pero se quiere usar limit partial
+      let calculatedPartialPrice = take_profit_partial ? parseFloat(take_profit_partial) : undefined;
+      if (!calculatedPartialPrice && useLimitPartial && entry_price && take_profit) {
+        // Calcular la mitad de la distancia entre el precio de entrada y el take profit
+        const entryNum = parseFloat(entry_price);
+        const tpNum = parseFloat(take_profit);
+        calculatedPartialPrice = entryNum + (tpNum - entryNum) / 2;
+        console.log(`[TestOrder] 📊 TP Parcial calculado automáticamente (50% de recorrido): ${calculatedPartialPrice}`);
+      }
+
       const tpslPayload: { stopLossPrice: number; takeProfitPrice: number; takeProfitPartialPrice?: number } = {
         stopLossPrice: parseFloat(stop_loss),
         takeProfitPrice: parseFloat(take_profit),
       };
-      if (take_profit_partial) tpslPayload.takeProfitPartialPrice = parseFloat(take_profit_partial);
+      if (calculatedPartialPrice) tpslPayload.takeProfitPartialPrice = calculatedPartialPrice;
 
       const result = await bitgetService.openPositionWithFullTPSL(
         decryptedCredentials,
@@ -95,7 +105,7 @@ export class TradingTestController {
           marginMode: margin_mode || 'isolated',
           marginCoin,
           size: calculatedSize,
-          price: useLimitPartial ? String(entry_price) : (entry_price ? String(entry_price) : undefined),
+          price: (useLimitPartial ? String(entry_price || '') : (entry_price ? String(entry_price) : undefined)) as string,
           side,
           orderType: useLimitPartial ? 'limit' : (order_type || 'market'),
           clientOid,
@@ -241,51 +251,28 @@ export class TradingTestController {
 
       const productType = (product_type || 'USDT-FUTURES').toUpperCase();
       const marginCoin = (margin_coin || 'USDT').toUpperCase();
-      const holdSide = side === 'buy' ? 'long' : 'short';
 
-      // Obtener posición actual
-      const positions = await bitgetService.getPositions(decryptedCredentials, symbol.toUpperCase(), productType);
-      const currentPosition = Array.isArray(positions)
-        ? positions.find((p: any) => p.symbol === symbol.toUpperCase() && p.holdSide === holdSide)
-        : null;
-
-      if (!currentPosition) {
-        res.status(400).json({ error: `No hay posición ${holdSide} abierta para ${symbol}` });
-        return;
-      }
-
-      const positionSize = currentPosition.total || currentPosition.available || currentPosition.size;
-      const closeSide = side === 'buy' ? 'sell' : 'buy';
-
-      // Cancelar todos los triggers primero
-      const cancelResult = await bitgetService.cancelAllTriggerOrders(
-        decryptedCredentials, symbol.toUpperCase(), productType, marginCoin,
+      const closeResult = await bitgetService.closePositionAndCancelTriggers(
+        decryptedCredentials,
+        {
+          symbol: symbol.toUpperCase(),
+          side,
+          productType,
+          marginMode: margin_mode || 'isolated'
+        },
         { userId, strategyId: null }
       );
 
-      // Cerrar posición
-      const timestamp = Date.now();
-      const closeResult = await bitgetService.placeOrder(decryptedCredentials, {
-        symbol: symbol.toUpperCase(),
-        productType,
-        marginMode: margin_mode || 'isolated',
-        marginCoin,
-        size: positionSize,
-        side: closeSide as 'buy' | 'sell',
-        tradeSide: 'close',
-        orderType: 'market',
-        holdSide,
-        clientOid: `CLOSE_${symbol.substring(0, 8)}_${timestamp}`.substring(0, 64),
-      }, { userId, strategyId: null });
-
-      const triggersAfterClose = await bitgetService.getPendingTriggerOrders(decryptedCredentials, symbol.toUpperCase(), productType);
+      if (!closeResult.success) {
+        res.status(400).json({ error: closeResult.error || 'Error al cerrar posición y triggers' });
+        return;
+      }
 
       res.json({
         success: true,
-        closedSize: positionSize,
-        cancelledTriggers: cancelResult,
-        remainingTriggers: triggersAfterClose.length,
-        closeOrder: closeResult,
+        closedSize: closeResult.closedSize,
+        cancelledTriggers: closeResult.cancelledTriggers,
+        remainingTriggers: closeResult.remainingTriggers,
       });
     } catch (error: any) {
       console.error('[TestClose] Error:', error.message);

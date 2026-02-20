@@ -28,11 +28,14 @@ export class AdminController {
         return;
       }
 
-      const { strategy_id } = req.query;
+      const { strategy_id, strategy_ids } = req.query;
       const limit = parseInt(req.query.limit as string) || 100;
 
       let logs;
-      if (strategy_id) {
+      if (strategy_ids && typeof strategy_ids === 'string' && strategy_ids.trim()) {
+        const ids = strategy_ids.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && Number.isInteger(n));
+        logs = ids.length > 0 ? await WebhookLogModel.findByStrategyIds(ids, limit) : await WebhookLogModel.findAll(limit);
+      } else if (strategy_id) {
         logs = await WebhookLogModel.findByStrategyId(
           parseInt(strategy_id as string),
           limit

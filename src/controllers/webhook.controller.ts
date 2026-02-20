@@ -245,116 +245,22 @@ export class WebhookController {
           alert
         );
         console.log(`[Webhook] ✅ Resultado del procesamiento:`, JSON.stringify(result, null, 2));
-      } else if (alert.alertType === 'BREAKEVEN') {
-        // trade_id recomendado para asociar al ENTRY; entryPrice no es obligatorio (se obtiene de Bitget/DB)
+      } else if (
+        String(alert.alertType || '').toUpperCase() === 'CLOSE' || 
+        String(alert.alertType || '').toUpperCase() === 'STOP_LOSS' || 
+        String(alert.alertType || '').toUpperCase() === 'TAKE_PROFIT'
+      ) {
+        console.log(`[Webhook] � Procesando alerta de ${alert.alertType} (Cierre de posición y triggers)`);
         if (!alert.symbol) {
           res.status(400).json({
-            error: 'Missing required field for BREAKEVEN: symbol is required',
+            error: `Missing required field for ${alert.alertType}: symbol is required`,
           });
           return;
         }
-        result = await tradingService.processBreakevenAlert(
+        result = await tradingService.processCloseAlert(
           strategy.id,
           alert
         );
-      } else if (alert.alertType === 'STOP_LOSS' || alert.alertType === 'TAKE_PROFIT' || 
-                 String(alert.alertType || '').toUpperCase() === 'STOP_LOSS' || 
-                 String(alert.alertType || '').toUpperCase() === 'TAKE_PROFIT') {
-        // Verificar si hay ENTRY previo antes de procesar
-        // Buscar primero en webhook_logs (donde se registran todos los ENTRY)
-        // y luego en trades (donde se registran solo los trades ejecutados)
-        let hasEntry = false;
-        
-        // Prioridad 1: Buscar por trade_id en webhook_logs (más preciso)
-        if (alert.trade_id) {
-          console.log(`[Webhook] 🔍 Buscando ENTRY previo por trade_id: ${alert.trade_id} en webhook_logs...`);
-          hasEntry = await WebhookLogModel.hasEntryForTradeId(
-            strategy.id,
-            alert.trade_id
-          );
-          if (hasEntry) {
-            console.log(`[Webhook] ✅ ENTRY encontrado en webhook_logs por trade_id: ${alert.trade_id}`);
-          }
-        }
-        
-        // Prioridad 2: Si no se encontró por trade_id, buscar por símbolo en webhook_logs
-        if (!hasEntry && alert.symbol) {
-          console.log(`[Webhook] 🔍 Buscando ENTRY previo por symbol: ${alert.symbol} en webhook_logs...`);
-          hasEntry = await WebhookLogModel.hasEntryForSymbol(
-            strategy.id,
-            alert.symbol
-          );
-          if (hasEntry) {
-            console.log(`[Webhook] ✅ ENTRY encontrado en webhook_logs por symbol: ${alert.symbol}`);
-          }
-        }
-        
-        // Prioridad 3: Si no se encontró en webhook_logs, buscar en trades (para usuarios suscritos)
-        if (!hasEntry) {
-          console.log(`[Webhook] 🔍 Buscando ENTRY previo en trades para usuarios suscritos...`);
-          const subscriptions = await SubscriptionModel.findByStrategyId(strategy.id, true);
-          
-          for (const subscription of subscriptions) {
-            let hasUserEntry = false;
-            if (alert.trade_id) {
-              hasUserEntry = await TradeModel.hasEntryForTradeId(
-                subscription.user_id,
-                strategy.id,
-                alert.trade_id
-              );
-            }
-            
-            if (!hasUserEntry && alert.symbol) {
-              hasUserEntry = await TradeModel.hasEntryForSymbol(
-                subscription.user_id,
-                strategy.id,
-                alert.symbol
-              );
-            }
-            
-            if (hasUserEntry) {
-              hasEntry = true;
-              console.log(`[Webhook] ✅ ENTRY encontrado en trades para usuario ${subscription.user_id}`);
-              break;
-            }
-          }
-        }
-        
-        if (!hasEntry) {
-          console.log(`[Webhook] ⚠️ ${alert.alertType}: No se encontró ENTRY previo. La alerta será ignorada y NO se registrará en logs.`);
-          console.log(`[Webhook] ⚠️ Trade ID buscado: ${alert.trade_id || 'N/A'}, Symbol: ${alert.symbol || 'N/A'}`);
-          // No registrar en logs - simplemente retornar
-          res.json({
-            message: 'Alert ignored - no previous ENTRY found',
-            processed: 0,
-            successful: 0,
-            failed: 0,
-            ignored: true
-          });
-          return;
-        }
-        
-        // Si hay ENTRY previo, procesar y registrar en logs
-        console.log(`[Webhook] ✅ ${alert.alertType}: Se encontró ENTRY previo. Procesando alerta informativa.`);
-        result = await tradingService.processInfoAlert(
-          strategy.id,
-          alert
-        );
-        
-        // Registrar en logs solo si hay ENTRY previo
-        if (!webhookLogId) {
-          try {
-            webhookLogId = await WebhookLogModel.create(
-              strategy.id,
-              payload,
-              signature,
-              'success'
-            );
-            console.log(`[Webhook] ✅ Webhook log creado para ${alert.alertType} (ID: ${webhookLogId})`);
-          } catch (logError: any) {
-            console.error('[Webhook] ❌ Error creating webhook log:', logError.message);
-          }
-        }
       } else {
         // Por defecto, tratar como ENTRY (compatibilidad hacia atrás)
         // PERO: Si es TAKE_PROFIT o STOP_LOSS, NO ejecutar órdenes

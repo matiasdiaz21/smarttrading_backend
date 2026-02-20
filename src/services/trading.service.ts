@@ -257,7 +257,17 @@ export class TradingService {
       // Si la señal tiene breakeven y el usuario tiene TP parcial, asegurar tamaño >= 2× minTradeNum
       // para poder colocar TP 50% en breakeven + TP 50% en take profit (Bitget exige mínimo por orden)
       const usePartialTp = strategySubscription.use_partial_tp !== false;
-      if (alert.breakeven && parseFloat(alert.breakeven.toString()) > 0 && usePartialTp) {
+      let breakevenPrice = alert.breakeven ? parseFloat(alert.breakeven.toString()) : undefined;
+      
+      // Auto-calcular breakeven si no viene en la alerta pero TP parcial está habilitado
+      if (!breakevenPrice && usePartialTp && entryPrice && alert.takeProfit) {
+        const entryNum = parseFloat(entryPrice.toString());
+        const tpNum = parseFloat(alert.takeProfit.toString());
+        breakevenPrice = entryNum + (tpNum - entryNum) / 2;
+        console.log(`[TradeService] 📊 TP Parcial (Breakeven) calculado automáticamente (50% de recorrido): ${breakevenPrice}`);
+      }
+
+      if (breakevenPrice && breakevenPrice > 0 && usePartialTp) {
         const minTradeNum = parseFloat(contractInfo.minTradeNum || '0.01');
         const minSizeForPartial = 2 * minTradeNum;
         if (parseFloat(calculatedSize) < minSizeForPartial - 1e-8) {
@@ -368,7 +378,7 @@ export class TradingService {
               marginMode: alert.marginMode || 'isolated',
               marginCoin: alert.marginCoin || 'USDT',
               size: calculatedSize,
-              price: orderData.price,
+              price: orderData.price || '',
               side: bitgetSide,
               orderType: orderData.orderType,
               clientOid: uniqueClientOid,
@@ -377,8 +387,8 @@ export class TradingService {
               stopLossPrice: parseFloat(alert.stopLoss.toString()),
               takeProfitPrice: parseFloat(alert.takeProfit.toString()),
             };
-            if (alert.breakeven != null && parseFloat(alert.breakeven.toString()) > 0) {
-              tpslData.takeProfitPartialPrice = parseFloat(alert.breakeven.toString());
+            if (breakevenPrice && breakevenPrice > 0) {
+              tpslData.takeProfitPartialPrice = breakevenPrice;
             }
             if (tpslData.takeProfitPartialPrice != null && orderDataForOpen.orderType !== 'limit') {
               orderDataForOpen.orderType = 'limit';
@@ -951,5 +961,91 @@ export class TradingService {
       failed,
     };
   }
+
+  async processCloseAlert(
+    strategyId: number,
+    alert: TradingViewAlert
+  ): Promise<{ processed: number; successful: number; failed: number }> {
+    if (!alert.symbol) {
+      console.warn(`[CLOSE] Symbol no proporcionado. La alerta será ignorada.`);
+      return { processed: 0, successful: 0, failed: 0 };
+    }
+
+    const subscriptions = await SubscriptionModel.findByStrategyId(strategyId, true);
+    let processed = 0;
+    let successful = 0;
+    let failed = 0;
+
+    for (const subscription of subscriptions) {
+      try {
+        const dbSymbol = alert.symbol.replace(/\.P$/, '');
+        const symbol = dbSymbol;
+        const productType = alert.productType || 'USDT-FUTURES';
+        const marginMode = alert.marginMode || 'isolated';
+
+        // Buscar el trade
+        let tradeFinal: any = null;
+        if (alert.trade_id) {
+          tradeFinal = await TradeModel.findByTradeIdAndUser(subscription.user_id, strategyId, alert.trade_id, dbSymbol)
+            || await TradeModel.findByTradeIdAndUser(subscription.user_id, strategyId, alert.trade_id);
+        }
+        if (!tradeFinal) {
+          tradeFinal = await TradeModel.findLastEntryByUserStrategySymbol(subscription.user_id, strategyId, dbSymbol);
+        }
+
+        if (!tradeFinal) {
+          console.warn(`[CLOSE] No se encontró ENTRY previo para usuario ${subscription.user_id}, strategy ${strategyId}, symbol ${dbSymbol}`);
+          failed++;
+          processed++;
+          continue;
+        }
+
+        // Obtener credenciales
+        const credentials = await CredentialsModel.findById(subscription.credential_id!, subscription.user_id);
+        if (!credentials) {
+          console.warn(`[CLOSE] Credencial no encontrada para usuario ${subscription.user_id}`);
+          failed++;
+          processed++;
+          continue;
+        }
+
+        const decryptedCredentials = BitgetService.getDecryptedCredentials({
+          api_key: credentials.api_key,
+          api_secret: credentials.api_secret,
+          passphrase: credentials.passphrase,
+        });
+
+        const side = tradeFinal.side as 'buy' | 'sell';
+        console.log(`[CLOSE] 🔄 Cerrando posición y cancelando triggers para usuario ${subscription.user_id}, symbol ${symbol}...`);
+
+        const closeResult = await this.bitgetService.closePositionAndCancelTriggers(
+          decryptedCredentials,
+          {
+            symbol,
+            side,
+            productType,
+            marginMode
+          },
+          { userId: subscription.user_id, strategyId, orderId: tradeFinal.bitget_order_id || undefined }
+        );
+
+        if (closeResult.success) {
+          console.log(`[CLOSE] ✅ Posición cerrada exitosamente para usuario ${subscription.user_id}`);
+          successful++;
+        } else {
+          console.error(`[CLOSE] ❌ Error cerrando posición para usuario ${subscription.user_id}:`, closeResult.error);
+          failed++;
+        }
+        processed++;
+      } catch (error: any) {
+        console.error(`[CLOSE] ❌ Error procesando alerta CLOSE para usuario ${subscription.user_id}:`, error);
+        failed++;
+        processed++;
+      }
+    }
+
+    return { processed, successful, failed };
+  }
 }
+
 

@@ -564,7 +564,7 @@ export class BitgetService {
         marginCoin: orderData.marginCoin,
         size: halfSizeStr,
         price: formattedTPPartial,
-        side: closeSide,
+        side: closeSide as 'buy' | 'sell',
         tradeSide: tradeSideClose,
         orderType: 'limit' as const,
         holdSide,
@@ -583,7 +583,7 @@ export class BitgetService {
         marginCoin: orderData.marginCoin,
         size: halfSizeStr,
         price: formattedTP,
-        side: closeSide,
+        side: closeSide as 'buy' | 'sell',
         tradeSide: tradeSideClose,
         orderType: 'limit' as const,
         holdSide,
@@ -1818,6 +1818,87 @@ export class BitgetService {
     }
     
     return result;
+  }
+
+  /**
+   * Cierra una posición (market) y cancela todos sus triggers (normal_plan y pos_loss)
+   */
+  async closePositionAndCancelTriggers(
+    credentials: BitgetCredentials,
+    positionData: {
+      symbol: string;
+      side: 'buy' | 'sell';
+      productType?: string;
+      marginMode?: string;
+    },
+    logContext?: { userId: number; strategyId: number | null; orderId?: string }
+  ): Promise<{ success: boolean; closedSize?: string; cancelledTriggers?: any; remainingTriggers?: number; error?: string }> {
+    try {
+      const symbol = positionData.symbol.toUpperCase();
+      const productType = (positionData.productType || 'USDT-FUTURES').toUpperCase();
+      const holdSide = positionData.side === 'buy' ? 'long' : 'short';
+      const marginCoin = 'USDT';
+
+      console.log(`[Bitget] 🔄 Intentando cerrar posición ${holdSide} de ${symbol}...`);
+
+      // 1) Obtener la posición actual para saber el tamaño
+      const positions = await this.getPositions(credentials, symbol, productType);
+      const position = positions.find((p: any) => p.holdSide === holdSide && parseFloat(p.total || p.available || '0') > 0);
+
+      let closedSize = '0';
+
+      if (!position) {
+        console.warn(`[Bitget] ⚠️ No se encontró posición abierta ${holdSide} para ${symbol}. Solo se cancelarán triggers.`);
+      } else {
+        // 2) Cerrar la posición a mercado
+        const sizeToClose = position.available || position.total;
+        closedSize = sizeToClose;
+        const closeSide = positionData.side === 'buy' ? 'sell' : 'buy';
+        
+        console.log(`[Bitget] 📤 Enviando orden market para cerrar ${sizeToClose} contratos...`);
+        await this.placeOrder(credentials, {
+          symbol,
+          productType,
+          marginMode: positionData.marginMode || position.marginMode || 'isolated',
+          marginCoin,
+          size: sizeToClose,
+          side: closeSide,
+          tradeSide: 'close',
+          orderType: 'market',
+          holdSide,
+          reduceOnly: 'YES'
+        }, logContext);
+        console.log(`[Bitget] ✅ Posición cerrada exitosamente.`);
+      }
+
+      // 3) Cancelar todos los triggers pendientes para este símbolo
+      console.log(`[Bitget] 🗑️ Buscando triggers pendientes para cancelar...`);
+      const cancelledTriggers = await this.cancelAllTriggerOrders(credentials, symbol, productType, marginCoin, logContext);
+      
+      // 4) Verificar si quedaron triggers
+      let remainingTriggers = 0;
+      try {
+        const remainingNormal = await this.getPendingTriggerOrders(credentials, symbol, productType, 'normal_plan');
+        const remainingLoss = await this.getPendingTriggerOrders(credentials, symbol, productType, 'pos_loss');
+        const remainingProfit = await this.getPendingTriggerOrders(credentials, symbol, productType, 'pos_profit');
+        remainingTriggers = remainingNormal.length + remainingLoss.length + remainingProfit.length;
+        if (remainingTriggers > 0) {
+          console.warn(`[Bitget] ⚠️ Quedaron ${remainingTriggers} triggers sin cancelar para ${symbol}`);
+        } else {
+          console.log(`[Bitget] ✅ Todos los triggers de ${symbol} fueron cancelados.`);
+        }
+      } catch (e) {}
+
+      return {
+        success: true,
+        closedSize,
+        cancelledTriggers,
+        remainingTriggers
+      };
+    } catch (error: any) {
+      console.error(`[Bitget] ❌ Error en closePositionAndCancelTriggers:`, error.message);
+      return { success: false, error: error.message };
+    }
   }
 
   // Obtener historial de posiciones cerradas
