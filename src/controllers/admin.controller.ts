@@ -5,6 +5,13 @@ import { WebhookLogModel } from '../models/WebhookLog';
 import { TradeModel } from '../models/Trade';
 import OrderErrorModel from '../models/orderError.model';
 import BitgetOperationLogModel from '../models/BitgetOperationLog';
+import { CredentialsModel } from '../models/Credentials';
+import { BitgetService } from '../services/bitget.service';
+
+const bitgetService = new BitgetService();
+
+/** Comisiones por defecto Bitget futuros (maker 0.02%, taker 0.06%) */
+const DEFAULT_FEE = { maker: 0.0002, taker: 0.0006 };
 
 export class AdminController {
   static async getUsers(req: AuthRequest, res: Response): Promise<void> {
@@ -59,6 +66,40 @@ export class AdminController {
       const strategyId = req.query.strategy_id != null ? parseInt(String(req.query.strategy_id), 10) : undefined;
       const symbols = await WebhookLogModel.getDistinctSymbols(isNaN(strategyId as number) ? undefined : strategyId);
       res.json({ symbols });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
+   * GET /api/admin/bitget/fee-rate
+   * Obtiene las comisiones de trading desde la API de Bitget (cuenta del admin).
+   * Si no hay credenciales o falla la llamada, devuelve las tasas por defecto de Bitget futuros.
+   */
+  static async getBitgetFeeRate(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+      const userId = req.user.userId;
+      const list = await CredentialsModel.findAllActiveByUserId(userId);
+      const cred = list && list.length > 0 ? list[0] : null;
+      if (!cred) {
+        res.json({ maker: DEFAULT_FEE.maker, taker: DEFAULT_FEE.taker, source: 'default' });
+        return;
+      }
+      const decrypted = BitgetService.getDecryptedCredentials({
+        api_key: cred.api_key,
+        api_secret: cred.api_secret,
+        passphrase: cred.passphrase,
+      });
+      const rates = await bitgetService.getTradeFeeRate(decrypted);
+      if (rates) {
+        res.json({ maker: rates.maker, taker: rates.taker, source: 'bitget' });
+        return;
+      }
+      res.json({ maker: DEFAULT_FEE.maker, taker: DEFAULT_FEE.taker, source: 'default' });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

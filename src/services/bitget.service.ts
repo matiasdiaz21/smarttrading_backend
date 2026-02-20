@@ -2032,6 +2032,39 @@ export class BitgetService {
     }
   }
 
+  /**
+   * Obtiene la tasa de comisión de trading desde Bitget (API v2 common trade-rate).
+   * Requiere autenticación. Retorna maker y taker en decimal (ej. 0.0006 = 0.06%).
+   * Si el endpoint falla o no existe, retorna null para usar valores por defecto.
+   */
+  async getTradeFeeRate(credentials: BitgetCredentials): Promise<{ maker: number; taker: number } | null> {
+    try {
+      const endpoint = '/api/v2/common/trade-rate';
+      const data = await this.makeRequest('GET', endpoint, credentials);
+      if (!data) return null;
+      const maker = data.makerFeeRate ?? data.maker ?? data.makerFee;
+      const taker = data.takerFeeRate ?? data.taker ?? data.takerFee;
+      if (Array.isArray(data) && data.length > 0) {
+        const first = data[0];
+        const m = first.makerFeeRate ?? first.maker ?? first.makerFee;
+        const t = first.takerFeeRate ?? first.taker ?? first.takerFee;
+        const makerNum = typeof m === 'string' ? parseFloat(m) : Number(m);
+        const takerNum = typeof t === 'string' ? parseFloat(t) : Number(t);
+        if (Number.isFinite(makerNum) && Number.isFinite(takerNum)) {
+          return { maker: makerNum, taker: takerNum };
+        }
+      }
+      const makerNum = typeof maker === 'string' ? parseFloat(maker) : Number(maker);
+      const takerNum = typeof taker === 'string' ? parseFloat(taker) : Number(taker);
+      if (Number.isFinite(makerNum) && Number.isFinite(takerNum)) {
+        return { maker: makerNum, taker: takerNum };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   // Obtener saldo de la cuenta de futuros
   async getAccountBalance(
     credentials: BitgetCredentials,

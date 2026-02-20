@@ -161,6 +161,7 @@ app.delete('/api/admin/webhook-logs/symbol-group', authenticate, requireAdmin, A
 app.delete('/api/admin/webhook-logs/group', authenticate, requireAdmin, AdminController.deleteWebhookLogGroup);
 app.delete('/api/admin/webhook-logs/:id', authenticate, requireAdmin, AdminController.deleteWebhookLog);
 app.get('/api/admin/order-errors', authenticate, requireAdmin, AdminController.getOrderErrors);
+app.get('/api/admin/bitget/fee-rate', authenticate, requireAdmin, AdminController.getBitgetFeeRate);
 // Endpoint público para logs de operaciones Bitget
 app.get('/api/admin/bitget-operation-logs', AdminController.getBitgetOperationLogs);
 app.post('/api/admin/bitget-operation-logs/:id/review', AdminController.markLogAsReviewed);
