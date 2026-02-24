@@ -261,6 +261,14 @@ export class WebhookController {
           strategy.id,
           alert
         );
+        // Registrar STOP_LOSS/TAKE_PROFIT en webhook_log siempre (aunque Bitget falle), para tener trazabilidad
+        try {
+          const closeStatus = result.failed === 0 ? 'success' : 'failed';
+          const logId = await WebhookLogModel.create(strategy.id, payload, signature, closeStatus);
+          console.log(`[Webhook] ✅ Webhook log creado para ${alert.alertType} (ID: ${logId}, status: ${closeStatus}, processed: ${result.processed}, failed: ${result.failed})`);
+        } catch (logError: any) {
+          console.error('[Webhook] ❌ Error creando webhook log para cierre:', logError.message);
+        }
       } else {
         // Por defecto, tratar como ENTRY (compatibilidad hacia atrás)
         // PERO: Si es TAKE_PROFIT o STOP_LOSS, NO ejecutar órdenes

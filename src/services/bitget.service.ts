@@ -1811,10 +1811,18 @@ export class BitgetService {
     
     const result = await this.makeRequest('GET', endpoint, credentials);
     
-    // Log para ver estructura de posiciones abiertas
-    if (result && result.length > 0) {
-      console.log('[BitgetService] Open position fields:', Object.keys(result[0]));
-      console.log('[BitgetService] Open position example:', JSON.stringify(result[0], null, 2));
+    // Log para diagnóstico: qué devolvió la API (símbolos y cantidad)
+    if (result && Array.isArray(result)) {
+      const symbolsReturned = result.map((p: any) => p.symbol || p.symbolName || '?').filter(Boolean);
+      console.log('[BitgetService] getPositions: requested symbol=', symbol, '| positions returned=', result.length, '| symbols=', symbolsReturned.join(', ') || 'none');
+      if (result.length > 0) {
+        console.log('[BitgetService] Open position fields:', Object.keys(result[0]));
+        // Solo loguear ejemplo del símbolo solicitado si existe, sino el primero
+        const forSymbol = symbol ? result.find((p: any) => (p.symbol || p.symbolName || '').toUpperCase() === symbol?.toUpperCase()) : result[0];
+        console.log('[BitgetService] Open position example:', JSON.stringify(forSymbol || result[0], null, 2));
+      }
+    } else if (result && !Array.isArray(result)) {
+      console.log('[BitgetService] getPositions: result is not an array:', typeof result, Object.keys(result || {}));
     }
     
     return result;
@@ -1841,27 +1849,35 @@ export class BitgetService {
 
       console.log(`[Bitget] 🔄 Intentando cerrar posición ${holdSide} de ${symbol}...`);
 
-      // 1) Obtener la posición actual para saber el tamaño
-      const positions = await this.getPositions(credentials, symbol, productType);
-      const position = positions.find((p: any) => p.holdSide === holdSide && parseFloat(p.total || p.available || '0') > 0);
+      // 1) Obtener la posición actual para saber el tamaño (filtrar por symbol: la API puede devolver todas las posiciones)
+      const positionsRaw = await this.getPositions(credentials, symbol, productType);
+      const positions = Array.isArray(positionsRaw) ? positionsRaw : [];
+      const position = positions.find((p: any) => {
+        const pSymbol = (p.symbol || p.symbolName || '').toUpperCase();
+        const matchSymbol = pSymbol === symbol;
+        const matchSide = (p.holdSide || '').toLowerCase() === holdSide;
+        const size = parseFloat(p.total || p.openDelegateSize || p.available || '0');
+        const hasSize = size > 0;
+        return matchSymbol && matchSide && hasSize;
+      });
 
       let closedSize = '0';
 
       if (!position) {
-        console.warn(`[Bitget] ⚠️ No se encontró posición abierta ${holdSide} para ${symbol}. Solo se cancelarán triggers.`);
+        const symbolsInResponse = positions.map((p: any) => `${p.symbol || p.symbolName}:${(p.holdSide || '').toLowerCase()}=${p.total || p.available || '0'}`);
+        console.warn(`[Bitget] ⚠️ No se encontró posición abierta ${holdSide} para ${symbol}. Solo se cancelarán triggers. Posiciones devueltas por API: [${symbolsInResponse.join(', ')}]`);
       } else {
-        // 2) Cerrar la posición a mercado
-        const sizeToClose = position.available || position.total;
-        closedSize = sizeToClose;
+        const sizeToClose = position.available ?? position.total ?? position.openDelegateSize ?? '0';
+        closedSize = String(sizeToClose);
         const closeSide = positionData.side === 'buy' ? 'sell' : 'buy';
-        
+        console.log(`[Bitget] 📋 Posición a cerrar: symbol=${position.symbol || position.symbolName}, holdSide=${position.holdSide}, size=${sizeToClose}`);
         console.log(`[Bitget] 📤 Enviando orden market para cerrar ${sizeToClose} contratos...`);
         await this.placeOrder(credentials, {
           symbol,
           productType,
           marginMode: positionData.marginMode || position.marginMode || 'isolated',
           marginCoin,
-          size: sizeToClose,
+          size: closedSize,
           side: closeSide,
           tradeSide: 'close',
           orderType: 'market',
