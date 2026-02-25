@@ -106,17 +106,17 @@ export class BitgetService {
         success = true;
         return response.data.data;
       } else {
+        const apiCode = response.data.code ?? '';
         errorMessage = `Bitget API Error: ${response.data.msg}`;
-        throw new Error(errorMessage);
+        throw new Error(`[${apiCode}] ${errorMessage}`);
       }
     } catch (error: any) {
       responseStatus = error.response?.status || null;
       responseData = error.response?.data || null;
+      const apiCode = error.response?.data?.code ?? '';
       errorMessage = error.response?.data?.msg || error.message;
-      
-      throw new Error(
-        `Bitget API Request Failed: ${errorMessage}`
-      );
+      const msg = apiCode ? `[${apiCode}] ${errorMessage}` : errorMessage;
+      throw new Error(`Bitget API Request Failed: ${msg}`);
     } finally {
       // Guardar log si se proporcionó contexto
       if (logContext) {
@@ -488,10 +488,21 @@ export class BitgetService {
       }
 
       const formattedTPPartial = parseFloat(tpslData.takeProfitPartialPrice!.toFixed(pricePlace)).toString();
-      const halfSizeRaw = Math.floor((totalSize / 2) / sizeMultiplier) * sizeMultiplier;
-      const halfSize = Math.max(parseFloat(halfSizeRaw.toFixed(8)), minTradeNum);
-      const halfSizeStr = halfSize.toFixed(volumePlace).replace(/\.?0+$/, '') || halfSize.toFixed(volumePlace);
+      
+      // Logging para debugging de cálculo de tamaños
+      console.log(`[Bitget] 📊 Cálculo de tamaños para ${orderData.symbol}:`);
+      console.log(`  - totalSize: ${totalSize}`);
+      console.log(`  - sizeMultiplier: ${sizeMultiplier}`);
+      console.log(`  - minTradeNum: ${minTradeNum}`);
+      console.log(`  - volumePlace: ${volumePlace}`);
+      const minTradeNumStr = (contractInfo?.minTradeNum ?? String(minTradeNum)).toString();
+      const sizeMultiplierStr = (contractInfo?.sizeMultiplier ?? String(sizeMultiplier)).toString();
+      const halfSizeStr = this.calculateOrderSize(String(totalSize / 2), minTradeNumStr, sizeMultiplierStr);
+      const halfSize = parseFloat(halfSizeStr);
+      console.log(`  - halfSize (calculateOrderSize): ${halfSizeStr}`);
+      
       const canDoPartial = totalSize >= 2 * minTradeNum - 1e-8 && halfSize >= minTradeNum - 1e-8;
+      console.log(`  - canDoPartial: ${canDoPartial} (totalSize >= ${2 * minTradeNum} && halfSize >= ${minTradeNum})`);
 
       if (!canDoPartial) {
         const result = await this.placeOrder(credentials, {
@@ -514,9 +525,12 @@ export class BitgetService {
       const holdSide = orderData.side === 'buy' ? 'long' : 'short';
       const closeSide = orderData.side === 'buy' ? 'buy' : 'sell';
       const tradeSideClose = 'close' as const;
+      // baseId con alta entropía para evitar error 40786 (Duplicate clientOid)
       const timestamp = Date.now();
       const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-      const baseId = `${timestamp}_${randomSuffix}_${Math.floor(Math.random() * 10000)}`;
+      const random5 = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
+      const hexEntropy = crypto.randomBytes(4).toString('hex');
+      const baseId = `${timestamp}_${randomSuffix}_${random5}_${hexEntropy}`;
 
       // 1) Orden de apertura (market o limit según orderData) SIN preset SL/TP
       const openResult = await this.placeOrder(credentials, {
@@ -598,15 +612,50 @@ export class BitgetService {
         clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}_${tpRandom1}`.substring(0, 64),
       };
       console.log(`[Bitget] 📤 Colocando TP parcial (50%): place-plan-order, size=${halfSizeStr}, triggerPrice=${formattedTPPartial}, holdSide=${holdSide}`);
-      const tpPartialResult = await this.makeRequest('POST', planEndpoint, credentials, tpPartialPayload, logContext ? {
-        userId: logContext.userId,
-        strategyId: logContext.strategyId,
-        symbol: orderData.symbol,
-        operationType: 'take_profit_partial',
-        orderId: openResult.orderId,
-        clientOid: tpPartialPayload.clientOid,
-      } : undefined);
-      steps.push({ type: 'take_profit_partial', success: true, result: tpPartialResult });
+      
+      let tpPartialResult;
+      try {
+        tpPartialResult = await this.makeRequest('POST', planEndpoint, credentials, tpPartialPayload, logContext ? {
+          userId: logContext.userId,
+          strategyId: logContext.strategyId,
+          symbol: orderData.symbol,
+          operationType: 'take_profit_partial',
+          orderId: openResult.orderId,
+          clientOid: tpPartialPayload.clientOid,
+        } : undefined);
+        steps.push({ type: 'take_profit_partial', success: true, result: tpPartialResult });
+      } catch (tpPartialError: any) {
+        const isMinOrderError = tpPartialError.message && (
+          tpPartialError.message.includes('Min. order amount') || tpPartialError.message.includes('43070')
+        );
+        if (isMinOrderError) {
+          console.warn(`[Bitget] ⚠️ TP parcial rechazado por tamaño mínimo (${halfSizeStr}). Error: ${tpPartialError.message}`);
+          console.log(`[Bitget] 🔄 Intentando TP parcial con tamaño mínimo ajustado...`);
+          const minSizeValid = Math.max(minTradeNum * 2, minTradeNum);
+          const adjustedSizeStr = this.calculateOrderSize(String(minSizeValid), minTradeNumStr, sizeMultiplierStr);
+          console.log(`[Bitget] 📤 Reintentando TP parcial con size ajustado: ${adjustedSizeStr}`);
+          
+          try {
+            const adjustedPayload = { ...tpPartialPayload, size: adjustedSizeStr };
+            tpPartialResult = await this.makeRequest('POST', planEndpoint, credentials, adjustedPayload, logContext ? {
+              userId: logContext.userId,
+              strategyId: logContext.strategyId,
+              symbol: orderData.symbol,
+              operationType: 'take_profit_partial_adjusted',
+              orderId: openResult.orderId,
+              clientOid: adjustedPayload.clientOid,
+            } : undefined);
+            steps.push({ type: 'take_profit_partial', success: true, result: tpPartialResult });
+            console.log(`[Bitget] ✅ TP parcial ajustado colocado exitosamente`);
+          } catch (retryError: any) {
+            console.error(`[Bitget] ❌ Error en retry de TP parcial: ${retryError.message}`);
+            steps.push({ type: 'take_profit_partial', success: false, error: retryError.message });
+          }
+        } else {
+          console.error(`[Bitget] ❌ Error en TP parcial: ${tpPartialError.message}`);
+          steps.push({ type: 'take_profit_partial', success: false, error: tpPartialError.message });
+        }
+      }
 
       // 4) Colocar Take Profit final usando normal_plan (trigger order)
       const tpRandom2 = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
@@ -628,15 +677,50 @@ export class BitgetService {
         clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}_${tpRandom2}`.substring(0, 64),
       };
       console.log(`[Bitget] 📤 Colocando TP final (50%): place-plan-order, size=${halfSizeStr}, triggerPrice=${formattedTP}, holdSide=${holdSide}`);
-      const tpFinalResult = await this.makeRequest('POST', planEndpoint, credentials, tpFinalPayload, logContext ? {
-        userId: logContext.userId,
-        strategyId: logContext.strategyId,
-        symbol: orderData.symbol,
-        operationType: 'take_profit_final',
-        orderId: openResult.orderId,
-        clientOid: tpFinalPayload.clientOid,
-      } : undefined);
-      steps.push({ type: 'take_profit_final', success: true, result: tpFinalResult });
+      
+      let tpFinalResult;
+      try {
+        tpFinalResult = await this.makeRequest('POST', planEndpoint, credentials, tpFinalPayload, logContext ? {
+          userId: logContext.userId,
+          strategyId: logContext.strategyId,
+          symbol: orderData.symbol,
+          operationType: 'take_profit_final',
+          orderId: openResult.orderId,
+          clientOid: tpFinalPayload.clientOid,
+        } : undefined);
+        steps.push({ type: 'take_profit_final', success: true, result: tpFinalResult });
+      } catch (tpFinalError: any) {
+        const isMinOrderErrorFinal = tpFinalError.message && (
+          tpFinalError.message.includes('Min. order amount') || tpFinalError.message.includes('43070')
+        );
+        if (isMinOrderErrorFinal) {
+          console.warn(`[Bitget] ⚠️ TP final rechazado por tamaño mínimo (${halfSizeStr}). Error: ${tpFinalError.message}`);
+          console.log(`[Bitget] 🔄 Intentando TP final con tamaño mínimo ajustado...`);
+          const minSizeValid = Math.max(minTradeNum * 2, minTradeNum);
+          const adjustedSizeStr = this.calculateOrderSize(String(minSizeValid), minTradeNumStr, sizeMultiplierStr);
+          console.log(`[Bitget] 📤 Reintentando TP final con size ajustado: ${adjustedSizeStr}`);
+          
+          try {
+            const adjustedPayload = { ...tpFinalPayload, size: adjustedSizeStr };
+            tpFinalResult = await this.makeRequest('POST', planEndpoint, credentials, adjustedPayload, logContext ? {
+              userId: logContext.userId,
+              strategyId: logContext.strategyId,
+              symbol: orderData.symbol,
+              operationType: 'take_profit_final_adjusted',
+              orderId: openResult.orderId,
+              clientOid: adjustedPayload.clientOid,
+            } : undefined);
+            steps.push({ type: 'take_profit_final', success: true, result: tpFinalResult });
+            console.log(`[Bitget] ✅ TP final ajustado colocado exitosamente`);
+          } catch (retryError: any) {
+            console.error(`[Bitget] ❌ Error en retry de TP final: ${retryError.message}`);
+            steps.push({ type: 'take_profit_final', success: false, error: retryError.message });
+          }
+        } else {
+          console.error(`[Bitget] ❌ Error en TP final: ${tpFinalError.message}`);
+          steps.push({ type: 'take_profit_final', success: false, error: tpFinalError.message });
+        }
+      }
 
       return {
         success: true,
@@ -1348,7 +1432,9 @@ export class BitgetService {
       const isValidBE = currentPrice == null || (holdSide === 'long' && formattedBE > currentPrice) || (holdSide === 'short' && formattedBE < currentPrice);
 
       const timestamp = Date.now();
-      const baseId = `${timestamp}${Math.floor(Math.random() * 1000)}`;
+      const rs = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      const r5 = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
+      const baseId = `${timestamp}_${rs}_${r5}_${crypto.randomBytes(4).toString('hex')}`;
 
       const orders: Array<{ type: string; payload: any }> = [];
 
@@ -1917,19 +2003,32 @@ export class BitgetService {
         const closeSide = positionData.side === 'buy' ? 'sell' : 'buy';
         console.log(`[Bitget] 📋 Posición a cerrar: symbol=${position.symbol || position.symbolName}, holdSide=${position.holdSide}, size=${sizeToClose}`);
         console.log(`[Bitget] 📤 Enviando orden market para cerrar ${sizeToClose} contratos...`);
-        await this.placeOrder(credentials, {
-          symbol,
-          productType,
-          marginMode: positionData.marginMode || position.marginMode || 'isolated',
-          marginCoin,
-          size: closedSize,
-          side: closeSide,
-          tradeSide: 'close',
-          orderType: 'market',
-          holdSide,
-          reduceOnly: 'YES'
-        }, logContext);
-        console.log(`[Bitget] ✅ Posición cerrada exitosamente.`);
+        try {
+          await this.placeOrder(credentials, {
+            symbol,
+            productType,
+            marginMode: positionData.marginMode || position.marginMode || 'isolated',
+            marginCoin,
+            size: closedSize,
+            side: closeSide,
+            tradeSide: 'close',
+            orderType: 'market',
+            holdSide,
+            reduceOnly: 'YES'
+          }, logContext);
+          console.log(`[Bitget] ✅ Posición cerrada exitosamente.`);
+        } catch (closeError: any) {
+          const isNoPositionToClose = closeError.message && (
+            closeError.message.includes('No position to close') || closeError.message.includes('22002')
+          );
+          if (isNoPositionToClose) {
+            console.warn(`[Bitget] ⚠️ Posición ya no existe (probablemente cerrada por SL/TP). Error: ${closeError.message}`);
+            console.log(`[Bitget] 🔄 Continuando con cancelación de triggers...`);
+          } else {
+            // Para otros errores, lanzar normalmente
+            throw closeError;
+          }
+        }
       }
 
       // 3) Cancelar todos los triggers pendientes para este símbolo
