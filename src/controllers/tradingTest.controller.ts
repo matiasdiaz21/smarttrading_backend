@@ -474,4 +474,62 @@ export class TradingTestController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  /**
+   * GET /api/admin/trading/symbols-config
+   * Lista la misma configuración de apertura (contract info) por moneda para replicar y debugear.
+   * Query: product_type (opcional), symbols (opcional, comma-separated).
+   */
+  static async getSymbolsConfig(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const productType = (req.query.product_type as string || 'USDT-FUTURES').toUpperCase();
+      const symbolsParam = (req.query.symbols as string || '').trim();
+      const defaultSymbols = [
+        'BTCUSDT', 'ETHUSDT', 'TRXUSDT', 'ARBUSDT', 'SHIBUSDT', 'DOGEUSDT',
+        'UNIUSDT', 'DOTUSDT', 'WLDUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT',
+      ];
+      const symbolList = symbolsParam
+        ? symbolsParam.split(',').map((s: string) => s.trim().toUpperCase()).filter(Boolean)
+        : defaultSymbols;
+
+      const symbols: Array<{
+        symbol: string;
+        minTradeNum: string;
+        sizeMultiplier: string;
+        volumePlace: string;
+        pricePlace: string;
+        minTradeUSDT: string;
+        error?: string;
+      }> = [];
+
+      for (const symbol of symbolList) {
+        try {
+          const info = await bitgetService.getContractInfo(symbol, productType);
+          symbols.push({
+            symbol,
+            minTradeNum: info.minTradeNum,
+            sizeMultiplier: info.sizeMultiplier,
+            volumePlace: info.volumePlace,
+            pricePlace: info.pricePlace,
+            minTradeUSDT: info.minTradeUSDT,
+          });
+        } catch (e: any) {
+          symbols.push({
+            symbol,
+            minTradeNum: '-',
+            sizeMultiplier: '-',
+            volumePlace: '-',
+            pricePlace: '-',
+            minTradeUSDT: '-',
+            error: e.message,
+          });
+        }
+      }
+
+      res.json({ productType, symbols });
+    } catch (error: any) {
+      console.error('[TestOrder] getSymbolsConfig:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  }
 }

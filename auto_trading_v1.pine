@@ -14,6 +14,7 @@ DEC = input.int(5, title="Decimales", minval=0, step=1, group=group_general)
 num_ops = input.int(20, title="Número de operaciones para winrate", minval=1, group=group_general)
 tpc = input.bool(true, title="Mostrar zona de profit", group=group_general)
 SML_Channel_TF_mins_D_W_M = input.string("400", title="Minutos SML", group=group_general)
+valid_entry_bars = input.int(10, title="Velas máx. esperando retorno a entrada", minval=1, maxval=150, tooltip="Cuántas velas esperamos a que el precio vuelva a tocar el nivel de entrada. Si no vuelve en ese tiempo, la señal se descarta y no se abre el trade.", group=group_general)
 
 // Grupo: Configuración de Cuenta / Riesgo
 group_cuenta = 'Configuración de Cuenta / Riesgo'
@@ -22,6 +23,7 @@ perdida_ = input.float(1, title="Riesgo asumido (% de cuenta)", minval=0, step=0
 comision = input.float(0.08, title="Comisión Apertura + Cierre (%)", minval=0.01, maxval=0.2, step=0.005, group=group_cuenta)
 take_profit = input.float(1.7, title="Ratio Take Profit (RR)", step=0.1, group=group_cuenta)
 breakeven_ratio = input.float(0.5, title="Breakeven Ratio (0-1)", minval=0, maxval=1, step=0.05, group=group_cuenta)
+min_sl_atr = input.float(0.3, title="Mín. distancia SL (múltiplos ATR)", minval=0.05, maxval=3.0, step=0.05, tooltip="Exige que la distancia entrada–SL sea al menos este múltiplo del ATR. Evita entradas falsas cuando el precio se mueve poco y SL/TP quedarían pegados a la entrada.", group=group_cuenta)
 
 // Grupo: Filtros de Estrategia
 group_filtros = 'Filtros de Estrategia'
@@ -54,7 +56,6 @@ macd_signal = input.int(9, title="MACD Signal Length", group=group_macd)
 group_manual = 'Parámetros Manuales'
 var limit = input.float(0, title="Entrada (Limit)", minval=0, step=0.05, group=group_manual)
 var stop = input.float(0, title="Stop Loss 🛑", minval=0, step=0.05, group=group_manual)
-valid_entry_bars = input.int(10, title="Barras máx. esperando retorno a entrada", minval=1, maxval=50, tooltip="Solo se envía ENTRY cuando el precio vuelve a tocar la entrada en las siguientes barras; si no, se cancela la señal.", group=group_manual)
 
 // Grupo: RSI en Pantalla (Opcional)
 group_rsi_display = 'Mostrar RSI en Gráfico'
@@ -360,33 +361,37 @@ if pendingShort and not (high >= pendingEntry)
     else if (bar_index - pendingBarIndex) >= valid_entry_bars
         pendingShort := false
 
-// 3) Nueva señal LONG: guardar pendiente (no alert ni orden hasta que precio vuelva a entrada)
+// 3) Nueva señal LONG: guardar pendiente solo si la distancia entrada–SL es suficiente (evita SL/TP pegados a la entrada)
 if longcondicion and not isTradeOpen and not pendingLong and not pendingShort
     limit := math.round_to_mintick(ema1)
     stop := math.round_to_mintick(M_LOW)
-    tp := math.round_to_mintick(limit + (limit - stop) * take_profit)
-    pendingLong := true
-    pendingEntry := limit
-    pendingStop := stop
-    pendingTp := tp
-    pendingBreakeven := math.round_to_mintick(limit + (tp - limit) * breakeven_ratio)
-    pendingTradeId := trade_id + 1
-    pendingBarIndex := bar_index
-    label.new(bar_index, limit, text="Señal Long\nEsperando retorno a " + str.tostring(limit, "#.####"), style=label.style_label_up, color=color.blue, textcolor=color.white, size=textSize)
+    float sl_dist_long = limit - stop
+    if sl_dist_long >= atrValue * min_sl_atr
+        tp := math.round_to_mintick(limit + (limit - stop) * take_profit)
+        pendingLong := true
+        pendingEntry := limit
+        pendingStop := stop
+        pendingTp := tp
+        pendingBreakeven := math.round_to_mintick(limit + (tp - limit) * breakeven_ratio)
+        pendingTradeId := trade_id + 1
+        pendingBarIndex := bar_index
+        label.new(bar_index, limit, text="Señal Long\nEsperando retorno a " + str.tostring(limit, "#.####"), style=label.style_label_up, color=color.blue, textcolor=color.white, size=textSize)
 
-// 4) Nueva señal SHORT: guardar pendiente
+// 4) Nueva señal SHORT: guardar pendiente solo si la distancia entrada–SL es suficiente
 if shortcondicion and not isTradeOpen and not pendingLong and not pendingShort
     limit := math.round_to_mintick(ema1)
     stop := math.round_to_mintick(M_HIGH)
-    tp := math.round_to_mintick(limit - math.abs(limit - stop) * take_profit)
-    pendingShort := true
-    pendingEntry := limit
-    pendingStop := stop
-    pendingTp := tp
-    pendingBreakeven := math.round_to_mintick(limit - (limit - tp) * breakeven_ratio)
-    pendingTradeId := trade_id + 1
-    pendingBarIndex := bar_index
-    label.new(bar_index, limit, text="Señal Short\nEsperando retorno a " + str.tostring(limit, "#.####"), style=label.style_label_down, color=color.blue, textcolor=color.white, size=textSize)
+    float sl_dist_short = stop - limit
+    if sl_dist_short >= atrValue * min_sl_atr
+        tp := math.round_to_mintick(limit - math.abs(limit - stop) * take_profit)
+        pendingShort := true
+        pendingEntry := limit
+        pendingStop := stop
+        pendingTp := tp
+        pendingBreakeven := math.round_to_mintick(limit - (limit - tp) * breakeven_ratio)
+        pendingTradeId := trade_id + 1
+        pendingBarIndex := bar_index
+        label.new(bar_index, limit, text="Señal Short\nEsperando retorno a " + str.tostring(limit, "#.####"), style=label.style_label_down, color=color.blue, textcolor=color.white, size=textSize)
 
 // Determinar tipo de operación
 if activeEntry < activeStop and isTradeOpen

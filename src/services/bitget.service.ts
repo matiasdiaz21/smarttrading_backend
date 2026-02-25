@@ -1998,35 +1998,40 @@ export class BitgetService {
         const symbolsInResponse = positions.map((p: any) => `${p.symbol || p.symbolName}:${(p.holdSide || '').toLowerCase()}=${p.total || p.available || '0'}`);
         console.warn(`[Bitget] ⚠️ No se encontró posición abierta ${holdSide} para ${symbol}. Solo se cancelarán triggers. Posiciones devueltas por API: [${symbolsInResponse.join(', ')}]`);
       } else {
-        const sizeToClose = position.available ?? position.total ?? position.openDelegateSize ?? '0';
+        // Usar la misma prioridad que el filtro: total primero (evita size 0 cuando available=0)
+        const sizeToClose = position.total ?? position.available ?? position.openDelegateSize ?? '0';
         closedSize = String(sizeToClose);
         const closeSide = positionData.side === 'buy' ? 'sell' : 'buy';
-        console.log(`[Bitget] 📋 Posición a cerrar: symbol=${position.symbol || position.symbolName}, holdSide=${position.holdSide}, size=${sizeToClose}`);
-        console.log(`[Bitget] 📤 Enviando orden market para cerrar ${sizeToClose} contratos...`);
-        try {
-          await this.placeOrder(credentials, {
-            symbol,
-            productType,
-            marginMode: positionData.marginMode || position.marginMode || 'isolated',
-            marginCoin,
-            size: closedSize,
-            side: closeSide,
-            tradeSide: 'close',
-            orderType: 'market',
-            holdSide,
-            reduceOnly: 'YES'
-          }, logContext);
-          console.log(`[Bitget] ✅ Posición cerrada exitosamente.`);
-        } catch (closeError: any) {
-          const isNoPositionToClose = closeError.message && (
-            closeError.message.includes('No position to close') || closeError.message.includes('22002')
-          );
-          if (isNoPositionToClose) {
-            console.warn(`[Bitget] ⚠️ Posición ya no existe (probablemente cerrada por SL/TP). Error: ${closeError.message}`);
-            console.log(`[Bitget] 🔄 Continuando con cancelación de triggers...`);
-          } else {
-            // Para otros errores, lanzar normalmente
-            throw closeError;
+        const sizeNum = parseFloat(closedSize);
+        if (sizeNum <= 0) {
+          console.warn(`[Bitget] ⚠️ Tamaño a cerrar inválido (${closedSize}). No se envía placeOrder; solo se cancelarán triggers.`);
+        } else {
+          console.log(`[Bitget] 📋 Posición a cerrar: symbol=${position.symbol || position.symbolName}, holdSide=${position.holdSide}, size=${sizeToClose}`);
+          console.log(`[Bitget] 📤 Enviando orden market para cerrar ${sizeToClose} contratos...`);
+          try {
+            await this.placeOrder(credentials, {
+              symbol,
+              productType,
+              marginMode: positionData.marginMode || position.marginMode || 'isolated',
+              marginCoin,
+              size: closedSize,
+              side: closeSide,
+              tradeSide: 'close',
+              orderType: 'market',
+              holdSide,
+              reduceOnly: 'YES'
+            }, logContext);
+            console.log(`[Bitget] ✅ Posición cerrada exitosamente.`);
+          } catch (closeError: any) {
+            const isNoPositionToClose = closeError.message && (
+              closeError.message.includes('No position to close') || closeError.message.includes('22002')
+            );
+            if (isNoPositionToClose) {
+              console.warn(`[Bitget] ⚠️ Posición ya no existe (probablemente cerrada por SL/TP). Error: ${closeError.message}`);
+              console.log(`[Bitget] 🔄 Continuando con cancelación de triggers...`);
+            } else {
+              throw closeError;
+            }
           }
         }
       }

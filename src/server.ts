@@ -175,6 +175,7 @@ app.get('/api/admin/trading/credentials', authenticate, requireAdmin, TradingTes
 app.get('/api/admin/trading/positions', authenticate, requireAdmin, TradingTestController.getPositions);
 app.get('/api/admin/trading/pending-triggers', authenticate, requireAdmin, TradingTestController.getPendingTriggers);
 app.get('/api/admin/trading/ticker', authenticate, requireAdmin, TradingTestController.getTicker);
+app.get('/api/admin/trading/symbols-config', authenticate, requireAdmin, TradingTestController.getSymbolsConfig);
 app.post('/api/admin/trading/test-open', authenticate, requireAdmin, TradingTestController.testOpenPosition);
 app.post('/api/admin/trading/test-breakeven', authenticate, requireAdmin, TradingTestController.testBreakeven);
 app.post('/api/admin/trading/test-close', authenticate, requireAdmin, TradingTestController.testClosePosition);

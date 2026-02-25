@@ -30,3 +30,9 @@ npm run dev
 - `src/` - Código fuente TypeScript
 - `database/` - Esquemas SQL
 
+## Exchanges (Bitget vs Bybit)
+
+El backend opera actualmente con **Bitget**. Para aperturas con TP parcial (50% + 50%), Bitget requiere varias llamadas: `place-order` (abrir), `place-tpsl-order` (SL), `place-plan-order` x2 (TP parcial y final). Para el caso sin parcial, Bitget permite preset SL/TP en una sola `place-order`.
+
+**Bybit** permite enviar `takeProfit` y `stopLoss` en la misma petición de creación de orden ([Place Order](https://bybit-exchange.github.io/docs/v5/order/create-order)), reduciendo a 1 llamada para abrir con TP/SL único. Para TP parcial seguiría siendo 1 open + órdenes adicionales. Ver `docs/exchanges-comparison.md` para más detalle.
+

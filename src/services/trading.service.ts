@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { BitgetService } from './bitget.service';
 import { CredentialsModel } from '../models/Credentials';
 import { SubscriptionModel } from '../models/Subscription';
@@ -349,10 +350,27 @@ export class TradingService {
       
       // Mismo flujo que /admin/test-orders: open + TP/SL en un solo método cuando hay SL y TP
       if (shouldOpenPosition) {
-        // Generar clientOid único usando timestamp de alta precisión y número aleatorio
-        const highPrecisionTimestamp = `${Date.now()}_${process.hrtime.bigint()}`;
-        const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-        const uniqueClientOid = `ST_${userId}_${strategyId}_${alert.trade_id || 'ENTRY'}_${highPrecisionTimestamp}_${randomSuffix}`;
+        // Cancelar triggers existentes en este símbolo para no acumular dos juegos de SL/TP
+        try {
+          const cancelResult = await this.bitgetService.cancelAllTriggerOrders(
+            decryptedCredentials,
+            symbol.toUpperCase(),
+            productType,
+            alert.marginCoin || 'USDT',
+            { userId, strategyId }
+          );
+          if (cancelResult.cancelled > 0) {
+            console.log(`[TradeService] 🗑️ Cancelados ${cancelResult.cancelled} triggers previos en ${symbol} antes de abrir nueva posición.`);
+          }
+        } catch (cancelErr: any) {
+          console.warn(`[TradeService] ⚠️ No se pudieron cancelar triggers previos en ${symbol}: ${cancelErr.message}. Se continúa con la apertura.`);
+        }
+
+        // Generar clientOid único con alta entropía para evitar 40786 (Duplicate clientOid) en reintentos
+        const ts = Date.now();
+        const hexEntropy = crypto.randomBytes(4).toString('hex');
+        const randomSuffix = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
+        const uniqueClientOid = `ST_${userId}_${strategyId}_${alert.trade_id || 'ENTRY'}_${ts}_${randomSuffix}_${hexEntropy}`.substring(0, 64);
         
         const orderData = {
           symbol: symbol,
