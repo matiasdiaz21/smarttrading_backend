@@ -33,6 +33,7 @@ console.log(`   DB_NAME: ${process.env.DB_NAME ? '✅ configurado' : '❌ NO con
 import { AuthController } from '../src/controllers/auth.controller';
 import { StrategyController } from '../src/controllers/strategy.controller';
 import { CredentialsController } from '../src/controllers/credentials.controller';
+import { BybitCredentialsController } from '../src/controllers/bybitCredentials.controller';
 import { UserController } from '../src/controllers/user.controller';
 import { WebhookController } from '../src/controllers/webhook.controller';
 import { PaymentController } from '../src/controllers/payment.controller';
@@ -174,6 +175,12 @@ app.post('/api/bitget/credentials', authenticate, CredentialsController.create);
 app.put('/api/bitget/credentials/:id', authenticate, CredentialsController.update);
 app.delete('/api/bitget/credentials/:id', authenticate, CredentialsController.delete);
 app.post('/api/bitget/credentials/:id/validate', authenticate, CredentialsController.validate);
+
+app.get('/api/bybit/credentials', authenticate, BybitCredentialsController.list);
+app.post('/api/bybit/credentials', authenticate, BybitCredentialsController.create);
+app.put('/api/bybit/credentials/:id', authenticate, BybitCredentialsController.update);
+app.delete('/api/bybit/credentials/:id', authenticate, BybitCredentialsController.delete);
+app.post('/api/bybit/credentials/:id/validate', authenticate, BybitCredentialsController.validate);
 
 // User routes
 app.get('/api/user/strategies', authenticate, UserController.getStrategies);
