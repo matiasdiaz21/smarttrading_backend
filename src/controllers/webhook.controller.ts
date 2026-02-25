@@ -245,6 +245,17 @@ export class WebhookController {
           alert
         );
         console.log(`[Webhook] ✅ Resultado del procesamiento:`, JSON.stringify(result, null, 2));
+        if (webhookLogId && result.fillEntryPrice != null && result.fillNotional != null) {
+          try {
+            await WebhookLogModel.updatePayload(webhookLogId, {
+              actual_entry_price: result.fillEntryPrice,
+              actual_notional: result.fillNotional,
+            });
+            console.log(`[Webhook] ✅ Log ${webhookLogId} actualizado con fill real: entry=${result.fillEntryPrice}, notional=${result.fillNotional}`);
+          } catch (upErr: any) {
+            console.warn(`[Webhook] ⚠️ No se pudo actualizar log con fill: ${upErr.message}`);
+          }
+        }
       } else if (
         String(alert.alertType || '').toUpperCase() === 'CLOSE' || 
         String(alert.alertType || '').toUpperCase() === 'STOP_LOSS' || 

@@ -30,7 +30,7 @@ export class TradingService {
     userId: number,
     strategyId: number,
     alert: TradingViewAlert
-  ): Promise<{ success: boolean; orderId?: string; error?: string }> {
+  ): Promise<{ success: boolean; orderId?: string; error?: string; fillEntryPrice?: number; fillNotional?: number }> {
     try {
       console.log(`[TradeService] 🔍 Verificando condiciones para usuario ${userId}...`);
       
@@ -674,7 +674,39 @@ export class TradingService {
         // No fallar la operación si la notificación falla
       }
 
-      return { success: true, orderId: result?.orderId || existingPosition?.positionId || 'existing' };
+      // Obtener precio de fill y notional real para que la simulación en webhook-logs coincida con Bitget/Bybit
+      let fillEntryPrice: number | undefined;
+      let fillNotional: number | undefined;
+      try {
+        const getPositionsForFill = () =>
+          exchange === 'bybit'
+            ? this.bybitService.getPositions(decryptedCredentials, symbol, 'linear')
+            : this.bitgetService.getPositions(decryptedCredentials, symbol, productType);
+        const positions = await getPositionsForFill();
+        const pos = positions?.find((p: any) =>
+          (p.symbol || '').toUpperCase() === symbol.toUpperCase() && (p.holdSide || p.side) === holdSide && parseFloat(p.total || p.available || p.size || '0') > 0
+        );
+        if (pos) {
+          const avgPrice = pos.averageOpenPrice ?? pos.openPriceAvg ?? pos.openAvgPrice ?? pos.avgPrice;
+          const size = parseFloat(pos.total || pos.available || pos.size || '0');
+          if (avgPrice != null && Number.isFinite(size) && size > 0) {
+            const price = typeof avgPrice === 'string' ? parseFloat(avgPrice) : Number(avgPrice);
+            if (Number.isFinite(price) && price > 0) {
+              fillEntryPrice = price;
+              fillNotional = size * price;
+            }
+          }
+        }
+      } catch (fillErr: any) {
+        console.warn(`[TradeService] ⚠️ No se pudo obtener fill para sim: ${fillErr.message}`);
+      }
+
+      return {
+        success: true,
+        orderId: result?.orderId || existingPosition?.positionId || 'existing',
+        fillEntryPrice,
+        fillNotional,
+      };
     } catch (error: any) {
       // Registrar el error en la base de datos para monitoreo
       console.error(`[TradeService] ❌ Error al ejecutar trade en Bitget para usuario ${userId}:`, error.message);
@@ -709,7 +741,7 @@ export class TradingService {
   async processStrategyAlert(
     strategyId: number,
     alert: TradingViewAlert
-  ): Promise<{ processed: number; successful: number; failed: number }> {
+  ): Promise<{ processed: number; successful: number; failed: number; fillEntryPrice?: number; fillNotional?: number }> {
     console.log(`\n[TradeService] 📊 Procesando alerta ENTRY para estrategia ${strategyId}`);
     console.log(`[TradeService] Symbol: ${alert.symbol}, Side: ${alert.side}, Entry Price: ${alert.entryPrice}`);
     
@@ -732,6 +764,8 @@ export class TradingService {
 
     let successful = 0;
     let failed = 0;
+    let fillEntryPrice: number | undefined;
+    let fillNotional: number | undefined;
 
     // Procesar cada suscripción
     for (const subscription of subscriptions) {
@@ -745,6 +779,10 @@ export class TradingService {
       if (result.success) {
         console.log(`[TradeService] ✅ Trade ejecutado exitosamente para usuario ${subscription.user_id}. Order ID: ${result.orderId}`);
         successful++;
+        if (result.fillEntryPrice != null && result.fillNotional != null && fillEntryPrice == null) {
+          fillEntryPrice = result.fillEntryPrice;
+          fillNotional = result.fillNotional;
+        }
       } else {
         console.error(`[TradeService] ❌ Error al ejecutar trade para usuario ${subscription.user_id}: ${result.error}`);
         failed++;
@@ -757,6 +795,8 @@ export class TradingService {
       processed: subscriptions.length,
       successful,
       failed,
+      fillEntryPrice,
+      fillNotional,
     };
   }
 

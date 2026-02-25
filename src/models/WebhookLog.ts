@@ -331,6 +331,32 @@ export class WebhookLogModel {
     return [...new Set(list)].filter(Boolean).sort();
   }
 
+  /**
+   * Actualiza el payload de un log existente fusionando las claves extra (para simulación: actual_entry_price, actual_notional).
+   */
+  static async updatePayload(id: number, extra: Record<string, unknown>): Promise<boolean> {
+    const idInt = parseInt(String(id), 10);
+    if (!Number.isInteger(idInt) || Object.keys(extra).length === 0) return false;
+    const [rows] = await pool.execute<{ payload: string }[]>(
+      'SELECT payload FROM webhook_logs WHERE id = ?',
+      [idInt]
+    );
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row?.payload) return false;
+    let payloadObj: Record<string, unknown>;
+    try {
+      payloadObj = typeof row.payload === 'string' ? JSON.parse(row.payload) : { ...row.payload };
+    } catch {
+      return false;
+    }
+    Object.assign(payloadObj, extra);
+    const [result] = await pool.execute(
+      'UPDATE webhook_logs SET payload = ? WHERE id = ?',
+      [JSON.stringify(payloadObj), idInt]
+    );
+    return (result as any).affectedRows > 0;
+  }
+
   /** Elimina un log por id. */
   static async deleteById(id: number): Promise<boolean> {
     const idInt = parseInt(String(id), 10);
