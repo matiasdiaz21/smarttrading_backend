@@ -515,7 +515,8 @@ export class BitgetService {
       const closeSide = orderData.side === 'buy' ? 'buy' : 'sell';
       const tradeSideClose = 'close' as const;
       const timestamp = Date.now();
-      const baseId = `${timestamp}_${Math.floor(Math.random() * 10000)}`;
+      const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      const baseId = `${timestamp}_${randomSuffix}_${Math.floor(Math.random() * 10000)}`;
 
       // 1) Orden de apertura (market o limit según orderData) SIN preset SL/TP
       const openResult = await this.placeOrder(credentials, {
@@ -559,6 +560,7 @@ export class BitgetService {
       }
 
       // 2) Colocar Stop Loss usando placeTpslOrder
+      const slRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
       const slPayload = {
         symbol: orderData.symbol,
         productType: orderData.productType,
@@ -569,7 +571,7 @@ export class BitgetService {
         executePrice: formattedSL,
         holdSide,
         size: orderData.size,
-        clientOid: `SL_${orderData.symbol.substring(0, 8)}_${baseId}`.substring(0, 64),
+        clientOid: `SL_${orderData.symbol.substring(0, 8)}_${baseId}_${slRandom}`.substring(0, 64),
       };
       console.log(`[Bitget] 📤 Colocando SL: place-tpsl-order, size=${orderData.size}, triggerPrice=${formattedSL}, holdSide=${holdSide}`);
       const slResult = await this.placeTpslOrder(credentials, slPayload, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
@@ -577,6 +579,7 @@ export class BitgetService {
 
       // 3) Colocar Take Profit parcial usando normal_plan (trigger order)
       const planEndpoint = '/api/v2/mix/order/place-plan-order';
+      const tpRandom1 = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
       const tpPartialPayload = {
         planType: 'normal_plan',
         symbol: orderData.symbol.toUpperCase(),
@@ -592,7 +595,7 @@ export class BitgetService {
         orderType: 'market',
         holdSide,
         reduceOnly: 'YES',
-        clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}`.substring(0, 64),
+        clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}_${tpRandom1}`.substring(0, 64),
       };
       console.log(`[Bitget] 📤 Colocando TP parcial (50%): place-plan-order, size=${halfSizeStr}, triggerPrice=${formattedTPPartial}, holdSide=${holdSide}`);
       const tpPartialResult = await this.makeRequest('POST', planEndpoint, credentials, tpPartialPayload, logContext ? {
@@ -606,6 +609,7 @@ export class BitgetService {
       steps.push({ type: 'take_profit_partial', success: true, result: tpPartialResult });
 
       // 4) Colocar Take Profit final usando normal_plan (trigger order)
+      const tpRandom2 = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
       const tpFinalPayload = {
         planType: 'normal_plan',
         symbol: orderData.symbol.toUpperCase(),
@@ -621,7 +625,7 @@ export class BitgetService {
         orderType: 'market',
         holdSide,
         reduceOnly: 'YES',
-        clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}`.substring(0, 64),
+        clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}_${tpRandom2}`.substring(0, 64),
       };
       console.log(`[Bitget] 📤 Colocando TP final (50%): place-plan-order, size=${halfSizeStr}, triggerPrice=${formattedTP}, holdSide=${holdSide}`);
       const tpFinalResult = await this.makeRequest('POST', planEndpoint, credentials, tpFinalPayload, logContext ? {
