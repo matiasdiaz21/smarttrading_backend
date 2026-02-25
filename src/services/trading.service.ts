@@ -196,16 +196,18 @@ export class TradingService {
         };
       }
 
-      // Calcular el tamaño correcto de la orden basado en el valor mínimo en USDT
+      // CONVENCIÓN PARA CRUCE CON SIMULACIÓN / WEBHOOK-LOGS:
+      // position_size (USDT) = VALOR NOTIONAL de la posición (no margen). Es decir: valor en USDT de la posición al precio de entrada.
+      // Fórmula ejecutada: contratos = position_size / precio_entrada (redondeado al step del contrato).
+      // Para que la simulación coincida con la ejecución real, la sim debe usar la misma regla: PnL_sim = contratos_sim * (precio_salida - precio_entrada) con contratos_sim = position_size_usdt / precio_entrada.
+      //
       // PRIORIDAD: 1. position_size personalizado del usuario, 2. alert.size, 3. minTradeUSDT calculado
       let requestedSize = alert.size;
       let positionSizeSource = 'alerta (alert.size)';
       
-      // Verificar si el usuario tiene position_size personalizado configurado
       const userPositionSize = strategySubscription.position_size;
       if (userPositionSize !== null && userPositionSize !== undefined && userPositionSize > 0 && entryPrice) {
-        // Usar position_size personalizado del usuario (en USDT)
-        // Convertir USDT a contratos: position_size / precio
+        // position_size en USDT = notional (valor de la posición). Contratos = position_size / precio_entrada.
         // IMPORTANTE: Agregar margen de seguridad del 10% para órdenes de mercado
         // porque el precio puede variar ligeramente y caer por debajo del mínimo
         const price = parseFloat(entryPrice.toString());
