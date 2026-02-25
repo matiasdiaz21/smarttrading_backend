@@ -280,6 +280,7 @@ app.get('/api/admin/ai/config', authenticate, requireAdmin, AiController.getConf
   app.put('/api/admin/ai/assets/:id', authenticate, requireAdmin, AiController.updateAsset);
   app.put('/api/admin/ai/assets/:id/toggle', authenticate, requireAdmin, AiController.toggleAsset);
   app.delete('/api/admin/ai/assets/:id', authenticate, requireAdmin, AiController.deleteAsset);
+app.delete('/api/admin/ai/predictions/:id', authenticate, requireAdmin, AiController.deletePrediction);
 app.put('/api/admin/ai/predictions/:id/resolve', authenticate, requireAdmin, AiController.resolvePrediction);
 app.post('/api/admin/ai/check-results', authenticate, requireAdmin, AiController.forceCheckResults);
 

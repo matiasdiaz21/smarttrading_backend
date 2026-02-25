@@ -219,6 +219,14 @@ export class AiPredictionModel {
     });
   }
 
+  /** Delete a prediction by id (admin). */
+  static async deleteById(id: number): Promise<boolean> {
+    const idInt = parseInt(String(id), 10);
+    if (!Number.isInteger(idInt)) return false;
+    const [result] = await pool.execute('DELETE FROM ai_predictions WHERE id = ?', [idInt]);
+    return (result as any).affectedRows > 0;
+  }
+
   /** Expire predictions that have passed their expires_at */
   static async expireOld(): Promise<number> {
     const [result] = await pool.execute(

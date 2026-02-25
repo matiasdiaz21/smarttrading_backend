@@ -270,6 +270,21 @@ export class AiController {
     }
   }
 
+  /** DELETE /api/admin/ai/predictions/:id - Delete prediction */
+  static async deletePrediction(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const id = parseInt(req.params.id);
+      const deleted = await AiPredictionModel.deleteById(id);
+      if (!deleted) {
+        res.status(404).json({ error: 'Predicción no encontrada' });
+        return;
+      }
+      res.json({ message: 'Predicción eliminada' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   /** PUT /api/admin/ai/predictions/:id/resolve - Manually resolve prediction */
   static async resolvePrediction(req: AuthRequest, res: Response): Promise<void> {
     try {
