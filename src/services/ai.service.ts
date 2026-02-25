@@ -829,11 +829,22 @@ export async function analyzeAsset(
     atr1h, atr4h, bb1h, bb4h, ema1h, ema4h, structure1h, structure4h, smc_structure1h, smc_structure4h, crossAsset,
   };
 
+  // Template por categoría (crypto, forex, commodities) o global
+  const analysisTemplateByCategory =
+    assetCategory === 'crypto' ? config.analysis_prompt_template_crypto
+    : assetCategory === 'forex' ? config.analysis_prompt_template_forex
+    : config.analysis_prompt_template_commodities;
+  const analysisTemplate = (analysisTemplateByCategory && String(analysisTemplateByCategory).trim().length > 0)
+    ? String(analysisTemplateByCategory).trim()
+    : (config.analysis_prompt_template && config.analysis_prompt_template.trim().length > 0)
+      ? config.analysis_prompt_template
+      : null;
+
   let userPrompt: string;
-  if (config.analysis_prompt_template && config.analysis_prompt_template.trim().length > 0) {
-    // Admin provided a custom template with placeholders
+  if (analysisTemplate) {
+    // Admin provided a custom template (por categoría o global) con placeholders
     const categoryInstructions = getCategoryInstructions(assetCategory);
-    userPrompt = config.analysis_prompt_template
+    userPrompt = analysisTemplate
       .replace(/\{\{symbol\}\}/g, symbol)
       .replace(/\{\{candles_1h\}\}/g, formatCandlesForPrompt(candles1h, 25))
       .replace(/\{\{candles_4h\}\}/g, formatCandlesForPrompt(candles4h, 20))
@@ -854,7 +865,7 @@ export async function analyzeAsset(
       .replace(/\{\{current_price\}\}/g, currentPrice.toString())
       .replace(/\{\{asset_category\}\}/g, assetCategory)
       .replace(/\{\{category_instructions\}\}/g, categoryInstructions);
-    if (!config.analysis_prompt_template.includes('{{category_instructions}}')) {
+    if (!analysisTemplate.includes('{{category_instructions}}')) {
       userPrompt = `## Contexto del activo (${assetCategory}):\n${categoryInstructions}\n\n` + userPrompt;
     }
   } else {
@@ -862,10 +873,17 @@ export async function analyzeAsset(
     userPrompt = buildAutoPrompt(promptData, assetCategory);
   }
 
-  // 5. Call Groq — system prompt also adapts to asset category
-  const systemPrompt = config.system_prompt && config.system_prompt.trim().length > 0
-    ? config.system_prompt
-    : getSystemPromptForCategory(assetCategory);
+  // 5. Call Groq — system prompt por categoría, luego global, luego automático
+  const systemPromptByCategory =
+    assetCategory === 'crypto' ? config.system_prompt_crypto
+    : assetCategory === 'forex' ? config.system_prompt_forex
+    : config.system_prompt_commodities;
+  const systemPromptCustom = (systemPromptByCategory != null && String(systemPromptByCategory).trim().length > 0)
+    ? String(systemPromptByCategory).trim()
+    : (config.system_prompt && config.system_prompt.trim().length > 0)
+      ? config.system_prompt
+      : null;
+  const systemPrompt = systemPromptCustom || getSystemPromptForCategory(assetCategory);
 
   console.log(`[AI Service] 🤖 Consultando Groq (${config.groq_model}) — categoría: ${assetCategory}...`);
   const { response, tokensUsed, rawResponse } = await callGroq(

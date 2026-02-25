@@ -7,6 +7,12 @@ export interface AiConfigRow {
   groq_model: string;
   system_prompt: string | null;
   analysis_prompt_template: string | null;
+  system_prompt_crypto: string | null;
+  system_prompt_forex: string | null;
+  system_prompt_commodities: string | null;
+  analysis_prompt_template_crypto: string | null;
+  analysis_prompt_template_forex: string | null;
+  analysis_prompt_template_commodities: string | null;
   is_enabled: boolean;
   auto_run_enabled: boolean;
   auto_run_interval_hours: number;
@@ -28,6 +34,12 @@ export class AiConfigModel {
         groq_model: 'llama-3.3-70b-versatile',
         system_prompt: null,
         analysis_prompt_template: null,
+        system_prompt_crypto: null,
+        system_prompt_forex: null,
+        system_prompt_commodities: null,
+        analysis_prompt_template_crypto: null,
+        analysis_prompt_template_forex: null,
+        analysis_prompt_template_commodities: null,
         is_enabled: false,
         auto_run_enabled: false,
         auto_run_interval_hours: 4,
@@ -59,6 +71,12 @@ export class AiConfigModel {
     groq_model: string;
     system_prompt: string | null;
     analysis_prompt_template: string | null;
+    system_prompt_crypto: string | null;
+    system_prompt_forex: string | null;
+    system_prompt_commodities: string | null;
+    analysis_prompt_template_crypto: string | null;
+    analysis_prompt_template_forex: string | null;
+    analysis_prompt_template_commodities: string | null;
     is_enabled: boolean;
     auto_run_enabled: boolean;
     auto_run_interval_hours: number;
@@ -83,6 +101,30 @@ export class AiConfigModel {
     if (data.analysis_prompt_template !== undefined) {
       updates.push('analysis_prompt_template = ?');
       values.push(data.analysis_prompt_template);
+    }
+    if (data.system_prompt_crypto !== undefined) {
+      updates.push('system_prompt_crypto = ?');
+      values.push(data.system_prompt_crypto);
+    }
+    if (data.system_prompt_forex !== undefined) {
+      updates.push('system_prompt_forex = ?');
+      values.push(data.system_prompt_forex);
+    }
+    if (data.system_prompt_commodities !== undefined) {
+      updates.push('system_prompt_commodities = ?');
+      values.push(data.system_prompt_commodities);
+    }
+    if (data.analysis_prompt_template_crypto !== undefined) {
+      updates.push('analysis_prompt_template_crypto = ?');
+      values.push(data.analysis_prompt_template_crypto);
+    }
+    if (data.analysis_prompt_template_forex !== undefined) {
+      updates.push('analysis_prompt_template_forex = ?');
+      values.push(data.analysis_prompt_template_forex);
+    }
+    if (data.analysis_prompt_template_commodities !== undefined) {
+      updates.push('analysis_prompt_template_commodities = ?');
+      values.push(data.analysis_prompt_template_commodities);
     }
     if (data.is_enabled !== undefined) {
       updates.push('is_enabled = ?');

@@ -103,6 +103,12 @@ export class AiController {
         groq_model,
         system_prompt,
         analysis_prompt_template,
+        system_prompt_crypto,
+        system_prompt_forex,
+        system_prompt_commodities,
+        analysis_prompt_template_crypto,
+        analysis_prompt_template_forex,
+        analysis_prompt_template_commodities,
         is_enabled,
         auto_run_enabled,
         auto_run_interval_hours,
@@ -115,6 +121,12 @@ export class AiController {
       if (groq_model !== undefined) updateData.groq_model = groq_model;
       if (system_prompt !== undefined) updateData.system_prompt = system_prompt;
       if (analysis_prompt_template !== undefined) updateData.analysis_prompt_template = analysis_prompt_template;
+      if (system_prompt_crypto !== undefined) updateData.system_prompt_crypto = system_prompt_crypto;
+      if (system_prompt_forex !== undefined) updateData.system_prompt_forex = system_prompt_forex;
+      if (system_prompt_commodities !== undefined) updateData.system_prompt_commodities = system_prompt_commodities;
+      if (analysis_prompt_template_crypto !== undefined) updateData.analysis_prompt_template_crypto = analysis_prompt_template_crypto;
+      if (analysis_prompt_template_forex !== undefined) updateData.analysis_prompt_template_forex = analysis_prompt_template_forex;
+      if (analysis_prompt_template_commodities !== undefined) updateData.analysis_prompt_template_commodities = analysis_prompt_template_commodities;
       if (is_enabled !== undefined) updateData.is_enabled = !!is_enabled;
       if (auto_run_enabled !== undefined) updateData.auto_run_enabled = !!auto_run_enabled;
       if (auto_run_interval_hours !== undefined) updateData.auto_run_interval_hours = parseInt(auto_run_interval_hours);
