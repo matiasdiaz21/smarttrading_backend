@@ -375,7 +375,7 @@ async function fetchMarketNews(symbol: string, category: AssetCategory): Promise
   const finnhubCategory = categoryMap[category];
 
   try {
-    const { data } = await axios.get<Array<{ headline: string; summary?: string; source: string; datetime?: number }>>(
+    const res = await axios.get(
       `${FINNHUB_API_URL}/news`,
       {
         params: { category: finnhubCategory, token: apiKey },
@@ -383,15 +383,18 @@ async function fetchMarketNews(symbol: string, category: AssetCategory): Promise
       }
     );
 
+    const raw = res.data;
+    const data = Array.isArray(raw) ? raw : (raw?.data ?? []);
     if (!Array.isArray(data) || data.length === 0) {
       return 'No hay noticias recientes disponibles para esta categoría.';
     }
 
     const items = data.slice(0, 8);
-    const lines = items.map((n, i) => {
+    const lines = items.map((n: any, i: number) => {
       const date = n.datetime ? new Date(n.datetime * 1000).toISOString().slice(0, 16) : '';
+      const headline = n.headline || n.title || 'Sin título';
       const summary = (n.summary || n.headline || '').slice(0, 200);
-      return `${i + 1}. [${date}] ${n.headline || 'Sin título'}${summary ? ` — ${summary}` : ''} (${n.source || 'N/A'})`;
+      return `${i + 1}. [${date}] ${headline}${summary && summary !== headline ? ` — ${summary}` : ''} (${n.source || 'N/A'})`;
     });
 
     return `Noticias recientes de mercado (${finnhubCategory}):\n${lines.join('\n')}`;
