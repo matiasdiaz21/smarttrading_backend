@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import { BitgetService } from './bitget.service';
+import { BybitService } from './bybit.service';
 import { CredentialsModel } from '../models/Credentials';
+import { BybitCredentialsModel } from '../models/BybitCredentials';
 import { SubscriptionModel } from '../models/Subscription';
 import { TradeModel } from '../models/Trade';
 import { UserModel } from '../models/User';
@@ -13,12 +15,15 @@ import { StrategyModel } from '../models/Strategy';
 import { AppSettingsModel } from '../models/AppSettings';
 import { isStrategyFreeAndActive } from '../utils/strategyUtils';
 import { userHasActiveFreeTrial } from '../utils/freeTrialUtils';
+import type { ExchangeType } from '../types';
 
 export class TradingService {
   private bitgetService: BitgetService;
+  private bybitService: BybitService;
 
   constructor() {
     this.bitgetService = new BitgetService();
+    this.bybitService = new BybitService();
   }
 
   async executeTradeForUser(
@@ -96,24 +101,34 @@ export class TradingService {
       
       console.log(`[TradeService] 📊 Apalancamiento final seleccionado: ${leverage}x (${leverageSource})`);
 
+      const exchange: ExchangeType = strategySubscription.exchange || 'bitget';
+
       // Obtener credencial asignada a esta estrategia (cada estrategia tiene una credencial 1:1)
       if (!strategySubscription.credential_id) {
-        console.error(`[TradeService] ❌ La estrategia ${strategyId} no tiene credencial de Bitget asignada`);
-        return { success: false, error: 'This strategy has no Bitget credential assigned. Assign one in your strategy settings.' };
+        console.error(`[TradeService] ❌ La estrategia ${strategyId} no tiene credencial de exchange asignada`);
+        return { success: false, error: 'This strategy has no credential assigned. Assign one in your strategy settings.' };
       }
-      const credentials = await CredentialsModel.findById(strategySubscription.credential_id, userId);
-      if (!credentials) {
-        console.error(`[TradeService] ❌ Credencial ${strategySubscription.credential_id} no encontrada o no pertenece al usuario`);
-        return { success: false, error: 'Bitget credential not found or invalid' };
+      let decryptedCredentials: any;
+      if (exchange === 'bybit') {
+        const credentials = await BybitCredentialsModel.findById(strategySubscription.credential_id, userId);
+        if (!credentials) {
+          console.error(`[TradeService] ❌ Credencial Bybit ${strategySubscription.credential_id} no encontrada`);
+          return { success: false, error: 'Bybit credential not found or invalid' };
+        }
+        decryptedCredentials = BybitService.getDecryptedCredentials({ api_key: credentials.api_key, api_secret: credentials.api_secret });
+      } else {
+        const credentials = await CredentialsModel.findById(strategySubscription.credential_id, userId);
+        if (!credentials) {
+          console.error(`[TradeService] ❌ Credencial Bitget ${strategySubscription.credential_id} no encontrada`);
+          return { success: false, error: 'Bitget credential not found or invalid' };
+        }
+        decryptedCredentials = BitgetService.getDecryptedCredentials({
+          api_key: credentials.api_key,
+          api_secret: credentials.api_secret,
+          passphrase: credentials.passphrase,
+        });
       }
-      console.log(`[TradeService] ✅ Usando credencial ${strategySubscription.credential_id} para estrategia ${strategyId}`);
-
-      // Desencriptar credenciales
-      const decryptedCredentials = BitgetService.getDecryptedCredentials({
-        api_key: credentials.api_key,
-        api_secret: credentials.api_secret,
-        passphrase: credentials.passphrase,
-      });
+      console.log(`[TradeService] ✅ Usando credencial ${strategySubscription.credential_id} (${exchange}) para estrategia ${strategyId}`);
 
       // Normalizar campos que pueden venir en snake_case desde TradingView/Pine (mismo criterio que test-orders)
       if (alert.stopLoss == null && (alert as any).stop_loss != null) alert.stopLoss = (alert as any).stop_loss;
@@ -162,13 +177,16 @@ export class TradingService {
       const productType = alert.productType || 'USDT-FUTURES';
       
       // Obtener información del contrato para validar el tamaño de la orden
-      let contractInfo;
+      let contractInfo: any;
       try {
-        contractInfo = await this.bitgetService.getContractInfo(symbol, productType);
+        if (exchange === 'bybit') {
+          contractInfo = await this.bybitService.getContractInfo(symbol, 'linear');
+        } else {
+          contractInfo = await this.bitgetService.getContractInfo(symbol, productType);
+        }
         console.log(`[TradeService] 📊 Información del contrato para ${symbol}:`, contractInfo);
       } catch (error: any) {
         console.warn(`[TradeService] ⚠️ No se pudo obtener información del contrato: ${error.message}. Usando valores por defecto.`);
-        // Valores por defecto si no se puede obtener la información
         contractInfo = {
           minTradeNum: '0.01',
           sizeMultiplier: '0.01',
@@ -223,11 +241,11 @@ export class TradingService {
       
       console.log(`[TradeService] 📊 Tamaño de posición seleccionado: ${requestedSize} contratos (${positionSizeSource})`);
       
-      let calculatedSize = this.bitgetService.calculateOrderSize(
-        requestedSize,
-        contractInfo.minTradeNum,
-        contractInfo.sizeMultiplier
-      );
+      const calcOrderSize = (req: string, min: string, mult: string) =>
+        exchange === 'bybit'
+          ? this.bybitService.calculateOrderSize(req, min, mult)
+          : this.bitgetService.calculateOrderSize(req, min, mult);
+      let calculatedSize = calcOrderSize(requestedSize, contractInfo.minTradeNum, contractInfo.sizeMultiplier);
 
       // Convertir side de LONG/SHORT a buy/sell para Bitget
       const bitgetSide: 'buy' | 'sell' = alert.side === 'LONG' || alert.side === 'buy' ? 'buy' : 'sell';
@@ -243,11 +261,7 @@ export class TradingService {
           // Recalcular el tamaño para cumplir con el mínimo
           // Si el usuario configuró un position_size personalizado pero es menor al mínimo, usar el mínimo
           const adjustedSize = ((minUSDT * 1.05) / parseFloat(entryPrice.toString())).toString();
-          calculatedSize = this.bitgetService.calculateOrderSize(
-            adjustedSize,
-            contractInfo.minTradeNum,
-            contractInfo.sizeMultiplier
-          );
+          calculatedSize = calcOrderSize(adjustedSize, contractInfo.minTradeNum, contractInfo.sizeMultiplier);
           console.log(`[TradeService] ✅ Tamaño ajustado: ${calculatedSize} contratos, Valor notional ajustado: ${(parseFloat(calculatedSize) * parseFloat(entryPrice.toString())).toFixed(2)} USDT`);
           console.log(`[TradeService] ⚠️ Nota: El position_size configurado era menor al mínimo requerido, se usó el mínimo`);
         }
@@ -273,11 +287,7 @@ export class TradingService {
         const minSizeForPartial = 2 * minTradeNum;
         if (parseFloat(calculatedSize) < minSizeForPartial - 1e-8) {
           const previousSize = calculatedSize;
-          calculatedSize = this.bitgetService.calculateOrderSize(
-            minSizeForPartial.toString(),
-            contractInfo.minTradeNum,
-            contractInfo.sizeMultiplier
-          );
+          calculatedSize = calcOrderSize(minSizeForPartial.toString(), contractInfo.minTradeNum, contractInfo.sizeMultiplier);
           const approxUsdt = entryPrice ? (parseFloat(calculatedSize) * parseFloat(entryPrice.toString())).toFixed(2) : '?';
           console.log(`[TradeService] 📊 Breakeven activo: tamaño ajustado al mínimo para TP 50%/50% (≥ 2× min): ${previousSize} → ${calculatedSize} contratos (~${approxUsdt} USDT)`);
         }
@@ -297,22 +307,20 @@ export class TradingService {
 
       console.log(`[TradeService] ⚡ Ejecutando setLeverage + getPositions en PARALELO para ${symbol}...`);
       const [leverageResult, positionsResult] = await Promise.allSettled([
-        // Tarea 1: Configurar leverage
-        this.bitgetService.setLeverage(
-          decryptedCredentials,
-          symbol,
-          leverage,
-          productType,
-          alert.marginCoin || 'USDT',
-          holdSide,
-          { userId, strategyId }
-        ),
-        // Tarea 2: Verificar posiciones existentes
-        this.bitgetService.getPositions(
-          decryptedCredentials,
-          symbol,
-          productType
-        ),
+        exchange === 'bybit'
+          ? this.bybitService.setLeverage(decryptedCredentials, symbol, leverage)
+          : this.bitgetService.setLeverage(
+              decryptedCredentials,
+              symbol,
+              leverage,
+              productType,
+              alert.marginCoin || 'USDT',
+              holdSide,
+              { userId, strategyId }
+            ),
+        exchange === 'bybit'
+          ? this.bybitService.getPositions(decryptedCredentials, symbol, 'linear')
+          : this.bitgetService.getPositions(decryptedCredentials, symbol, productType),
       ]);
 
       // Evaluar resultado de leverage (CRÍTICO - falla = abortar)
@@ -352,13 +360,16 @@ export class TradingService {
       if (shouldOpenPosition) {
         // Cancelar triggers existentes en este símbolo para no acumular dos juegos de SL/TP
         try {
-          const cancelResult = await this.bitgetService.cancelAllTriggerOrders(
-            decryptedCredentials,
-            symbol.toUpperCase(),
-            productType,
-            alert.marginCoin || 'USDT',
-            { userId, strategyId }
-          );
+          const cancelResult =
+            exchange === 'bybit'
+              ? await this.bybitService.cancelAllTriggerOrders(decryptedCredentials, symbol.toUpperCase(), 'linear', alert.marginCoin || 'USDT')
+              : await this.bitgetService.cancelAllTriggerOrders(
+                  decryptedCredentials,
+                  symbol.toUpperCase(),
+                  productType,
+                  alert.marginCoin || 'USDT',
+                  { userId, strategyId }
+                );
           if (cancelResult.cancelled > 0) {
             console.log(`[TradeService] 🗑️ Cancelados ${cancelResult.cancelled} triggers previos en ${symbol} antes de abrir nueva posición.`);
           }
@@ -390,17 +401,6 @@ export class TradingService {
           // Mismo flujo que /admin/test-orders: openPositionWithFullTPSL (open + SL + TP en un solo método)
           try {
             console.log(`[TradeService] 🚀 Abriendo posición + TP/SL con mismo flujo que test-orders (openPositionWithFullTPSL)...`);
-            const orderDataForOpen = {
-              symbol: symbol.toUpperCase(),
-              productType,
-              marginMode: alert.marginMode || 'isolated',
-              marginCoin: alert.marginCoin || 'USDT',
-              size: calculatedSize,
-              price: orderData.price || '',
-              side: bitgetSide,
-              orderType: orderData.orderType,
-              clientOid: uniqueClientOid,
-            };
             const tpslData: { stopLossPrice: number; takeProfitPrice: number; takeProfitPartialPrice?: number } = {
               stopLossPrice: parseFloat(alert.stopLoss.toString()),
               takeProfitPrice: parseFloat(alert.takeProfit.toString()),
@@ -408,17 +408,46 @@ export class TradingService {
             if (breakevenPrice && breakevenPrice > 0) {
               tpslData.takeProfitPartialPrice = breakevenPrice;
             }
-            if (tpslData.takeProfitPartialPrice != null && orderDataForOpen.orderType !== 'limit') {
-              orderDataForOpen.orderType = 'limit';
-              orderDataForOpen.price = orderData.price ?? String(alert.entry_price ?? '');
-            }
-            const openResult = await this.bitgetService.openPositionWithFullTPSL(
-              decryptedCredentials,
-              orderDataForOpen,
-              tpslData,
-              contractInfo,
-              { userId, strategyId }
-            );
+            const openResult =
+              exchange === 'bybit'
+                ? await this.bybitService.openPositionWithFullTPSL(
+                    decryptedCredentials,
+                    {
+                      symbol: symbol.toUpperCase(),
+                      size: calculatedSize,
+                      price: orderData.price || '',
+                      side: bitgetSide,
+                      orderType: orderData.orderType,
+                      clientOid: uniqueClientOid,
+                    },
+                    tpslData,
+                    contractInfo,
+                    { userId, strategyId }
+                  )
+                : await (() => {
+                    const orderDataForOpen = {
+                      symbol: symbol.toUpperCase(),
+                      productType,
+                      marginMode: alert.marginMode || 'isolated',
+                      marginCoin: alert.marginCoin || 'USDT',
+                      size: calculatedSize,
+                      price: orderData.price || '',
+                      side: bitgetSide,
+                      orderType: orderData.orderType,
+                      clientOid: uniqueClientOid,
+                    };
+                    if (tpslData.takeProfitPartialPrice != null && orderDataForOpen.orderType !== 'limit') {
+                      orderDataForOpen.orderType = 'limit';
+                      orderDataForOpen.price = orderData.price ?? String(alert.entry_price ?? '');
+                    }
+                    return this.bitgetService.openPositionWithFullTPSL(
+                      decryptedCredentials,
+                      orderDataForOpen,
+                      tpslData,
+                      contractInfo,
+                      { userId, strategyId }
+                    );
+                  })();
             if (openResult.success && openResult.orderId) {
               result = { orderId: openResult.orderId, clientOid: uniqueClientOid };
               actualPositionSize = calculatedSize;
@@ -436,35 +465,42 @@ export class TradingService {
 
         if (!usedOpenWithFullTPSL) {
           try {
-            console.log(`[TradeService] 🚀 Ejecutando orden en Bitget para usuario ${userId}...`);
+            console.log(`[TradeService] 🚀 Ejecutando orden en ${exchange} para usuario ${userId}...`);
             console.log(`[TradeService] 📋 Datos de la orden:`, JSON.stringify(orderData, null, 2));
-            
-            result = await this.bitgetService.placeOrder(
-              decryptedCredentials,
-              orderData,
-              {
-                userId,
-                strategyId,
-              }
-            );
-
-            console.log(`[TradeService] ✅ Orden ejecutada en Bitget. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
+            if (exchange === 'bybit') {
+              result = await this.bybitService.placeOrder(decryptedCredentials, {
+                symbol: symbol.toUpperCase(),
+                side: bitgetSide,
+                orderType: orderData.orderType,
+                qty: calculatedSize,
+                price: orderData.price,
+                orderLinkId: uniqueClientOid,
+              });
+              result = { orderId: result.orderId, clientOid: result.orderLinkId || uniqueClientOid };
+            } else {
+              result = await this.bitgetService.placeOrder(
+                decryptedCredentials,
+                orderData,
+                { userId, strategyId }
+              );
+            }
+            console.log(`[TradeService] ✅ Orden ejecutada en ${exchange}. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
 
             actualPositionSize = calculatedSize;
             console.log(`[TradeService] 📊 Usando tamaño calculado como posición real: ${actualPositionSize}`);
           } catch (orderError: any) {
             console.error(`[TradeService] ❌ Error al ejecutar orden: ${orderError.message}`);
+            const getPositionsForExchange = () =>
+              exchange === 'bybit'
+                ? this.bybitService.getPositions(decryptedCredentials, symbol, 'linear')
+                : this.bitgetService.getPositions(decryptedCredentials, symbol, productType);
             if (orderError.message && orderError.message.includes('Duplicate clientOid')) {
               console.log(`[TradeService] 🔍 Error de clientOid duplicado. Verificando si la posición ya existe...`);
               try {
-                const positions = await this.bitgetService.getPositions(
-                  decryptedCredentials,
-                  symbol,
-                  productType
-                );
+                const positions = await getPositionsForExchange();
                 if (positions && positions.length > 0) {
                   const matchingPosition = positions.find((p: any) =>
-                    p.symbol === symbol && p.holdSide === holdSide
+                    (p.symbol || '').toUpperCase() === symbol.toUpperCase() && p.holdSide === holdSide
                   );
                   if (matchingPosition) {
                     existingPosition = matchingPosition;
@@ -491,8 +527,8 @@ export class TradingService {
       }
 
       // Configurar Stop Loss y Take Profit si están disponibles (solo si no se usó openPositionWithFullTPSL)
-      // Fallback: coloca triggers directamente (la posición ya existe, NO abrir otra)
-      if (alert.stopLoss && alert.takeProfit && !usedOpenWithFullTPSL) {
+      // Fallback: coloca triggers directamente (la posición ya existe, NO abrir otra). Solo Bitget; Bybit abre con TP/SL en 1 llamada.
+      if (alert.stopLoss && alert.takeProfit && !usedOpenWithFullTPSL && exchange === 'bitget') {
         try {
           console.log(`[TradeService] 📊 Fallback: Configurando TP/SL (posición ya abierta)...`);
           console.log(`[TradeService]   SL: ${alert.stopLoss} | BE: ${alert.breakeven || 'N/A'} | TP: ${alert.takeProfit} | Size: ${actualPositionSize}`);
@@ -501,8 +537,6 @@ export class TradingService {
           const hasBreakeven = alert.breakeven && parseFloat(alert.breakeven.toString()) > 0 && usePartialTp;
           const fallbackLogContext = { userId, strategyId, orderId: result?.orderId };
           
-          // Usar setPositionTPSLTriggers para colocar SL + TPs con los endpoints correctos
-          // (pos_loss para SL, normal_plan para TPs parciales si hay breakeven)
           const tpslResults = await this.bitgetService.setPositionTPSLTriggers(
             decryptedCredentials,
             {
@@ -566,7 +600,8 @@ export class TradingService {
         alert.stopLoss || null,
         alert.takeProfit || null,
         alert.breakeven || null,
-        alert.alertType || 'ENTRY'
+        alert.alertType || 'ENTRY',
+        exchange
       );
 
       console.log(`[TradeService] ✅ Trade registrado en base de datos con ID: ${tradeId}`);
@@ -788,29 +823,41 @@ export class TradingService {
           continue;
         }
 
-        // Obtener credenciales
+        const exchange: ExchangeType = subscription.exchange || 'bitget';
         if (!subscription.credential_id) {
           console.warn(`[BREAKEVEN] Usuario ${subscription.user_id} no tiene credencial asignada`);
           failed++;
           continue;
         }
-        const credentials = await CredentialsModel.findById(subscription.credential_id, subscription.user_id);
-        if (!credentials) {
-          console.warn(`[BREAKEVEN] Credencial ${subscription.credential_id} no encontrada para usuario ${subscription.user_id}`);
-          failed++;
-          continue;
+        let decryptedCredentials: any;
+        if (exchange === 'bybit') {
+          const credentials = await BybitCredentialsModel.findById(subscription.credential_id, subscription.user_id);
+          if (!credentials) {
+            console.warn(`[BREAKEVEN] Credencial Bybit ${subscription.credential_id} no encontrada para usuario ${subscription.user_id}`);
+            failed++;
+            continue;
+          }
+          decryptedCredentials = BybitService.getDecryptedCredentials({ api_key: credentials.api_key, api_secret: credentials.api_secret });
+        } else {
+          const credentials = await CredentialsModel.findById(subscription.credential_id, subscription.user_id);
+          if (!credentials) {
+            console.warn(`[BREAKEVEN] Credencial Bitget ${subscription.credential_id} no encontrada para usuario ${subscription.user_id}`);
+            failed++;
+            continue;
+          }
+          decryptedCredentials = BitgetService.getDecryptedCredentials({
+            api_key: credentials.api_key,
+            api_secret: credentials.api_secret,
+            passphrase: credentials.passphrase,
+          });
         }
 
-        const decryptedCredentials = BitgetService.getDecryptedCredentials({
-          api_key: credentials.api_key,
-          api_secret: credentials.api_secret,
-          passphrase: credentials.passphrase,
-        });
-
-        // Obtener info del contrato
-        let contractInfo;
+        let contractInfo: any;
         try {
-          contractInfo = await this.bitgetService.getContractInfo(symbol, productType);
+          contractInfo =
+            exchange === 'bybit'
+              ? await this.bybitService.getContractInfo(symbol, 'linear')
+              : await this.bitgetService.getContractInfo(symbol, productType);
         } catch (error: any) {
           console.warn(`[BREAKEVEN] ⚠️ No se pudo obtener info del contrato: ${error.message}. Usando defaults.`);
           contractInfo = { minTradeNum: '0.01', sizeMultiplier: '0.01', minTradeUSDT: '5', volumePlace: '2', pricePlace: '1' };
@@ -822,8 +869,10 @@ export class TradingService {
           orderId: tradeFinal.bitget_order_id || undefined,
         };
 
-        // Obtener posición actual para saber el precio de entrada real y el side
-        const positions = await this.bitgetService.getPositions(decryptedCredentials, symbol, productType);
+        const positions =
+          exchange === 'bybit'
+            ? await this.bybitService.getPositions(decryptedCredentials, symbol, 'linear')
+            : await this.bitgetService.getPositions(decryptedCredentials, symbol, productType);
         const holdSide = tradeFinal.side === 'buy' ? 'long' : 'short';
         const currentPosition = Array.isArray(positions)
           ? positions.find((p: any) => p.holdSide === holdSide && parseFloat(p.total || p.available || '0') > 0)
@@ -857,17 +906,30 @@ export class TradingService {
         // Mismo flujo que el botón "Mover SL a BE" de /admin/test-orders:
         // Solo cancela el SL viejo (pos_loss) y coloca nuevo SL al precio de entrada.
         // NO toca los TPs (ya están como triggers normal_plan desde el ENTRY).
-        const beResult = await this.bitgetService.moveStopLossToBreakeven(
-          decryptedCredentials,
-          symbol,
-          tradeFinal.side,
-          newStopLossPrice,
-          positionSize,
-          productType,
-          marginCoin,
-          contractInfo,
-          logContext
-        );
+        const beResult =
+          exchange === 'bybit'
+            ? await this.bybitService.moveStopLossToBreakeven(
+                decryptedCredentials,
+                symbol,
+                tradeFinal.side,
+                newStopLossPrice,
+                positionSize,
+                productType,
+                marginCoin,
+                contractInfo,
+                logContext
+              )
+            : await this.bitgetService.moveStopLossToBreakeven(
+                decryptedCredentials,
+                symbol,
+                tradeFinal.side,
+                newStopLossPrice,
+                positionSize,
+                productType,
+                marginCoin,
+                contractInfo,
+                logContext
+              );
 
         if (beResult.success) {
           console.log(`[BREAKEVEN] ✅ SL movido a precio de entrada (${newStopLossPrice}) para usuario ${subscription.user_id}`);
@@ -1018,34 +1080,53 @@ export class TradingService {
           continue;
         }
 
-        // Obtener credenciales
-        const credentials = await CredentialsModel.findById(subscription.credential_id!, subscription.user_id);
-        if (!credentials) {
-          console.warn(`[CLOSE] Credencial no encontrada para usuario ${subscription.user_id}`);
+        const exchange: ExchangeType = subscription.exchange || 'bitget';
+        if (!subscription.credential_id) {
+          console.warn(`[CLOSE] Usuario ${subscription.user_id} no tiene credencial asignada`);
           failed++;
           processed++;
           continue;
         }
-
-        const decryptedCredentials = BitgetService.getDecryptedCredentials({
-          api_key: credentials.api_key,
-          api_secret: credentials.api_secret,
-          passphrase: credentials.passphrase,
-        });
+        let decryptedCredentials: any;
+        if (exchange === 'bybit') {
+          const credentials = await BybitCredentialsModel.findById(subscription.credential_id, subscription.user_id);
+          if (!credentials) {
+            console.warn(`[CLOSE] Credencial Bybit no encontrada para usuario ${subscription.user_id}`);
+            failed++;
+            processed++;
+            continue;
+          }
+          decryptedCredentials = BybitService.getDecryptedCredentials({ api_key: credentials.api_key, api_secret: credentials.api_secret });
+        } else {
+          const credentials = await CredentialsModel.findById(subscription.credential_id, subscription.user_id);
+          if (!credentials) {
+            console.warn(`[CLOSE] Credencial Bitget no encontrada para usuario ${subscription.user_id}`);
+            failed++;
+            processed++;
+            continue;
+          }
+          decryptedCredentials = BitgetService.getDecryptedCredentials({
+            api_key: credentials.api_key,
+            api_secret: credentials.api_secret,
+            passphrase: credentials.passphrase,
+          });
+        }
 
         const side = tradeFinal.side as 'buy' | 'sell';
-        console.log(`[CLOSE] 🔄 Cerrando posición y cancelando triggers para usuario ${subscription.user_id}, symbol ${symbol}...`);
+        console.log(`[CLOSE] 🔄 Cerrando posición y cancelando triggers para usuario ${subscription.user_id}, symbol ${symbol} (${exchange})...`);
 
-        const closeResult = await this.bitgetService.closePositionAndCancelTriggers(
-          decryptedCredentials,
-          {
-            symbol,
-            side,
-            productType,
-            marginMode
-          },
-          { userId: subscription.user_id, strategyId, orderId: tradeFinal.bitget_order_id || undefined }
-        );
+        const closeResult =
+          exchange === 'bybit'
+            ? await this.bybitService.closePositionAndCancelTriggers(
+                decryptedCredentials,
+                { symbol, side, productType, marginMode },
+                { userId: subscription.user_id, strategyId, orderId: tradeFinal.bitget_order_id || undefined }
+              )
+            : await this.bitgetService.closePositionAndCancelTriggers(
+                decryptedCredentials,
+                { symbol, side, productType, marginMode },
+                { userId: subscription.user_id, strategyId, orderId: tradeFinal.bitget_order_id || undefined }
+              );
 
         if (closeResult.success) {
           console.log(`[CLOSE] ✅ Posición cerrada exitosamente para usuario ${subscription.user_id}`);

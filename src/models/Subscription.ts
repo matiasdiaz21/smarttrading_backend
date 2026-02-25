@@ -35,20 +35,22 @@ export class SubscriptionModel {
     userId: number,
     strategyId: number,
     leverage: number | null = null,
-    credentialId: number | null = null
+    credentialId: number | null = null,
+    exchange: 'bitget' | 'bybit' = 'bitget'
   ): Promise<number> {
     const [result] = await pool.execute(
-      'INSERT INTO user_strategy_subscriptions (user_id, strategy_id, is_enabled, leverage, credential_id) VALUES (?, ?, false, ?, ?)',
-      [userId, strategyId, leverage, credentialId]
+      'INSERT INTO user_strategy_subscriptions (user_id, strategy_id, is_enabled, leverage, credential_id, exchange) VALUES (?, ?, false, ?, ?, ?)',
+      [userId, strategyId, leverage, credentialId, exchange]
     );
     return (result as any).insertId;
   }
 
-  /** Verifica si esta credencial está asignada a alguna suscripción del usuario (opcionalmente excluyendo una estrategia). */
+  /** Verifica si esta credencial está asignada a alguna suscripción del usuario (opcionalmente excluyendo una estrategia; opcionalmente filtrar por exchange). */
   static async isCredentialInUse(
     userId: number,
     credentialId: number,
-    excludeStrategyId: number | null = null
+    excludeStrategyId: number | null = null,
+    exchange?: 'bitget' | 'bybit'
   ): Promise<boolean> {
     let query = 'SELECT 1 FROM user_strategy_subscriptions WHERE user_id = ? AND credential_id = ?';
     const params: any[] = [userId, credentialId];
@@ -56,15 +58,24 @@ export class SubscriptionModel {
       query += ' AND strategy_id != ?';
       params.push(excludeStrategyId);
     }
+    if (exchange) {
+      query += ' AND exchange = ?';
+      params.push(exchange);
+    }
     query += ' LIMIT 1';
     const [rows] = await pool.execute(query, params);
     return Array.isArray(rows) && rows.length > 0;
   }
 
-  static async updateCredential(userId: number, strategyId: number, credentialId: number | null): Promise<void> {
+  static async updateCredential(
+    userId: number,
+    strategyId: number,
+    credentialId: number | null,
+    exchange: 'bitget' | 'bybit' = 'bitget'
+  ): Promise<void> {
     await pool.execute(
-      'UPDATE user_strategy_subscriptions SET credential_id = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',
-      [credentialId, userId, strategyId]
+      'UPDATE user_strategy_subscriptions SET credential_id = ?, exchange = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',
+      [credentialId, exchange, userId, strategyId]
     );
   }
 

@@ -41,6 +41,18 @@ export interface UserBitgetCredentials {
   created_at: Date;
 }
 
+export interface UserBybitCredentials {
+  id: number;
+  user_id: number;
+  api_key: string; // encriptado
+  api_secret: string; // encriptado
+  name: string | null;
+  is_active: boolean;
+  created_at: Date;
+}
+
+export type ExchangeType = 'bitget' | 'bybit';
+
 export interface UserStrategySubscription {
   id: number;
   user_id: number;
@@ -50,7 +62,8 @@ export interface UserStrategySubscription {
   position_size: number | null; // Tamaño de posición en USDT
   /** Símbolos que el usuario no quiere copiar en esta estrategia. */
   excluded_symbols: string[] | null;
-  credential_id: number | null; // Credencial Bitget asignada (1:1 con estrategia)
+  credential_id: number | null; // Credencial del exchange asignada (Bitget o Bybit según exchange)
+  exchange?: ExchangeType; // 'bitget' | 'bybit', indica a qué tabla apunta credential_id
   use_partial_tp: boolean; // Si true, usa TP parcial 50% en breakeven + 50% en TP final
   created_at: Date;
   updated_at: Date;
@@ -60,7 +73,8 @@ export interface Trade {
   id: number;
   user_id: number;
   strategy_id: number;
-  bitget_order_id: string;
+  exchange?: ExchangeType; // 'bitget' | 'bybit', indica en qué exchange se ejecutó
+  bitget_order_id: string; // order id del exchange (Bitget o Bybit)
   symbol: string;
   side: 'buy' | 'sell';
   order_type: 'limit' | 'market';

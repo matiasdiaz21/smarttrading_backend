@@ -80,6 +80,7 @@ export class UserController {
           default_leverage: strategy.leverage || 10,
           user_position_size: subscription?.position_size || null,
           credential_id: subscription?.credential_id ?? null,
+          exchange: (subscription as any)?.exchange || 'bitget',
           excluded_symbols: subscription ? normalizeExcludedSymbols(subscription.excluded_symbols) : null,
           use_partial_tp: subscription?.use_partial_tp !== false, // Default true
         };
@@ -133,16 +134,27 @@ export class UserController {
       }
 
       const credentialId = req.body.credential_id != null ? parseInt(String(req.body.credential_id), 10) : null;
+      const exchange: 'bitget' | 'bybit' = req.body.exchange === 'bybit' ? 'bybit' : 'bitget';
       if (credentialId != null) {
-        const { CredentialsModel } = await import('../models/Credentials');
-        const cred = await CredentialsModel.findById(credentialId, req.user.userId);
-        if (!cred) {
-          res.status(400).json({ error: 'Credential not found or does not belong to you' });
-          return;
+        if (exchange === 'bybit') {
+          const { BybitCredentialsModel } = await import('../models/BybitCredentials');
+          const cred = await BybitCredentialsModel.findById(credentialId, req.user.userId);
+          if (!cred) {
+            res.status(400).json({ error: 'Bybit credential not found or does not belong to you' });
+            return;
+          }
+        } else {
+          const { CredentialsModel } = await import('../models/Credentials');
+          const cred = await CredentialsModel.findById(credentialId, req.user.userId);
+          if (!cred) {
+            res.status(400).json({ error: 'Credential not found or does not belong to you' });
+            return;
+          }
         }
-        // Verificar conflicto de símbolos con otras estrategias que usen esta misma credencial
         const allSubs = await SubscriptionModel.findByUserId(req.user.userId);
-        const subsWithSameCred = allSubs.filter(s => s.credential_id === credentialId && s.is_enabled);
+        const subsWithSameCred = allSubs.filter(
+          s => s.credential_id === credentialId && (s as any).exchange === exchange && s.is_enabled
+        );
         if (subsWithSameCred.length > 0) {
           const allStrategies = await StrategyModel.findAll(false);
           const strategyMap = new Map(allStrategies.map((s: any) => [s.id, s]));
@@ -186,7 +198,7 @@ export class UserController {
         }
       }
 
-      await SubscriptionModel.create(req.user.userId, strategyId, null, credentialId);
+      await SubscriptionModel.create(req.user.userId, strategyId, null, credentialId, exchange);
 
       res.status(201).json({ message: 'Subscribed to strategy successfully' });
     } catch (error: any) {
@@ -463,7 +475,7 @@ export class UserController {
     }
   }
 
-  /** Asigna o cambia la credencial de Bitget para una estrategia. Una credencial solo puede estar en una estrategia. */
+  /** Asigna o cambia la credencial de exchange (Bitget o Bybit) para una estrategia. Una credencial solo puede estar en una estrategia. */
   static async updateStrategyCredential(req: AuthRequest, res: Response): Promise<void> {
     try {
       if (!req.user) {
@@ -476,6 +488,7 @@ export class UserController {
       const credentialId = req.body.credential_id !== undefined && req.body.credential_id !== null
         ? parseInt(String(req.body.credential_id), 10)
         : null;
+      const exchange: 'bitget' | 'bybit' = req.body.exchange === 'bybit' ? 'bybit' : 'bitget';
 
       const subscription = await SubscriptionModel.findById(req.user.userId, strategyId);
       if (!subscription) {
@@ -484,15 +497,26 @@ export class UserController {
       }
 
       if (credentialId !== null) {
-        const { CredentialsModel } = await import('../models/Credentials');
-        const cred = await CredentialsModel.findById(credentialId, req.user.userId);
-        if (!cred) {
-          res.status(400).json({ error: 'Credential not found or does not belong to you' });
-          return;
+        if (exchange === 'bybit') {
+          const { BybitCredentialsModel } = await import('../models/BybitCredentials');
+          const cred = await BybitCredentialsModel.findById(credentialId, req.user.userId);
+          if (!cred) {
+            res.status(400).json({ error: 'Bybit credential not found or does not belong to you' });
+            return;
+          }
+        } else {
+          const { CredentialsModel } = await import('../models/Credentials');
+          const cred = await CredentialsModel.findById(credentialId, req.user.userId);
+          if (!cred) {
+            res.status(400).json({ error: 'Bitget credential not found or does not belong to you' });
+            return;
+          }
         }
-        // Verificar conflicto de símbolos con otras estrategias que usen esta misma credencial
+        // Verificar conflicto de símbolos con otras estrategias que usen esta misma credencial (mismo exchange)
         const allSubs = await SubscriptionModel.findByUserId(req.user.userId);
-        const subsWithSameCred = allSubs.filter(s => s.credential_id === credentialId && s.strategy_id !== strategyId && s.is_enabled);
+        const subsWithSameCred = allSubs.filter(
+          s => s.credential_id === credentialId && (s as any).exchange === exchange && s.strategy_id !== strategyId && s.is_enabled
+        );
         if (subsWithSameCred.length > 0) {
           const targetStrategy = await StrategyModel.findById(strategyId);
           const allStrategies = await StrategyModel.findAll(false);
@@ -537,11 +561,12 @@ export class UserController {
         }
       }
 
-      await SubscriptionModel.updateCredential(req.user.userId, strategyId, credentialId);
+      await SubscriptionModel.updateCredential(req.user.userId, strategyId, credentialId, exchange);
 
       res.json({
         message: 'Credential updated successfully',
         credential_id: credentialId,
+        exchange,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

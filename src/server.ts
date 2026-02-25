@@ -18,6 +18,7 @@ process.on('warning', (warning) => {
 import { AuthController } from './controllers/auth.controller';
 import { StrategyController } from './controllers/strategy.controller';
 import { CredentialsController } from './controllers/credentials.controller';
+import { BybitCredentialsController } from './controllers/bybitCredentials.controller';
 import { UserController } from './controllers/user.controller';
 import { WebhookController } from './controllers/webhook.controller';
 import { PaymentController } from './controllers/payment.controller';
@@ -85,10 +86,16 @@ app.delete('/api/strategies/:id', authenticate, requireAdmin, StrategyController
 
 // Credentials routes
 app.get('/api/bitget/credentials', authenticate, CredentialsController.list);
-app.post('/api/bitget/credentials', authenticate, CredentialsController.create);
-app.put('/api/bitget/credentials/:id', authenticate, CredentialsController.update);
-app.delete('/api/bitget/credentials/:id', authenticate, CredentialsController.delete);
-app.post('/api/bitget/credentials/:id/validate', authenticate, CredentialsController.validate);
+  app.post('/api/bitget/credentials', authenticate, CredentialsController.create);
+  app.put('/api/bitget/credentials/:id', authenticate, CredentialsController.update);
+  app.delete('/api/bitget/credentials/:id', authenticate, CredentialsController.delete);
+  app.post('/api/bitget/credentials/:id/validate', authenticate, CredentialsController.validate);
+
+  app.get('/api/bybit/credentials', authenticate, BybitCredentialsController.list);
+  app.post('/api/bybit/credentials', authenticate, BybitCredentialsController.create);
+  app.put('/api/bybit/credentials/:id', authenticate, BybitCredentialsController.update);
+  app.delete('/api/bybit/credentials/:id', authenticate, BybitCredentialsController.delete);
+  app.post('/api/bybit/credentials/:id/validate', authenticate, BybitCredentialsController.validate);
 
 // User routes
 app.get('/api/user/strategies', authenticate, UserController.getStrategies);

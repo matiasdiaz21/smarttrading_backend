@@ -14,6 +14,9 @@ export const config = {
   bitget: {
     apiBaseUrl: process.env.BITGET_API_BASE_URL || 'https://api.bitget.com',
   },
+  bybit: {
+    apiBaseUrl: process.env.BYBIT_API_BASE_URL || 'https://api.bybit.com',
+  },
   app: {
     nodeEnv: process.env.NODE_ENV || 'development',
     port: parseInt(process.env.PORT || '5400'),

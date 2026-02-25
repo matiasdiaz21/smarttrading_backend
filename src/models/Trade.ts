@@ -17,11 +17,12 @@ export class TradeModel {
     stopLoss?: number | null,
     takeProfit?: number | null,
     breakeven?: number | null,
-    alertType?: string | null
+    alertType?: string | null,
+    exchange: 'bitget' | 'bybit' = 'bitget'
   ): Promise<number> {
     const [result] = await pool.execute(
-      'INSERT INTO trades (user_id, strategy_id, bitget_order_id, symbol, side, order_type, size, price, status, trade_id, entry_price, stop_loss, take_profit, breakeven, alert_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [userId, strategyId, bitgetOrderId, symbol, side, orderType, size, price, status, tradeId || null, entryPrice || null, stopLoss || null, takeProfit || null, breakeven || null, alertType || null]
+      'INSERT INTO trades (user_id, strategy_id, exchange, bitget_order_id, symbol, side, order_type, size, price, status, trade_id, entry_price, stop_loss, take_profit, breakeven, alert_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [userId, strategyId, exchange, bitgetOrderId, symbol, side, orderType, size, price, status, tradeId || null, entryPrice || null, stopLoss || null, takeProfit || null, breakeven || null, alertType || null]
     );
     return (result as any).insertId;
   }
