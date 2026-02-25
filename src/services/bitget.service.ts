@@ -452,7 +452,7 @@ export class BitgetService {
     orderId?: string;
     orderResult?: any;
     tpslResults: Array<{ type: string; success: boolean; result?: any; error?: string }>;
-    method: 'limit_open_sl_plus_limit_tp50_tp50' | 'preset_only';
+    method: 'limit_open_sl_plus_limit_tp50_tp50' | 'preset_only' | 'open_with_sl_and_normal_plan_tps';
     error?: string;
     payloads?: any;
   }> {
@@ -517,93 +517,134 @@ export class BitgetService {
       const timestamp = Date.now();
       const baseId = `${timestamp}_${Math.floor(Math.random() * 10000)}`;
 
-      // 1) Orden LIMIT de apertura con stop loss (sin preset TP)
+      // 1) Orden de apertura (market o limit según orderData) SIN preset SL/TP
       const openResult = await this.placeOrder(credentials, {
         ...orderData,
         tradeSide: 'open',
-        presetStopLossPrice: formattedSL,
+        // NO usar presetStopLossPrice para evitar error 45062
         price: orderData.price,
-        orderType: 'limit',
+        orderType: orderData.orderType,
       }, logContext ? { ...logContext, orderId: undefined } : undefined);
-      steps.push({ type: 'limit_open_sl', success: true, result: openResult });
-      console.log(`[Bitget] ✅ Limit open + SL. OrderId: ${openResult.orderId}. Esperando fill antes de colocar TP 50%+50%...`);
+      steps.push({ type: orderData.orderType === 'limit' ? 'limit_open' : 'market_open', success: true, result: openResult });
+      console.log(`[Bitget] ✅ Orden ${orderData.orderType} abierta. OrderId: ${openResult.orderId}. Colocando SL y TPs...`);
 
-      // Esperar a que la orden de apertura esté filled (polling)
-      const pollIntervalMs = 2000;
-      const maxAttempts = 30; // 60 s máximo
-      let orderFilled = false;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-        try {
-          const raw = await this.getOrderStatus(credentials, openResult.orderId, orderData.symbol, orderData.productType);
-          const detail = raw && (raw.entrustedList && raw.entrustedList[0]) ? raw.entrustedList[0] : raw;
-          const state = (detail && (detail.state || detail.status)) || '';
-          if (state === 'filled') {
-            orderFilled = true;
-            console.log(`[Bitget] ✅ Orden de apertura filled (intento ${attempt}). Colocando órdenes TP 50% (precio ${formattedTPPartial}) y TP 50% (precio ${formattedTP}), size cada una: ${halfSizeStr}`);
-            break;
+      // Si es orden limit, esperar a que esté filled antes de colocar TPs
+      if (orderData.orderType === 'limit') {
+        const pollIntervalMs = 2000;
+        const maxAttempts = 30; // 60 s máximo
+        let orderFilled = false;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+          try {
+            const raw = await this.getOrderStatus(credentials, openResult.orderId, orderData.symbol, orderData.productType);
+            const detail = raw && (raw.entrustedList && raw.entrustedList[0]) ? raw.entrustedList[0] : raw;
+            const state = (detail && (detail.state || detail.status)) || '';
+            if (state === 'filled') {
+              orderFilled = true;
+              console.log(`[Bitget] ✅ Orden de apertura filled (intento ${attempt}). Colocando SL y TPs...`);
+              break;
+            }
+            if (state === 'canceled' || state === 'cancelled') {
+              throw new Error('La orden de apertura fue cancelada');
+            }
+            console.log(`[Bitget] ⏳ Orden estado: ${state}, reintento ${attempt}/${maxAttempts}`);
+          } catch (e: any) {
+            if (attempt === maxAttempts) throw e;
+            console.warn(`[Bitget] Poll order status: ${e.message}`);
           }
-          if (state === 'canceled' || state === 'cancelled') {
-            throw new Error('La orden de apertura fue cancelada');
-          }
-          console.log(`[Bitget] ⏳ Orden estado: ${state}, reintento ${attempt}/${maxAttempts}`);
-        } catch (e: any) {
-          if (attempt === maxAttempts) throw e;
-          console.warn(`[Bitget] Poll order status: ${e.message}`);
+        }
+        if (!orderFilled) {
+          throw new Error('Timeout: la orden de apertura no se llenó en 60s. Colocá manualmente las limit de cierre 50%+50% cuando esté filled.');
         }
       }
-      if (!orderFilled) {
-        throw new Error('Timeout: la orden de apertura no se llenó en 60s. Colocá manualmente las limit de cierre 50%+50% cuando esté filled.');
-      }
 
-      // 2) Orden limit de cierre 50% en TP parcial (mitad del trade — toma 50% ganancias aquí)
-      const closePartialPayload = {
+      // 2) Colocar Stop Loss usando placeTpslOrder
+      const slPayload = {
         symbol: orderData.symbol,
         productType: orderData.productType,
-        marginMode: orderData.marginMode,
         marginCoin: orderData.marginCoin,
-        size: halfSizeStr,
-        price: formattedTPPartial,
-        side: closeSide as 'buy' | 'sell',
-        tradeSide: tradeSideClose,
-        orderType: 'limit' as const,
+        planType: 'pos_loss' as const,
+        triggerPrice: formattedSL,
+        triggerType: 'fill_price',
+        executePrice: formattedSL,
         holdSide,
-        reduceOnly: 'YES',
-        clientOid: `TP50_${orderData.symbol.substring(0, 8)}_${baseId}`.substring(0, 64),
+        size: orderData.size,
+        clientOid: `SL_${orderData.symbol.substring(0, 8)}_${baseId}`.substring(0, 64),
       };
-      console.log(`[Bitget] 📤 Colocando orden TP 50% (partial): place-order close, size=${halfSizeStr}, price=${formattedTPPartial}, holdSide=${holdSide}`);
-      const closePartialResult = await this.placeOrder(credentials, closePartialPayload, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
-      steps.push({ type: 'limit_close_50_tp_partial', success: true, result: closePartialResult });
+      console.log(`[Bitget] 📤 Colocando SL: place-tpsl-order, size=${orderData.size}, triggerPrice=${formattedSL}, holdSide=${holdSide}`);
+      const slResult = await this.placeTpslOrder(credentials, slPayload, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
+      steps.push({ type: 'stop_loss', success: true, result: slResult });
 
-      // 3) Orden limit de cierre 50% en TP final
-      const closeFinalPayload = {
-        symbol: orderData.symbol,
-        productType: orderData.productType,
+      // 3) Colocar Take Profit parcial usando normal_plan (trigger order)
+      const planEndpoint = '/api/v2/mix/order/place-plan-order';
+      const tpPartialPayload = {
+        planType: 'normal_plan',
+        symbol: orderData.symbol.toUpperCase(),
+        productType: orderData.productType.toUpperCase(),
         marginMode: orderData.marginMode,
-        marginCoin: orderData.marginCoin,
+        marginCoin: orderData.marginCoin.toUpperCase(),
         size: halfSizeStr,
-        price: formattedTP,
+        price: '0', // Para market execution
+        triggerPrice: formattedTPPartial,
+        triggerType: 'fill_price',
         side: closeSide as 'buy' | 'sell',
-        tradeSide: tradeSideClose,
-        orderType: 'limit' as const,
+        tradeSide: 'close',
+        orderType: 'market',
         holdSide,
         reduceOnly: 'YES',
-        clientOid: `TP50_${orderData.symbol.substring(0, 8)}_${baseId}_f`.substring(0, 64),
+        clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}`.substring(0, 64),
       };
-      console.log(`[Bitget] 📤 Colocando orden TP 50% (final): place-order close, size=${halfSizeStr}, price=${formattedTP}, holdSide=${holdSide}`);
-      const closeFinalResult = await this.placeOrder(credentials, closeFinalPayload, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
-      steps.push({ type: 'limit_close_50_tp_final', success: true, result: closeFinalResult });
+      console.log(`[Bitget] 📤 Colocando TP parcial (50%): place-plan-order, size=${halfSizeStr}, triggerPrice=${formattedTPPartial}, holdSide=${holdSide}`);
+      const tpPartialResult = await this.makeRequest('POST', planEndpoint, credentials, tpPartialPayload, logContext ? {
+        userId: logContext.userId,
+        strategyId: logContext.strategyId,
+        symbol: orderData.symbol,
+        operationType: 'take_profit_partial',
+        orderId: openResult.orderId,
+        clientOid: tpPartialPayload.clientOid,
+      } : undefined);
+      steps.push({ type: 'take_profit_partial', success: true, result: tpPartialResult });
+
+      // 4) Colocar Take Profit final usando normal_plan (trigger order)
+      const tpFinalPayload = {
+        planType: 'normal_plan',
+        symbol: orderData.symbol.toUpperCase(),
+        productType: orderData.productType.toUpperCase(),
+        marginMode: orderData.marginMode,
+        marginCoin: orderData.marginCoin.toUpperCase(),
+        size: halfSizeStr,
+        price: '0', // Para market execution
+        triggerPrice: formattedTP,
+        triggerType: 'fill_price',
+        side: closeSide as 'buy' | 'sell',
+        tradeSide: 'close',
+        orderType: 'market',
+        holdSide,
+        reduceOnly: 'YES',
+        clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}`.substring(0, 64),
+      };
+      console.log(`[Bitget] 📤 Colocando TP final (50%): place-plan-order, size=${halfSizeStr}, triggerPrice=${formattedTP}, holdSide=${holdSide}`);
+      const tpFinalResult = await this.makeRequest('POST', planEndpoint, credentials, tpFinalPayload, logContext ? {
+        userId: logContext.userId,
+        strategyId: logContext.strategyId,
+        symbol: orderData.symbol,
+        operationType: 'take_profit_final',
+        orderId: openResult.orderId,
+        clientOid: tpFinalPayload.clientOid,
+      } : undefined);
+      steps.push({ type: 'take_profit_final', success: true, result: tpFinalResult });
 
       return {
         success: true,
         orderId: openResult.orderId,
         orderResult: openResult,
         tpslResults: steps,
-        method: 'limit_open_sl_plus_limit_tp50_tp50',
+        method: 'open_with_sl_and_normal_plan_tps',
         payloads: {
-          open: { presetStopLossPrice: formattedSL, price: orderData.price, size: orderData.size },
-          closePartial: { price: formattedTPPartial, size: halfSizeStr },
-          closeFinal: { price: formattedTP, size: halfSizeStr },
+          open: { orderType: orderData.orderType, price: orderData.price, size: orderData.size },
+          stopLoss: { triggerPrice: formattedSL, size: orderData.size },
+          takeProfitPartial: { triggerPrice: formattedTPPartial, size: halfSizeStr },
+          takeProfitFinal: { triggerPrice: formattedTP, size: halfSizeStr },
         },
       };
     } catch (error: any) {
@@ -611,7 +652,7 @@ export class BitgetService {
       return {
         success: false,
         tpslResults: steps,
-        method: hasPartialTP ? 'limit_open_sl_plus_limit_tp50_tp50' : 'preset_only',
+        method: hasPartialTP ? 'open_with_sl_and_normal_plan_tps' : 'preset_only',
         error: error.message,
       };
     }
