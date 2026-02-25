@@ -20,6 +20,9 @@ NOWPAYMENTS_API_KEY=your-nowpayments-key
 NOWPAYMENTS_WEBHOOK_SECRET=your-webhook-secret
 ```
 
+Opcional (análisis IA con noticias de mercado):
+- `FINNHUB_API_KEY`: API key de [Finnhub](https://finnhub.io) para incluir noticias recientes del mercado en los prompts de análisis por categoría (crypto, forex, commodities). Sin esta variable, el placeholder `{{market_news}}` mostrará un mensaje indicando que la API no está configurada.
+
 3. Ejecutar en desarrollo:
 ```bash
 npm run dev

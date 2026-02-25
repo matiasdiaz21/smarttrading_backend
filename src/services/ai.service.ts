@@ -5,6 +5,7 @@ import { AiPredictionModel, AiPredictionRow } from '../models/AiPrediction';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const BITGET_API_URL = 'https://api.bitget.com';
+const FINNHUB_API_URL = 'https://finnhub.io/api/v1';
 
 // ===================== Technical Indicators =====================
 
@@ -352,6 +353,51 @@ async function fetchCrossAssetContext(): Promise<CrossAssetContext | null> {
   } catch (error: any) {
     console.warn(`[AI Service] ⚠️ No se pudo obtener contexto cross-asset: ${error.message}`);
     return null;
+  }
+}
+
+/**
+ * Fetch recent market/financial news for context in the AI prompt.
+ * Uses Finnhub API (optional: set FINNHUB_API_KEY in env).
+ * Category: crypto, forex, or general (commodities/rest).
+ */
+async function fetchMarketNews(symbol: string, category: AssetCategory): Promise<string> {
+  const apiKey = process.env.FINNHUB_API_KEY;
+  if (!apiKey || !apiKey.trim()) {
+    return 'API de noticias no configurada. Configura FINNHUB_API_KEY en el entorno para incluir noticias recientes del mercado.';
+  }
+
+  const categoryMap: Record<AssetCategory, string> = {
+    crypto: 'crypto',
+    forex: 'general',
+    commodities: 'general',
+  };
+  const finnhubCategory = categoryMap[category];
+
+  try {
+    const { data } = await axios.get<Array<{ headline: string; summary?: string; source: string; datetime?: number }>>(
+      `${FINNHUB_API_URL}/news`,
+      {
+        params: { category: finnhubCategory, token: apiKey },
+        timeout: 8000,
+      }
+    );
+
+    if (!Array.isArray(data) || data.length === 0) {
+      return 'No hay noticias recientes disponibles para esta categoría.';
+    }
+
+    const items = data.slice(0, 8);
+    const lines = items.map((n, i) => {
+      const date = n.datetime ? new Date(n.datetime * 1000).toISOString().slice(0, 16) : '';
+      const summary = (n.summary || n.headline || '').slice(0, 200);
+      return `${i + 1}. [${date}] ${n.headline || 'Sin título'}${summary ? ` — ${summary}` : ''} (${n.source || 'N/A'})`;
+    });
+
+    return `Noticias recientes de mercado (${finnhubCategory}):\n${lines.join('\n')}`;
+  } catch (error: any) {
+    console.warn(`[AI Service] ⚠️ No se pudieron obtener noticias: ${error.message}`);
+    return `No se pudo consultar la API de noticias (${error.message || 'error desconocido'}). Considera revisar FINNHUB_API_KEY.`;
   }
 }
 
@@ -790,17 +836,18 @@ export async function analyzeAsset(
   const assetCategory: AssetCategory = asset.category || guessAssetCategory(symbol);
   console.log(`[AI Service] 📊 [${assetCategory.toUpperCase()}] Obteniendo datos para ${symbol}...`);
 
-  // 2. Fetch market data from Bitget (public endpoints, no auth)
+  // 2. Fetch market data from Bitget (public endpoints, no auth) + optional market news
   // For commodities/forex: also fetch cross-asset context (BTC for risk/USD proxy)
   const needsCrossAsset = assetCategory !== 'crypto';
-  const [candles1h, candles4h, currentPrice, crossAsset] = await Promise.all([
+  const [candles1h, candles4h, currentPrice, crossAsset, marketNews] = await Promise.all([
     fetchCandles(symbol, '1H', 168, asset.product_type),
     fetchCandles(symbol, '4H', 42, asset.product_type),
     fetchCurrentPrice(symbol, asset.product_type),
     needsCrossAsset ? fetchCrossAssetContext() : Promise.resolve(null),
+    fetchMarketNews(symbol, assetCategory),
   ]);
 
-  console.log(`[AI Service] 📊 Velas obtenidas: 1H=${candles1h.length}, 4H=${candles4h.length}, Precio=${currentPrice}${crossAsset ? ', Cross-asset: ✅' : ''}`);
+  console.log(`[AI Service] 📊 Velas obtenidas: 1H=${candles1h.length}, 4H=${candles4h.length}, Precio=${currentPrice}${crossAsset ? ', Cross-asset: ✅' : ''}${marketNews.includes('Noticias recientes') ? ', Noticias: ✅' : ''}`);
 
   // 3. Calculate technical indicators
   const closes1h = candles1h.map(c => c.close);
@@ -864,13 +911,15 @@ export async function analyzeAsset(
       .replace(/\{\{smc_structure_4h\}\}/g, smc_structure4h)
       .replace(/\{\{current_price\}\}/g, currentPrice.toString())
       .replace(/\{\{asset_category\}\}/g, assetCategory)
-      .replace(/\{\{category_instructions\}\}/g, categoryInstructions);
+      .replace(/\{\{category_instructions\}\}/g, categoryInstructions)
+      .replace(/\{\{market_news\}\}/g, marketNews);
     if (!analysisTemplate.includes('{{category_instructions}}')) {
       userPrompt = `## Contexto del activo (${assetCategory}):\n${categoryInstructions}\n\n` + userPrompt;
     }
   } else {
     // Fully automatic: category-specific prompt builder with cross-asset data
     userPrompt = buildAutoPrompt(promptData, assetCategory);
+    userPrompt += `\n\n---\n## Noticias / contexto de mercado\n${marketNews}`;
   }
 
   // 5. Call Groq — system prompt por categoría, luego global, luego automático
