@@ -24,6 +24,7 @@ comision = input.float(0.08, title="Comisión Apertura + Cierre (%)", minval=0.0
 take_profit = input.float(1.7, title="Ratio Take Profit (RR)", step=0.1, group=group_cuenta)
 breakeven_ratio = input.float(0.5, title="Breakeven Ratio (0-1)", minval=0, maxval=1, step=0.05, group=group_cuenta)
 min_sl_atr = input.float(0.3, title="Mín. distancia SL (múltiplos ATR)", minval=0.05, maxval=3.0, step=0.05, tooltip="Exige que la distancia entrada–SL sea al menos este múltiplo del ATR. Evita entradas falsas cuando el precio se mueve poco y SL/TP quedarían pegados a la entrada.", group=group_cuenta)
+min_tp_atr = input.float(0.3, title="Mín. distancia TP (múltiplos ATR)", minval=0.05, maxval=3.0, step=0.05, tooltip="Exige que la distancia entrada–TP sea al menos este múltiplo del ATR. Órdenes con SL o TP demasiado cerca de la entrada se invalidan para evitar errores de setPlaceOrder en el exchange.", group=group_cuenta)
 
 // Grupo: Filtros de Estrategia
 group_filtros = 'Filtros de Estrategia'
@@ -291,34 +292,41 @@ var float pendingBreakeven = 0.0
 var int pendingTradeId = 0
 var int pendingBarIndex = 0
 
-// 1) Entrada pendiente LONG: precio volvió a entrada → ejecutar ENTRY (alert + orden limit)
+// 1) Entrada pendiente LONG: precio volvió a entrada → ejecutar ENTRY solo si SL y TP están suficientemente lejos (evita setPlaceOrder por órdenes demasiado ajustadas)
 if pendingLong and low <= pendingEntry
-    limit := pendingEntry
-    limitl := pendingEntry
-    limits := 0.0
-    stop := pendingStop
-    stopl := pendingStop
-    stops := 0.0
-    tp := pendingTp
-    tpl := pendingTp
-    tps := 0.0
-    breakeven := pendingBreakeven
-    activeTradeType := "LONG"
-    activeEntry := pendingEntry
-    activeStop := pendingStop
-    activeTp := pendingTp
-    alert_take_profit_triggered := false
-    alert_stop_loss_triggered := false
-    alert_breakeven_triggered := false
-    isTradeOpen := true
-    trade_id := pendingTradeId
-    pendingLong := false
-    qty = (perdida_ * capital / 100) / math.abs(pendingEntry - pendingStop)
-    strategy.entry("Long", strategy.long, qty=qty, limit=pendingEntry)
-    strategy.exit("Exit Long", "Long", stop=pendingStop, limit=pendingTp)
-    string multi_tf_json = buildMultiTimeframeJSON()
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(pendingEntry) + ', "stopLoss": ' + str.tostring(pendingStop) + ', "takeProfit": ' + str.tostring(pendingTp) + ', "breakeven": ' + str.tostring(pendingBreakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(pendingTradeId) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
-    label.new(bar_index, pendingEntry, text="Long Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+    float dist_sl_long = math.abs(pendingEntry - pendingStop)
+    float dist_tp_long = math.abs(pendingTp - pendingEntry)
+    bool valid_dist_long = dist_sl_long >= atrValue * min_sl_atr and dist_tp_long >= atrValue * min_tp_atr
+    if valid_dist_long
+        limit := pendingEntry
+        limitl := pendingEntry
+        limits := 0.0
+        stop := pendingStop
+        stopl := pendingStop
+        stops := 0.0
+        tp := pendingTp
+        tpl := pendingTp
+        tps := 0.0
+        breakeven := pendingBreakeven
+        activeTradeType := "LONG"
+        activeEntry := pendingEntry
+        activeStop := pendingStop
+        activeTp := pendingTp
+        alert_take_profit_triggered := false
+        alert_stop_loss_triggered := false
+        alert_breakeven_triggered := false
+        isTradeOpen := true
+        trade_id := pendingTradeId
+        pendingLong := false
+        qty = (perdida_ * capital / 100) / math.abs(pendingEntry - pendingStop)
+        strategy.entry("Long", strategy.long, qty=qty, limit=pendingEntry)
+        strategy.exit("Exit Long", "Long", stop=pendingStop, limit=pendingTp)
+        string multi_tf_json = buildMultiTimeframeJSON()
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(pendingEntry) + ', "stopLoss": ' + str.tostring(pendingStop) + ', "takeProfit": ' + str.tostring(pendingTp) + ', "breakeven": ' + str.tostring(pendingBreakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(pendingTradeId) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        label.new(bar_index, pendingEntry, text="Long Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+    else
+        pendingLong := false
+        label.new(bar_index, pendingEntry, text="Long invalidado\nSL/TP muy cerca de entrada", style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
 
 if pendingLong and not (low <= pendingEntry)
     if low <= pendingStop
@@ -326,34 +334,41 @@ if pendingLong and not (low <= pendingEntry)
     else if (bar_index - pendingBarIndex) >= valid_entry_bars
         pendingLong := false
 
-// 2) Entrada pendiente SHORT: precio volvió a entrada → ejecutar ENTRY
+// 2) Entrada pendiente SHORT: precio volvió a entrada → ejecutar ENTRY solo si SL y TP están suficientemente lejos (evita setPlaceOrder por órdenes demasiado ajustadas)
 if pendingShort and high >= pendingEntry
-    limit := pendingEntry
-    limits := pendingEntry
-    limitl := 0.0
-    stop := pendingStop
-    stops := pendingStop
-    stopl := 0.0
-    tp := pendingTp
-    tps := pendingTp
-    tpl := 0.0
-    breakeven := pendingBreakeven
-    activeTradeType := "SHORT"
-    activeEntry := pendingEntry
-    activeStop := pendingStop
-    activeTp := pendingTp
-    alert_take_profit_triggered := false
-    alert_stop_loss_triggered := false
-    alert_breakeven_triggered := false
-    isTradeOpen := true
-    trade_id := pendingTradeId
-    pendingShort := false
-    qty = (perdida_ * capital / 100) / math.abs(pendingStop - pendingEntry)
-    strategy.entry("Short", strategy.short, qty=qty, limit=pendingEntry)
-    strategy.exit("Exit Short", "Short", stop=pendingStop, limit=pendingTp)
-    string multi_tf_json = buildMultiTimeframeJSON()
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(pendingEntry) + ', "stopLoss": ' + str.tostring(pendingStop) + ', "takeProfit": ' + str.tostring(pendingTp) + ', "breakeven": ' + str.tostring(pendingBreakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(pendingTradeId) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
-    label.new(bar_index, pendingEntry, text="Short Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+    float dist_sl_short = math.abs(pendingStop - pendingEntry)
+    float dist_tp_short = math.abs(pendingEntry - pendingTp)
+    bool valid_dist_short = dist_sl_short >= atrValue * min_sl_atr and dist_tp_short >= atrValue * min_tp_atr
+    if valid_dist_short
+        limit := pendingEntry
+        limits := pendingEntry
+        limitl := 0.0
+        stop := pendingStop
+        stops := pendingStop
+        stopl := 0.0
+        tp := pendingTp
+        tps := pendingTp
+        tpl := 0.0
+        breakeven := pendingBreakeven
+        activeTradeType := "SHORT"
+        activeEntry := pendingEntry
+        activeStop := pendingStop
+        activeTp := pendingTp
+        alert_take_profit_triggered := false
+        alert_stop_loss_triggered := false
+        alert_breakeven_triggered := false
+        isTradeOpen := true
+        trade_id := pendingTradeId
+        pendingShort := false
+        qty = (perdida_ * capital / 100) / math.abs(pendingStop - pendingEntry)
+        strategy.entry("Short", strategy.short, qty=qty, limit=pendingEntry)
+        strategy.exit("Exit Short", "Short", stop=pendingStop, limit=pendingTp)
+        string multi_tf_json = buildMultiTimeframeJSON()
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(pendingEntry) + ', "stopLoss": ' + str.tostring(pendingStop) + ', "takeProfit": ' + str.tostring(pendingTp) + ', "breakeven": ' + str.tostring(pendingBreakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(pendingTradeId) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        label.new(bar_index, pendingEntry, text="Short Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+    else
+        pendingShort := false
+        label.new(bar_index, pendingEntry, text="Short invalidado\nSL/TP muy cerca de entrada", style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
 
 if pendingShort and not (high >= pendingEntry)
     if high >= pendingStop
@@ -361,13 +376,14 @@ if pendingShort and not (high >= pendingEntry)
     else if (bar_index - pendingBarIndex) >= valid_entry_bars
         pendingShort := false
 
-// 3) Nueva señal LONG: guardar pendiente solo si la distancia entrada–SL es suficiente (evita SL/TP pegados a la entrada)
+// 3) Nueva señal LONG: guardar pendiente solo si distancia entrada–SL y entrada–TP son suficientes (evita SL/TP pegados y errores setPlaceOrder)
 if longcondicion and not isTradeOpen and not pendingLong and not pendingShort
     limit := math.round_to_mintick(ema1)
     stop := math.round_to_mintick(M_LOW)
+    tp := math.round_to_mintick(limit + (limit - stop) * take_profit)
     float sl_dist_long = limit - stop
-    if sl_dist_long >= atrValue * min_sl_atr
-        tp := math.round_to_mintick(limit + (limit - stop) * take_profit)
+    float tp_dist_long = math.abs(tp - limit)
+    if sl_dist_long >= atrValue * min_sl_atr and tp_dist_long >= atrValue * min_tp_atr
         pendingLong := true
         pendingEntry := limit
         pendingStop := stop
@@ -377,13 +393,14 @@ if longcondicion and not isTradeOpen and not pendingLong and not pendingShort
         pendingBarIndex := bar_index
         label.new(bar_index, limit, text="Señal Long\nEsperando retorno a " + str.tostring(limit, "#.####"), style=label.style_label_up, color=color.blue, textcolor=color.white, size=textSize)
 
-// 4) Nueva señal SHORT: guardar pendiente solo si la distancia entrada–SL es suficiente
+// 4) Nueva señal SHORT: guardar pendiente solo si distancia entrada–SL y entrada–TP son suficientes (evita SL/TP pegados y errores setPlaceOrder)
 if shortcondicion and not isTradeOpen and not pendingLong and not pendingShort
     limit := math.round_to_mintick(ema1)
     stop := math.round_to_mintick(M_HIGH)
+    tp := math.round_to_mintick(limit - math.abs(limit - stop) * take_profit)
     float sl_dist_short = stop - limit
-    if sl_dist_short >= atrValue * min_sl_atr
-        tp := math.round_to_mintick(limit - math.abs(limit - stop) * take_profit)
+    float tp_dist_short = math.abs(limit - tp)
+    if sl_dist_short >= atrValue * min_sl_atr and tp_dist_short >= atrValue * min_tp_atr
         pendingShort := true
         pendingEntry := limit
         pendingStop := stop
