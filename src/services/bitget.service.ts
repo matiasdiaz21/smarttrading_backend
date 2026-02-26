@@ -31,6 +31,13 @@ interface ContractInfoCache {
 const contractInfoCache: ContractInfoCache = {};
 const CONTRACT_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 
+/** Genera clientOid válido para Bitget: solo [a-zA-Z0-9_], máx 64 chars (evita error 40305). */
+function makeBitgetClientOid(prefix: string, symbol: string, baseId: string, suffix: string): string {
+  const raw = `${prefix}_${symbol.substring(0, 8)}_${baseId}_${suffix}`;
+  const sanitized = raw.replace(/[^a-zA-Z0-9_]/g, '');
+  return sanitized.substring(0, 64);
+}
+
 export class BitgetService {
   private apiBaseUrl: string;
 
@@ -585,7 +592,7 @@ export class BitgetService {
         executePrice: formattedSL,
         holdSide,
         size: orderData.size,
-        clientOid: `SL_${orderData.symbol.substring(0, 8)}_${baseId}_${slRandom}`.substring(0, 64),
+        clientOid: makeBitgetClientOid('SL', orderData.symbol, baseId, slRandom),
       };
       console.log(`[Bitget] 📤 Colocando SL: place-tpsl-order, size=${orderData.size}, triggerPrice=${formattedSL}, holdSide=${holdSide}`);
       const slResult = await this.placeTpslOrder(credentials, slPayload, logContext ? { ...logContext, orderId: openResult.orderId } : undefined);
@@ -609,7 +616,7 @@ export class BitgetService {
         orderType: 'market',
         holdSide,
         reduceOnly: 'YES',
-        clientOid: `TP_BE_${orderData.symbol.substring(0, 8)}_${baseId}_${tpRandom1}`.substring(0, 64),
+        clientOid: makeBitgetClientOid('TP_BE', orderData.symbol, baseId, tpRandom1),
       };
       console.log(`[Bitget] 📤 Colocando TP parcial (50%): place-plan-order, size=${halfSizeStr}, triggerPrice=${formattedTPPartial}, holdSide=${holdSide}`);
       
@@ -674,7 +681,7 @@ export class BitgetService {
         orderType: 'market',
         holdSide,
         reduceOnly: 'YES',
-        clientOid: `TP_F_${orderData.symbol.substring(0, 8)}_${baseId}_${tpRandom2}`.substring(0, 64),
+        clientOid: makeBitgetClientOid('TP_F', orderData.symbol, baseId, tpRandom2),
       };
       console.log(`[Bitget] 📤 Colocando TP final (50%): place-plan-order, size=${halfSizeStr}, triggerPrice=${formattedTP}, holdSide=${holdSide}`);
       
@@ -798,7 +805,7 @@ export class BitgetService {
       } : undefined;
 
       // SL con place-tpsl-order + pos_loss
-      const slOid = `SL_${positionData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
+      const slOid = makeBitgetClientOid('SL', positionData.symbol, baseId, String(Math.floor(Math.random() * 1000)));
       try {
         const slResult = await this.makeRequest('POST', tpslEndpoint, credentials, {
           marginCoin: positionData.marginCoin.toUpperCase(),
@@ -830,7 +837,7 @@ export class BitgetService {
         const formattedBE = parseFloat(tpslData.breakevenPrice!.toFixed(pricePlace)).toString();
 
         // TP breakeven (50%)
-        const tpBeOid = `TP_BE_${positionData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
+        const tpBeOid = makeBitgetClientOid('TP_BE', positionData.symbol, baseId, String(Math.floor(Math.random() * 1000)));
         try {
           const tpBeResult = await this.makeRequest('POST', planEndpoint, credentials, {
             planType: 'normal_plan',
@@ -856,7 +863,7 @@ export class BitgetService {
         }
 
         // TP final (50%)
-        const tpFOid = `TP_F_${positionData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
+        const tpFOid = makeBitgetClientOid('TP_F', positionData.symbol, baseId, String(Math.floor(Math.random() * 1000)));
         try {
           const tpFResult = await this.makeRequest('POST', planEndpoint, credentials, {
             planType: 'normal_plan',
@@ -882,7 +889,7 @@ export class BitgetService {
         }
       } else {
         // TP único (100%) con normal_plan
-        const tpOid = `TP_${positionData.symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
+        const tpOid = makeBitgetClientOid('TP', positionData.symbol, baseId, String(Math.floor(Math.random() * 1000)));
         try {
           const tpResult = await this.makeRequest('POST', planEndpoint, credentials, {
             planType: 'normal_plan',
@@ -981,7 +988,7 @@ export class BitgetService {
       // Paso 2: Colocar nuevo SL en precio de breakeven
       const tpslEndpoint = '/api/v2/mix/order/place-tpsl-order';
       const timestamp = Date.now();
-      const slClientOid = `SL_BE_${symbol.substring(0, 8)}_${timestamp}_${Math.floor(Math.random() * 1000)}`.substring(0, 64);
+      const slClientOid = makeBitgetClientOid('SL_BE', symbol, String(timestamp), String(Math.floor(Math.random() * 1000)));
       
       const slPayload = {
         marginCoin: marginCoin.toUpperCase(),
@@ -1252,7 +1259,7 @@ export class BitgetService {
       const slRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
       
       // Preparar ambas órdenes
-      const tpClientOid = `TP_${symbol.substring(0, 8)}_${baseId}_${tpRandom}`.substring(0, 64); // Limitar a 64 caracteres
+      const tpClientOid = makeBitgetClientOid('TP', symbol, baseId, tpRandom);
       const tpPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
         productType: productType.toUpperCase(),
@@ -1266,7 +1273,7 @@ export class BitgetService {
         clientOid: tpClientOid,
       };
 
-      const slClientOid = `SL_${symbol.substring(0, 8)}_${baseId}_${slRandom}`.substring(0, 64);
+      const slClientOid = makeBitgetClientOid('SL', symbol, baseId, slRandom);
       const slPayload: any = {
         marginCoin: marginCoin.toUpperCase(),
         productType: productType.toUpperCase(),
@@ -1451,7 +1458,7 @@ export class BitgetService {
             executePrice: formattedSL.toString(),
             holdSide,
             size: positionSize,
-            clientOid: `SL_${symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
+            clientOid: makeBitgetClientOid('SL', symbol, baseId, String(Math.floor(Math.random() * 1000))),
           },
         });
       }
@@ -1469,7 +1476,7 @@ export class BitgetService {
             executePrice: formattedBE.toString(),
             holdSide,
             size: halfSizeStr,
-            clientOid: `TP_BE_${symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
+            clientOid: makeBitgetClientOid('TP_BE', symbol, baseId, String(Math.floor(Math.random() * 1000))),
           },
         });
       }
@@ -1487,7 +1494,7 @@ export class BitgetService {
             executePrice: formattedTP.toString(),
             holdSide,
             size: halfSizeStr,
-            clientOid: `TP_F_${symbol.substring(0, 8)}_${baseId}_${Math.floor(Math.random() * 1000)}`.substring(0, 64),
+            clientOid: makeBitgetClientOid('TP_F', symbol, baseId, String(Math.floor(Math.random() * 1000))),
           },
         });
       }
@@ -1606,7 +1613,7 @@ export class BitgetService {
       // 1. Stop Loss (cierra toda la posición) - solo si es válido
       if (isValidSL) {
         const slRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-        const slClientOid = `SL_${symbol.substring(0, 8)}_${baseId}_${slRandom}`.substring(0, 64);
+        const slClientOid = makeBitgetClientOid('SL', symbol, baseId, slRandom);
         const slPayload: any = {
           marginCoin: marginCoin.toUpperCase(),
           productType: productType.toUpperCase(),
@@ -1638,7 +1645,7 @@ export class BitgetService {
       // Solo agregar TP si es válido o si no se pudo validar (currentPrice null)
       if (isValidTP || currentPrice === null) {
         const tpRandom = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-        const tpClientOid = `TP_F_${symbol.substring(0, 8)}_${baseId}_${tpRandom}`.substring(0, 64);
+        const tpClientOid = makeBitgetClientOid('TP_F', symbol, baseId, tpRandom);
         const tpPayload: any = {
           marginCoin: marginCoin.toUpperCase(),
           productType: productType.toUpperCase(),
