@@ -20,9 +20,9 @@ capital = input.float(100, title="Capital inicial: USDT 💲", minval=0, step=0.
 perdida_ = input.float(1, title="Riesgo asumido (% de cuenta)", minval=0, step=0.05, group=group_cuenta)
 comision = input.float(0.08, title="Comisión Apertura + Cierre (%)", minval=0.01, maxval=0.2, step=0.005, group=group_cuenta)
 
-// Grupo: Configuración de Sesión NY (visual estilo Trading Sessions)
+// Grupo: Configuración de Sesión NY (mismo horario y cierre que Trading Sessions: 0930-1600 America/New_York)
 group_session = 'Sesión New York'
-sessionTime = input.session("0930-1600", "Horario sesión NY", group=group_session)
+sessionTime = input.session("0930-1600", "Horario sesión NY", group=group_session, tooltip="Apertura 09:30, cierre 16:00 (horario NY). Debe coincidir con Trading Sessions para consistencia.")
 sessionTZ = input.string("America/New_York", "Timezone", group=group_session, tooltip="Zona horaria IANA (ej. America/New_York) o GMT (ej. GMT-5). IANA incluye cambios de horario (DST).")
 sessionName = input.string("New York", "Nombre sesión (etiqueta)", group=group_session)
 sessionBoxColor = input.color(color.new(#089981, 85), "Color zona sesión", group=group_session)
@@ -30,6 +30,7 @@ showSessionName = input.bool(true, "Mostrar nombre sesión", group=group_session
 showSessionOC = input.bool(true, "Líneas apertura/cierre sesión", group=group_session)
 showSessionTickRange = input.bool(true, "Mostrar rango (ticks) en etiqueta", group=group_session)
 showSessionAverage = input.bool(true, "Mostrar precio medio sesión", group=group_session)
+showSessionEnd = input.bool(true, "Mostrar cierre de sesión", group=group_session, tooltip="Muestra hora de cierre (16:00) en la etiqueta y marca 'Session end' al final de la sesión NY.")
 showPrevLevels = input.bool(true, "Mostrar niveles sesión anterior", group=group_session)
 prevHighColor = input.color(color.new(color.red, 30), "Color máximo anterior", group=group_session)
 prevLowColor = input.color(color.new(color.green, 30), "Color mínimo anterior", group=group_session)
@@ -74,11 +75,18 @@ float plotLow = inSession ? na : betweenLow
 plot(showPrevLevels and not na(plotHigh) ? plotHigh : na, "Liquidity High", color=prevHighColor, style=plot.style_linebr, linewidth=2)
 plot(showPrevLevels and not na(plotLow) ? plotLow : na, "Liquidity Low", color=prevLowColor, style=plot.style_linebr, linewidth=2)
 
+// Parsea "0930-1600" -> "16:00" (hora de cierre, alineado con sessions.pine)
+getSessionEndTimeDisplay(sess) =>
+    parts = str.split(sess, "-")
+    endPart = array.size(parts) >= 2 ? array.get(parts, 1) : ""
+    endPart == "" ? "" : str.substring(endPart, 0, 2) + ":" + str.substring(endPart, 2, 4)
+
 // ═══════════════════════════════════════════════════════════════
-// 📦 VISUAL SESIÓN (estilo Trading Sessions: caja, etiqueta, líneas OC y media)
+// 📦 VISUAL SESIÓN (estilo Trading Sessions: caja, etiqueta, líneas OC, media y cierre)
 // ═══════════════════════════════════════════════════════════════
 var box sessionBox = na
 var label sessionLabel = na
+var label sessionEndLabel = na
 var line sessionOpenLine = na
 var line sessionCloseLine = na
 var line sessionAvgLine = na
@@ -91,6 +99,8 @@ if inSession
     if sessionStart or na(sessionBox)
         sessionBox := box.new(bar_index, high, bar_index, low, bgcolor=sessionBoxColor, border_color=na)
         sessionLabel := label.new(bar_index, low, "", style=label.style_label_upper_left, textalign=text.align_left, textcolor=opaqueSessionColor, color=color(na))
+        endTimeStr = getSessionEndTimeDisplay(sessionTime)
+        sessionEndLabel := showSessionEnd ? label.new(bar_index, low, endTimeStr != "" ? "Session end • " + endTimeStr : "Session end", style=label.style_label_lower_right, textalign=text.align_right, textcolor=opaqueSessionColor, color=color(na), size=size.small) : na
         sessionOpenLine := showSessionOC ? line.new(bar_index, open, bar_index, open, color=opaqueSessionColor, style=line.style_dashed, width=1) : na
         sessionCloseLine := showSessionOC ? line.new(bar_index, close, bar_index, close, color=opaqueSessionColor, style=line.style_dashed, width=1) : na
         sessionAvgLine := showSessionAverage ? line.new(bar_index, close, bar_index, close, color=opaqueSessionColor, style=line.style_dotted, width=2) : na
@@ -104,6 +114,8 @@ if inSession
             array.push(initParts, "Avg: " + str.tostring(close, format.mintick))
         if showSessionName
             array.push(initParts, sessionName)
+        if showSessionEnd and getSessionEndTimeDisplay(sessionTime) != ""
+            array.push(initParts, "Ends " + getSessionEndTimeDisplay(sessionTime))
         label.set_text(sessionLabel, array.join(initParts, "\n"))
         if showSessionOC and na(sessionOpenLine) == false and na(sessionCloseLine) == false
             linefill.new(sessionOpenLine, sessionCloseLine, sessionBoxColor)
@@ -114,6 +126,9 @@ if inSession
         box.set_bottom(sessionBox, math.min(box.get_bottom(sessionBox), low))
         box.set_right(sessionBox, bar_index)
         label.set_y(sessionLabel, box.get_bottom(sessionBox))
+        if not na(sessionEndLabel)
+            label.set_x(sessionEndLabel, box.get_right(sessionBox))
+            label.set_y(sessionEndLabel, box.get_bottom(sessionBox))
         array<string> labelParts = array.new_string()
         if showSessionTickRange
             array.push(labelParts, "Range: " + str.tostring((box.get_top(sessionBox) - box.get_bottom(sessionBox)) / syminfo.mintick, format.mintick))
@@ -121,6 +136,8 @@ if inSession
             array.push(labelParts, "Avg: " + str.tostring(sessionSumClose / sessionNumBars, format.mintick))
         if showSessionName
             array.push(labelParts, sessionName)
+        if showSessionEnd and getSessionEndTimeDisplay(sessionTime) != ""
+            array.push(labelParts, "Ends " + getSessionEndTimeDisplay(sessionTime))
         label.set_text(sessionLabel, array.join(labelParts, "\n"))
         if showSessionOC and not na(sessionOpenLine)
             line.set_x2(sessionOpenLine, bar_index)
@@ -136,6 +153,7 @@ if inSession
 else if not na(sessionBox)
     sessionBox := na
     sessionLabel := na
+    sessionEndLabel := na
     sessionOpenLine := na
     sessionCloseLine := na
     sessionAvgLine := na

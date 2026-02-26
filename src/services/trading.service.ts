@@ -458,13 +458,17 @@ export class TradingService {
               tpslConfigured = steps.some((r: any) => (r.type === 'open_with_sl_tp' && r.success) || (r.type === 'limit_open_sl' && r.success));
               console.log(`[TradeService] ✅ Posición + TP/SL. Method: ${openResult.method}. OrderId: ${openResult.orderId}, TP/SL OK: ${tpslConfigured}`);
             } else {
-              console.warn(`[TradeService] ⚠️ openPositionWithFullTPSL no retornó success, fallback a placeOrder + TP/SL por separado`);
+              console.error(`[TradeService] ❌ openPositionWithFullTPSL no retornó success. No se abre orden por fallback (mismo comportamiento que el flujo original).`);
+              throw new Error(`openPositionWithFullTPSL falló (sin success). No se ejecutará apertura alternativa.`);
             }
           } catch (openWithTpslError: any) {
-            console.warn(`[TradeService] ⚠️ Error en openPositionWithFullTPSL: ${openWithTpslError.message}. Fallback a placeOrder + TP/SL por separado`);
+            console.error(`[TradeService] ❌ Error en openPositionWithFullTPSL: ${openWithTpslError.message}. No se abre orden por fallback.`);
+            throw openWithTpslError;
           }
         }
 
+        // Solo abrir orden por separado cuando NUNCA se intentó openPositionWithFullTPSL (ej. señal sin SL/TP).
+        // Si se intentó openPositionWithFullTPSL y falló, no abrir otra orden (evitar comportamiento distinto al original).
         if (!usedOpenWithFullTPSL) {
           try {
             console.log(`[TradeService] 🚀 Ejecutando orden en ${exchange} para usuario ${userId}...`);
