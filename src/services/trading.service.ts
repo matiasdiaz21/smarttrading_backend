@@ -201,12 +201,53 @@ export class TradingService {
       // Fórmula ejecutada: contratos = position_size / precio_entrada (redondeado al step del contrato).
       // Para que la simulación coincida con la ejecución real, la sim debe usar la misma regla: PnL_sim = contratos_sim * (precio_salida - precio_entrada) con contratos_sim = position_size_usdt / precio_entrada.
       //
-      // PRIORIDAD: 1. position_size personalizado del usuario, 2. alert.size, 3. minTradeUSDT calculado
+      // PRIORIDAD: 0. % riesgo (si position_sizing_mode === 'risk_percent'), 1. position_size personalizado del usuario, 2. alert.size, 3. minTradeUSDT calculado
       let requestedSize = alert.size;
       let positionSizeSource = 'alerta (alert.size)';
-      
+
+      const positionSizingMode = strategySubscription.position_sizing_mode || 'fixed_usdt';
+      const riskPercent = strategySubscription.risk_percent != null ? Number(strategySubscription.risk_percent) : null;
+
+      if (positionSizingMode === 'risk_percent' && riskPercent != null && riskPercent > 0 && entryPrice && alert.stopLoss != null) {
+        const price = parseFloat(entryPrice.toString());
+        const stopLossNum = parseFloat(alert.stopLoss.toString());
+        const distanceSl = Math.abs(price - stopLossNum);
+        if (distanceSl <= 0) {
+          console.warn(`[TradeService] ⚠️ Modo % riesgo: distance_sl <= 0 (entry=${price}, sl=${stopLossNum}). Usando tamaño mínimo.`);
+          requestedSize = contractInfo.minTradeNum;
+          positionSizeSource = 'mínimo (risk_percent sin distance_sl válida)';
+        } else {
+          try {
+            let availableBalance: number;
+            if (exchange === 'bybit') {
+              const bal = await this.bybitService.getAccountBalance(decryptedCredentials);
+              availableBalance = bal.available;
+            } else {
+              const bal = await this.bitgetService.getAccountBalance(decryptedCredentials, productType, 'USDT');
+              availableBalance = bal.available;
+            }
+            const riskUsdt = availableBalance * (riskPercent / 100);
+            const contracts = riskUsdt / distanceSl;
+            const notional = contracts * price;
+            const minUSDT = parseFloat(contractInfo.minTradeUSDT);
+            const effectiveNotional = Math.max(notional, minUSDT * 1.05);
+            requestedSize = (effectiveNotional / price).toString();
+            positionSizeSource = `% riesgo (${riskPercent}% de ${availableBalance.toFixed(2)} USDT, risk_usdt=${riskUsdt.toFixed(2)}, distance_sl=${distanceSl.toFixed(4)})`;
+            console.log(`[TradeService] ✅ Tamaño por % riesgo: ${requestedSize} contratos (notional ≈ ${effectiveNotional.toFixed(2)} USDT)`);
+          } catch (balanceError: any) {
+            console.warn(`[TradeService] ⚠️ Modo % riesgo: no se pudo obtener balance (${balanceError.message}). Usando tamaño mínimo.`);
+            requestedSize = contractInfo.minTradeNum;
+            positionSizeSource = 'mínimo (error balance en risk_percent)';
+          }
+        }
+      } else if (positionSizingMode === 'risk_percent' && (riskPercent == null || riskPercent <= 0 || !entryPrice || alert.stopLoss == null)) {
+        console.warn(`[TradeService] ⚠️ Modo % riesgo activo pero falta risk_percent, entryPrice o stopLoss. Usando tamaño mínimo.`);
+        requestedSize = requestedSize || contractInfo.minTradeNum;
+        positionSizeSource = positionSizeSource === 'alerta (alert.size)' ? 'mínimo (risk_percent sin SL/entry)' : positionSizeSource;
+      }
+
       const userPositionSize = strategySubscription.position_size;
-      if (userPositionSize !== null && userPositionSize !== undefined && userPositionSize > 0 && entryPrice) {
+      if (positionSizingMode === 'fixed_usdt' && userPositionSize !== null && userPositionSize !== undefined && userPositionSize > 0 && entryPrice) {
         // position_size en USDT = notional (valor de la posición). Contratos = position_size / precio_entrada.
         // IMPORTANTE: Agregar margen de seguridad del 10% para órdenes de mercado
         // porque el precio puede variar ligeramente y caer por debajo del mínimo

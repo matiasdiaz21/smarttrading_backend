@@ -105,6 +105,21 @@ export class BybitService {
     return data;
   }
 
+  /** Get UNIFIED account balance (USD). Same shape as Bitget for use in trading.service. */
+  async getAccountBalance(credentials: BybitCredentials): Promise<{ available: number; equity: number }> {
+    const result = await this.makeRequest('GET', '/v5/account/wallet-balance', credentials, {
+      accountType: 'UNIFIED',
+    });
+    const list = result?.list;
+    if (!list || list.length === 0) {
+      throw new Error('Bybit: no wallet balance data');
+    }
+    const account = list[0];
+    const available = parseFloat(account.totalAvailableBalance || '0');
+    const equity = parseFloat(account.totalEquity || account.totalWalletBalance || '0');
+    return { available, equity };
+  }
+
   calculateOrderSize(
     requestedSize: string | number,
     minTradeNum: string,

@@ -100,6 +100,19 @@ export class SubscriptionModel {
     );
   }
 
+  static async updatePositionSizing(
+    userId: number,
+    strategyId: number,
+    positionSize: number | null,
+    positionSizingMode: 'fixed_usdt' | 'risk_percent',
+    riskPercent: number | null
+  ): Promise<void> {
+    await pool.execute(
+      'UPDATE user_strategy_subscriptions SET position_size = ?, position_sizing_mode = ?, risk_percent = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',
+      [positionSize, positionSizingMode, riskPercent, userId, strategyId]
+    );
+  }
+
   static async updatePartialTp(userId: number, strategyId: number, usePartialTp: boolean): Promise<void> {
     await pool.execute(
       'UPDATE user_strategy_subscriptions SET use_partial_tp = ?, updated_at = NOW() WHERE user_id = ? AND strategy_id = ?',

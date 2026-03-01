@@ -59,7 +59,9 @@ export interface UserStrategySubscription {
   strategy_id: number;
   is_enabled: boolean;
   leverage: number | null;
-  position_size: number | null; // Tamaño de posición en USDT
+  position_size: number | null; // Tamaño de posición en USDT (cuando position_sizing_mode = fixed_usdt)
+  position_sizing_mode?: 'fixed_usdt' | 'risk_percent';
+  risk_percent?: number | null; // % de la cuenta a arriesgar por operación (cuando position_sizing_mode = risk_percent)
   /** Símbolos que el usuario no quiere copiar en esta estrategia. */
   excluded_symbols: string[] | null;
   credential_id: number | null; // Credencial del exchange asignada (Bitget o Bybit según exchange)

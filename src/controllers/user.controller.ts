@@ -79,6 +79,8 @@ export class UserController {
           user_leverage: userLeverage,
           default_leverage: strategy.leverage || 10,
           user_position_size: subscription?.position_size || null,
+          user_position_sizing_mode: (subscription as any)?.position_sizing_mode || 'fixed_usdt',
+          user_risk_percent: (subscription as any)?.risk_percent ?? null,
           credential_id: subscription?.credential_id ?? null,
           exchange: (subscription as any)?.exchange || 'bitget',
           excluded_symbols: subscription ? normalizeExcludedSymbols(subscription.excluded_symbols) : null,
@@ -429,25 +431,31 @@ export class UserController {
       }
 
       const { id } = req.params;
-      const { position_size } = req.body;
+      const { position_size, position_sizing_mode, risk_percent } = req.body;
 
-      // position_size puede ser null para usar el tamaño automático
+      const positionSizingMode = position_sizing_mode === 'risk_percent' ? 'risk_percent' : 'fixed_usdt';
+
+      if (positionSizingMode === 'risk_percent') {
+        const rp = risk_percent != null ? parseFloat(String(risk_percent)) : null;
+        if (rp == null || isNaN(rp) || rp < 0.1 || rp > 100) {
+          res.status(400).json({ error: 'When position_sizing_mode is risk_percent, risk_percent must be between 0.1 and 100' });
+          return;
+        }
+      }
+
+      // position_size puede ser null para usar el tamaño automático (en fixed_usdt)
       if (position_size !== null && position_size !== undefined) {
-        // Validar position_size (debe ser un número positivo)
         const positionSizeValue = parseFloat(String(position_size));
         if (isNaN(positionSizeValue) || positionSizeValue <= 0) {
           res.status(400).json({ error: 'position_size must be a positive number or null' });
           return;
         }
-
-        // Validar mínimo (al menos 5 USDT, que es el mínimo típico de Bitget)
         if (positionSizeValue < 5) {
           res.status(400).json({ error: 'position_size must be at least 5 USDT' });
           return;
         }
       }
 
-      // Verificar que existe la suscripción
       const subscription = await SubscriptionModel.findById(
         req.user.userId,
         parseInt(id)
@@ -460,15 +468,26 @@ export class UserController {
         return;
       }
 
-      const positionSizeToSave = position_size === null || position_size === undefined 
-        ? null 
+      const positionSizeToSave = position_size === null || position_size === undefined
+        ? null
         : parseFloat(String(position_size));
+      const riskPercentToSave = positionSizingMode === 'risk_percent' && risk_percent != null
+        ? parseFloat(String(risk_percent))
+        : null;
 
-      await SubscriptionModel.updatePositionSize(req.user.userId, parseInt(id), positionSizeToSave);
+      await SubscriptionModel.updatePositionSizing(
+        req.user.userId,
+        parseInt(id),
+        positionSizeToSave,
+        positionSizingMode,
+        riskPercentToSave
+      );
 
       res.json({
         message: 'Position size updated successfully',
         position_size: positionSizeToSave,
+        position_sizing_mode: positionSizingMode,
+        risk_percent: riskPercentToSave,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
