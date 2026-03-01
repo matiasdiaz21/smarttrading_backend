@@ -284,6 +284,9 @@ app.delete('/api/admin/ai/predictions/:id', authenticate, requireAdmin, AiContro
 app.put('/api/admin/ai/predictions/:id/resolve', authenticate, requireAdmin, AiController.resolvePrediction);
 app.post('/api/admin/ai/check-results', authenticate, requireAdmin, AiController.forceCheckResults);
 
+// Cron: auto-run IA (llamado por Vercel Cron o servicio externo; requiere x-cron-secret = CRON_SECRET)
+app.post('/api/cron/ai-auto-run', AiController.cronAutoRun);
+
 // Trading Test routes (admin)
 app.get('/api/admin/trading/credentials', authenticate, requireAdmin, TradingTestController.getCredentials);
 app.get('/api/admin/trading/positions', authenticate, requireAdmin, TradingTestController.getPositions);

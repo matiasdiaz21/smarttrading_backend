@@ -341,4 +341,48 @@ export class AiController {
       res.status(500).json({ error: error.message });
     }
   }
+
+  /**
+   * POST /api/cron/ai-auto-run
+   * Llamado por un cron (Vercel Cron o servicio externo) para ejecutar el análisis automático.
+   * Requiere header x-cron-secret igual a CRON_SECRET.
+   * Solo ejecuta si auto_run_enabled e is_enabled están activos y ha pasado el intervalo desde last_auto_run_at.
+   */
+  static async cronAutoRun(req: Request, res: Response): Promise<void> {
+    try {
+      const secret = req.headers['x-cron-secret'] as string | undefined;
+      const expected = process.env.CRON_SECRET;
+      if (!expected || secret !== expected) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const config = await AiConfigModel.get();
+      if (!config.auto_run_enabled || !config.is_enabled) {
+        res.status(200).json({ skipped: true, reason: 'auto_run or IA disabled' });
+        return;
+      }
+
+      const intervalHours = Math.max(1, config.auto_run_interval_hours || 4);
+      const intervalMs = intervalHours * 60 * 60 * 1000;
+      const lastRun = config.last_auto_run_at ? new Date(config.last_auto_run_at).getTime() : 0;
+      const nextRunAt = lastRun + intervalMs;
+      if (Date.now() < nextRunAt) {
+        res.status(200).json({
+          skipped: true,
+          reason: 'interval',
+          next_run_in_minutes: Math.ceil((nextRunAt - Date.now()) / 60000),
+        });
+        return;
+      }
+
+      console.log('[AI Controller] 🤖 Cron: ejecutando auto-run (check-results + analyze)');
+      await checkPredictionResults();
+      const result = await runFullAnalysis();
+      res.status(200).json({ ok: true, predictions: result.predictions?.length ?? 0, errors: result.errors?.length ?? 0 });
+    } catch (error: any) {
+      console.error('[AI Controller] ❌ Cron auto-run error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  }
 }
