@@ -358,25 +358,26 @@ export class TradingService {
         console.warn(`[TradeService] ⚠️ No se pudo verificar posiciones existentes: ${positionsResult.reason?.message}. Se intentará abrir la posición.`);
       }
       
-      // Mismo flujo que /admin/test-orders: open + TP/SL en un solo método cuando hay SL y TP
+      // Apertura de posición: sin fallbacks. Si hay error en cancelación de triggers o en la orden, la posición no se abre.
       if (shouldOpenPosition) {
-        // Cancelar triggers existentes en este símbolo para no acumular dos juegos de SL/TP
-        try {
-          const cancelResult =
-            exchange === 'bybit'
-              ? await this.bybitService.cancelAllTriggerOrders(decryptedCredentials, symbol.toUpperCase(), 'linear', alert.marginCoin || 'USDT')
-              : await this.bitgetService.cancelAllTriggerOrders(
-                  decryptedCredentials,
-                  symbol.toUpperCase(),
-                  productType,
-                  alert.marginCoin || 'USDT',
-                  { userId, strategyId }
-                );
-          if (cancelResult.cancelled > 0) {
-            console.log(`[TradeService] 🗑️ Cancelados ${cancelResult.cancelled} triggers previos en ${symbol} antes de abrir nueva posición.`);
-          }
-        } catch (cancelErr: any) {
-          console.warn(`[TradeService] ⚠️ No se pudieron cancelar triggers previos en ${symbol}: ${cancelErr.message}. Se continúa con la apertura.`);
+        // 1) Limpiar TODOS los triggers (SL/TP) del símbolo. Obligatorio: si falla o quedan triggers, no se abre posición.
+        const cancelResult =
+          exchange === 'bybit'
+            ? await this.bybitService.cancelAllTriggerOrders(decryptedCredentials, symbol.toUpperCase(), 'linear', alert.marginCoin || 'USDT')
+            : await this.bitgetService.cancelAllTriggerOrders(
+                decryptedCredentials,
+                symbol.toUpperCase(),
+                productType,
+                alert.marginCoin || 'USDT',
+                { userId, strategyId }
+              );
+        if (exchange === 'bitget' && (cancelResult as { remaining?: number }).remaining != null && (cancelResult as { remaining: number }).remaining > 0) {
+          const msg = `No se pudieron cancelar todos los triggers en ${symbol} (quedan ${(cancelResult as { remaining: number }).remaining}). No se abre posición.`;
+          console.error(`[TradeService] ❌ ${msg}`);
+          throw new Error(msg);
+        }
+        if ((cancelResult as { cancelled?: number }).cancelled != null && (cancelResult as { cancelled: number }).cancelled > 0) {
+          console.log(`[TradeService] 🗑️ Cancelados ${(cancelResult as { cancelled: number }).cancelled} triggers en ${symbol} antes de abrir.`);
         }
 
         // Generar clientOid único con alta entropía para evitar 40786 (Duplicate clientOid) en reintentos
@@ -495,48 +496,17 @@ export class TradingService {
             actualPositionSize = calculatedSize;
             console.log(`[TradeService] 📊 Usando tamaño calculado como posición real: ${actualPositionSize}`);
           } catch (orderError: any) {
-            console.error(`[TradeService] ❌ Error al ejecutar orden: ${orderError.message}`);
-            const getPositionsForExchange = () =>
-              exchange === 'bybit'
-                ? this.bybitService.getPositions(decryptedCredentials, symbol, 'linear')
-                : this.bitgetService.getPositions(decryptedCredentials, symbol, productType);
-            if (orderError.message && orderError.message.includes('Duplicate clientOid')) {
-              console.log(`[TradeService] 🔍 Error de clientOid duplicado. Verificando si la posición ya existe...`);
-              try {
-                const positions = await getPositionsForExchange();
-                if (positions && positions.length > 0) {
-                  const matchingPosition = positions.find((p: any) =>
-                    (p.symbol || '').toUpperCase() === symbol.toUpperCase() && p.holdSide === holdSide
-                  );
-                  if (matchingPosition) {
-                    existingPosition = matchingPosition;
-                    actualPositionSize = matchingPosition.total || matchingPosition.available || calculatedSize;
-                    console.log(`[TradeService] ✅ Posición encontrada con tamaño ${actualPositionSize}. Se configurarán TP/SL.`);
-                    if (matchingPosition.positionId || matchingPosition.id) {
-                      result = { orderId: matchingPosition.positionId || matchingPosition.id };
-                    }
-                  } else {
-                    throw orderError;
-                  }
-                } else {
-                  throw orderError;
-                }
-              } catch (recheckError: any) {
-                console.error(`[TradeService] ❌ No se pudo verificar la posición después del error: ${recheckError.message}`);
-                throw orderError;
-              }
-            } else {
-              throw orderError;
-            }
+            console.error(`[TradeService] ❌ Error al ejecutar orden: ${orderError.message}. No se abre posición.`);
+            throw orderError;
           }
         }
       }
 
-      // Configurar Stop Loss y Take Profit si están disponibles (solo si no se usó openPositionWithFullTPSL)
-      // Fallback: coloca triggers directamente (la posición ya existe, NO abrir otra). Solo Bitget; Bybit abre con TP/SL en 1 llamada.
+      // Configurar Stop Loss y Take Profit cuando la orden se abrió por separado (placeOrder sin openPositionWithFullTPSL).
+      // Solo Bitget; Bybit abre con TP/SL en una sola llamada.
       if (alert.stopLoss && alert.takeProfit && !usedOpenWithFullTPSL && exchange === 'bitget') {
         try {
-          console.log(`[TradeService] 📊 Fallback: Configurando TP/SL (posición ya abierta)...`);
+          console.log(`[TradeService] 📊 Configurando TP/SL para posición abierta...`);
           console.log(`[TradeService]   SL: ${alert.stopLoss} | BE: ${alert.breakeven || 'N/A'} | TP: ${alert.takeProfit} | Size: ${actualPositionSize}`);
           
           const usePartialTp = strategySubscription.use_partial_tp !== false;
@@ -567,7 +537,7 @@ export class TradingService {
           const tpOk = tpslResults.some(r => ['take_profit', 'take_profit_final', 'take_profit_partial'].includes(r.type) && r.success);
           
           if (slOk && tpOk) {
-            console.log(`[TradeService] ✅ TP/SL configurados correctamente (fallback)`);
+            console.log(`[TradeService] ✅ TP/SL configurados correctamente`);
             tpslConfigured = true;
           } else if (!slOk && !tpOk) {
             console.error(`[TradeService] ❌ CRÍTICO: Ni TP ni SL se pudieron configurar`);
@@ -580,7 +550,7 @@ export class TradingService {
             tpslError = { type: 'tp_failed', slSuccess: slOk, tpSuccess: tpOk, results: tpslResults };
           }
         } catch (error: any) {
-          console.error(`[TradeService] ⚠️ Error al configurar TP/SL (fallback): ${error.message}`);
+          console.error(`[TradeService] ⚠️ Error al configurar TP/SL: ${error.message}`);
           tpslError = { type: 'tp_sl_failed', error: error.message };
         }
       } else if (!alert.stopLoss || !alert.takeProfit) {

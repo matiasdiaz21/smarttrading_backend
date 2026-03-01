@@ -1932,7 +1932,7 @@ export class BitgetService {
       return { cancelled, failed, remaining };
     } catch (error: any) {
       console.error(`[Bitget] ❌ Error al cancelar órdenes trigger: ${error.message}`);
-      return { cancelled: 0, failed: 0, remaining: 0 };
+      throw error;
     }
   }
 

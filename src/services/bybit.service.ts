@@ -290,16 +290,12 @@ export class BybitService {
     _category: string = 'linear',
     _marginCoin?: string
   ): Promise<{ cancelled: number }> {
-    try {
-      await this.makeRequest('POST', '/v5/order/cancel-all', credentials, undefined, {
-        category: 'linear',
-        symbol: symbol.toUpperCase(),
-        orderFilter: 'StopOrder',
-      });
-      return { cancelled: 1 };
-    } catch {
-      return { cancelled: 0 };
-    }
+    await this.makeRequest('POST', '/v5/order/cancel-all', credentials, undefined, {
+      category: 'linear',
+      symbol: symbol.toUpperCase(),
+      orderFilter: 'StopOrder',
+    });
+    return { cancelled: 1 };
   }
 
   async validateConnection(credentials: BybitCredentials): Promise<{ valid: boolean; message: string }> {
