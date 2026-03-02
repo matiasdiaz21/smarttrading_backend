@@ -1836,20 +1836,20 @@ export class BitgetService {
   }
 
   // Obtener órdenes trigger pendientes (TP/SL) para un símbolo.
-  // Si no se pasa planType, se consulta por cada tipo (pos_loss, pos_profit, normal_plan) y se fusionan
-  // para no perder órdenes que la API solo devuelve al filtrar por tipo.
+  // Bitget GET orders-plan-pending exige planType con valores: normal_plan | track_plan | profit_loss.
+  // pos_loss y pos_profit se obtienen con planType=profit_loss y filtrando por order.planType.
   async getPendingTriggerOrders(
     credentials: BitgetCredentials,
     symbol: string,
     productType: string = 'USDT-FUTURES',
     planType?: string // 'pos_profit' | 'pos_loss' | 'normal_plan' | undefined (all)
   ): Promise<any[]> {
-    const fetchByPlanType = async (type?: string): Promise<any[]> => {
-      const params: any = {
+    const fetchByApiPlanType = async (apiType: string): Promise<any[]> => {
+      const params: Record<string, string> = {
         productType: productType.toUpperCase(),
         symbol: symbol.toUpperCase(),
+        planType: apiType,
       };
-      if (type) params.planType = type;
       const queryString = Object.keys(params).map(key => `${key}=${params[key]}`).join('&');
       const endpoint = `/api/v2/mix/order/orders-plan-pending?${queryString}`;
       const result = await this.makeRequest('GET', endpoint, credentials);
@@ -1857,20 +1857,26 @@ export class BitgetService {
       return Array.isArray(orders) ? orders : [];
     };
 
+    const filterByPlanType = (orders: any[], filter: string): any[] => {
+      if (!filter) return orders;
+      return orders.filter(o => (o.planType || '').toLowerCase() === filter.toLowerCase());
+    };
+
     try {
       let list: any[];
-      if (planType) {
-        list = await fetchByPlanType(planType);
+      if (planType === 'pos_loss' || planType === 'pos_profit') {
+        const profitLossOrders = await fetchByApiPlanType('profit_loss');
+        list = filterByPlanType(profitLossOrders, planType);
+      } else if (planType === 'normal_plan' || planType === 'track_plan') {
+        list = await fetchByApiPlanType(planType);
       } else {
-        // Obtener por cada tipo y fusionar por orderId para no duplicar
-        const [allList, posLoss, posProfit, normalPlan] = await Promise.all([
-          fetchByPlanType(undefined),
-          fetchByPlanType('pos_loss'),
-          fetchByPlanType('pos_profit'),
-          fetchByPlanType('normal_plan'),
+        const [normalPlan, trackPlan, profitLoss] = await Promise.all([
+          fetchByApiPlanType('normal_plan'),
+          fetchByApiPlanType('track_plan'),
+          fetchByApiPlanType('profit_loss'),
         ]);
         const byId = new Map<string, any>();
-        for (const o of [...allList, ...posLoss, ...posProfit, ...normalPlan]) {
+        for (const o of [...normalPlan, ...trackPlan, ...profitLoss]) {
           const id = o.orderId || o.id;
           if (id && !byId.has(id)) byId.set(id, o);
         }
