@@ -341,6 +341,22 @@ export class BitgetService {
     return size.toFixed(8).replace(/\.?0+$/, '');
   }
 
+  /**
+   * Tamaño redondeado hacia ABAJO al múltiplo del contrato (para TP final = resto de posición).
+   * Así parcial + final = totalSize y no queda posición abierta por redondeo.
+   */
+  calculateOrderSizeFloor(
+    size: number,
+    sizeMultiplier: number,
+    minTradeNum: number,
+    volumePlace: number
+  ): string {
+    let s = Math.max(size, 0);
+    s = Math.floor(s / sizeMultiplier) * sizeMultiplier;
+    if (s < minTradeNum) s = minTradeNum;
+    return s.toFixed(volumePlace).replace(/\.?0+$/, '');
+  }
+
   async placeOrder(
     credentials: BitgetCredentials,
     orderData: {
@@ -544,7 +560,11 @@ export class BitgetService {
       const sizeMultiplierStr = (contractInfo?.sizeMultiplier ?? String(sizeMultiplier)).toString();
       const halfSizeStr = this.calculateOrderSize(String(totalSize / 2), minTradeNumStr, sizeMultiplierStr);
       const halfSize = parseFloat(halfSizeStr);
-      console.log(`  - halfSize (calculateOrderSize): ${halfSizeStr}`);
+      // TP final cierra el RESTANTE (totalSize - parcial) para no dejar posición abierta por redondeo
+      const remainderSize = totalSize - halfSize;
+      const remainderSizeStr = this.calculateOrderSizeFloor(remainderSize, sizeMultiplier, minTradeNum, volumePlace);
+      console.log(`  - halfSize (calculateOrderSize): ${halfSizeStr} (TP parcial)`);
+      console.log(`  - remainderSize (TP final = cierre total restante): ${remainderSizeStr}`);
       
       const canDoPartial = totalSize >= 2 * minTradeNum - 1e-8 && halfSize >= minTradeNum - 1e-8;
       console.log(`  - canDoPartial: ${canDoPartial} (totalSize >= ${2 * minTradeNum} && halfSize >= ${minTradeNum})`);
@@ -717,7 +737,7 @@ export class BitgetService {
         }
       }
 
-      // 4) Colocar Take Profit final usando normal_plan (trigger order)
+      // 4) Colocar Take Profit final usando normal_plan (cierra el RESTANTE para no dejar posición abierta)
       const tpRandom2 = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
       const tpFinalPayload = {
         planType: 'normal_plan',
@@ -725,7 +745,7 @@ export class BitgetService {
         productType: orderData.productType.toUpperCase(),
         marginMode: orderData.marginMode,
         marginCoin: orderData.marginCoin.toUpperCase(),
-        size: halfSizeStr,
+        size: remainderSizeStr,
         price: '0', // Para market execution
         triggerPrice: formattedTP,
         triggerType: 'fill_price',
@@ -736,7 +756,7 @@ export class BitgetService {
         reduceOnly: 'YES',
         clientOid: makeBitgetClientOid('TP_F', orderData.symbol, baseId, tpRandom2),
       };
-      console.log(`[Bitget] 📤 Colocando TP final (50%): place-plan-order, size=${halfSizeStr}, triggerPrice=${formattedTP}, holdSide=${holdSide}`);
+      console.log(`[Bitget] 📤 Colocando TP final (resto): place-plan-order, size=${remainderSizeStr}, triggerPrice=${formattedTP}, holdSide=${holdSide}`);
       
       let tpFinalResult;
       try {
@@ -792,7 +812,7 @@ export class BitgetService {
           open: { orderType: orderData.orderType, price: orderData.price, size: orderData.size },
           stopLoss: { triggerPrice: formattedSL, size: orderData.size },
           takeProfitPartial: { triggerPrice: formattedTPPartial, size: halfSizeStr },
-          takeProfitFinal: { triggerPrice: formattedTP, size: halfSizeStr },
+          takeProfitFinal: { triggerPrice: formattedTP, size: remainderSizeStr },
         },
       };
     } catch (error: any) {

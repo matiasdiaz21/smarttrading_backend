@@ -205,29 +205,33 @@ export class WebhookController {
             console.warn(`[Webhook] ⚠️ No se pudo actualizar log con fill: ${upErr.message}`);
           }
         }
+      } else if (alert.alertType === 'BREAKEVEN') {
+        console.log(`\n[Webhook] 📊 Procesando alerta tipo: BREAKEVEN`);
+        if (!alert.symbol) {
+          res.status(400).json({ error: 'Missing required field for BREAKEVEN: symbol is required' });
+          return;
+        }
+        result = await tradingService.processBreakevenAlert(strategy.id, alert);
+        console.log(`[Webhook] ✅ Resultado BREAKEVEN:`, JSON.stringify(result, null, 2));
       } else if (
         String(alert.alertType || '').toUpperCase() === 'CLOSE' || 
         String(alert.alertType || '').toUpperCase() === 'STOP_LOSS' || 
         String(alert.alertType || '').toUpperCase() === 'TAKE_PROFIT'
       ) {
-        console.log(`[Webhook] � Procesando alerta de ${alert.alertType} (Cierre de posición y triggers)`);
+        console.log(`[Webhook] � Alerta informativa ${alert.alertType} (sin llamadas a Bitget)`);
         if (!alert.symbol) {
           res.status(400).json({
             error: `Missing required field for ${alert.alertType}: symbol is required`,
           });
           return;
         }
-        result = await tradingService.processCloseAlert(
-          strategy.id,
-          alert
-        );
-        // Registrar STOP_LOSS/TAKE_PROFIT en webhook_log siempre (aunque Bitget falle), para tener trazabilidad
+        result = await tradingService.processInfoAlert(strategy.id, alert);
         try {
-          const closeStatus = result.failed === 0 ? 'success' : 'failed';
-          const logId = await WebhookLogModel.create(strategy.id, payload, signature, closeStatus);
-          console.log(`[Webhook] ✅ Webhook log creado para ${alert.alertType} (ID: ${logId}, status: ${closeStatus}, processed: ${result.processed}, failed: ${result.failed})`);
+          const status = result.failed === 0 ? 'success' : 'failed';
+          const logId = await WebhookLogModel.create(strategy.id, payload, signature, status);
+          console.log(`[Webhook] ✅ Webhook log creado para ${alert.alertType} (ID: ${logId}, status: ${status})`);
         } catch (logError: any) {
-          console.error('[Webhook] ❌ Error creando webhook log para cierre:', logError.message);
+          console.error('[Webhook] ❌ Error creando webhook log:', logError.message);
         }
       } else {
         // Por defecto, tratar como ENTRY (compatibilidad hacia atrás)

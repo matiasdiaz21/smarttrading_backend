@@ -284,7 +284,8 @@ app.delete('/api/admin/ai/predictions/:id', authenticate, requireAdmin, AiContro
 app.put('/api/admin/ai/predictions/:id/resolve', authenticate, requireAdmin, AiController.resolvePrediction);
 app.post('/api/admin/ai/check-results', authenticate, requireAdmin, AiController.forceCheckResults);
 
-// Cron: auto-run IA (llamado por Vercel Cron o servicio externo; requiere x-cron-secret = CRON_SECRET)
+// Cron: auto-run IA. Vercel Cron llama GET con Authorization Bearer CRON_SECRET; también aceptamos POST con x-cron-secret
+app.get('/api/cron/ai-auto-run', AiController.cronAutoRun);
 app.post('/api/cron/ai-auto-run', AiController.cronAutoRun);
 
 // Trading Test routes (admin)

@@ -757,10 +757,10 @@ async function callGroq(
 // ===================== Asset category fallback (used when DB category is missing) =====================
 
 function guessAssetCategory(symbol: string): AssetCategory {
-  const s = symbol.toUpperCase();
+  const s = symbol.toUpperCase().replace(/\//g, '');
   // Commodities: oro, plata, petróleo
   if (/^XAU|^XAG|^WTI|^BRENT|^OIL|^COPPER|^NATURALGAS/i.test(s)) return 'commodities';
-  // Forex: pares típicos (6 caracteres, dos códigos de moneda)
+  // Forex: pares típicos (6 caracteres, dos códigos de moneda; acepta "AUD/USD" o "AUDUSD")
   const forexPairs = /^(EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD)(USD|EUR|GBP|JPY|CHF|AUD|NZD|CAD)$/;
   if (s.length >= 6 && s.length <= 8 && forexPairs.test(s)) return 'forex';
   // Por defecto: crypto (BTCUSDT, ETHUSDT, etc.)
@@ -838,6 +838,13 @@ export async function analyzeAsset(
   // 1. Detect asset category from DB (fallback to guess from symbol name)
   const assetCategory: AssetCategory = asset.category || guessAssetCategory(symbol);
   console.log(`[AI Service] 📊 [${assetCategory.toUpperCase()}] Obteniendo datos para ${symbol}...`);
+
+  // Bitget es un exchange de cripto: no lista pares forex (AUD/USD, GBP/JPY, etc.). Evitar 400.
+  if (assetCategory === 'forex') {
+    throw new Error(
+      'Bitget no ofrece datos para pares forex. Solo se analizan activos listados en Bitget (crypto y commodities como XAU). Deshabilite el activo forex o use un proveedor de datos forex externo.'
+    );
+  }
 
   // 2. Fetch market data from Bitget (public endpoints, no auth) + optional market news
   // For commodities/forex: also fetch cross-asset context (BTC for risk/USD proxy)

@@ -343,16 +343,19 @@ export class AiController {
   }
 
   /**
-   * POST /api/cron/ai-auto-run
-   * Llamado por un cron (Vercel Cron o servicio externo) para ejecutar el análisis automático.
-   * Requiere header x-cron-secret igual a CRON_SECRET.
+   * GET/POST /api/cron/ai-auto-run
+   * Llamado por Vercel Cron (GET) o servicio externo (POST).
+   * Autenticación: header Authorization Bearer CRON_SECRET (Vercel lo envía automáticamente) o x-cron-secret = CRON_SECRET.
    * Solo ejecuta si auto_run_enabled e is_enabled están activos y ha pasado el intervalo desde last_auto_run_at.
    */
   static async cronAutoRun(req: Request, res: Response): Promise<void> {
     try {
-      const secret = req.headers['x-cron-secret'] as string | undefined;
       const expected = process.env.CRON_SECRET;
-      if (!expected || secret !== expected) {
+      const headerSecret = req.headers['x-cron-secret'] as string | undefined;
+      const authHeader = req.headers.authorization;
+      const bearerSecret = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
+      const valid = expected && (headerSecret === expected || bearerSecret === expected);
+      if (!valid) {
         res.status(401).json({ error: 'Unauthorized' });
         return;
       }

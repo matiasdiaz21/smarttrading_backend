@@ -11,5 +11,11 @@
       "src": "/(.*)",
       "dest": "/api"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/ai-auto-run",
+      "schedule": "0 */4 * * *"
+    }
   ]
 }
