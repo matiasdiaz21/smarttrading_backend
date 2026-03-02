@@ -69,75 +69,24 @@ export class WebhookController {
         return;
       }
 
-      // Buscar la estrategia por nombre (solo activas)
-      const strategies = await StrategyModel.findAll(false); // Solo activas
-      console.log(`[Webhook] Found ${strategies.length} active strategies in database`);
-
-      // Si no hay estrategias, retornar error
-      if (!strategies || strategies.length === 0) {
-        console.error('[Webhook] ⚠️ No active strategies found in database');
-        console.error('[Webhook] ⚠️ La señal NO será procesada porque no hay estrategias activas configuradas');
-        
-        try {
-          const logId = await WebhookLogModel.create(
-            null,
-            payload,
-            signature,
-            'failed'
-          );
-          console.log(`[Webhook] ✅ Webhook registrado en logs (ID: ${logId}, status: failed)`);
-        } catch (logError: any) {
-          console.error('[Webhook] ❌ Error al registrar webhook en logs:', logError.message);
-        }
-        
-        res.status(404).json({ 
-          error: 'No active strategies found',
-          message: 'No hay estrategias activas configuradas en la base de datos.',
-          signal_received: true,
-          alert_type: req.body.alertType || 'ENTRY'
-        });
-        return;
-      }
-
-      // Mostrar información de las estrategias
-      console.log(`[Webhook] Estrategias activas encontradas:`);
-      strategies.forEach((s, index) => {
-        console.log(`  ${index + 1}. ID: ${s.id}, Name: "${s.name}", Active: ${s.is_active}`);
-      });
-
-      // Buscar estrategia por nombre (case-insensitive)
-      strategy = strategies.find(s => 
-        s.name.toLowerCase().trim() === strategyNameFromBody.toLowerCase().trim()
-      );
+      // Buscar la estrategia por nombre (incluye inactivas: recibir y registrar webhook aunque no esté habilitada para trading)
+      strategy = await StrategyModel.findByName(strategyNameFromBody);
 
       if (!strategy) {
+        const activeStrategies = await StrategyModel.findAll(false);
         console.warn(`[Webhook] ⚠️ Estrategia no encontrada: "${strategyNameFromBody}"`);
-        console.warn(`[Webhook] ⚠️ Estrategias disponibles: ${strategies.map(s => `"${s.name}"`).join(', ')}`);
-        
-        // Registrar el webhook como inválido
-        try {
-          const logId = await WebhookLogModel.create(
-            null,
-            payload,
-            signature,
-            'invalid'
-          );
-          console.log(`[Webhook] ✅ Webhook registrado en logs (ID: ${logId}, status: invalid)`);
-        } catch (logError: any) {
-          console.error('[Webhook] ❌ Error al registrar webhook en logs:', logError.message);
-        }
-        
+        console.warn(`[Webhook] ⚠️ Estrategias registradas (activas): ${activeStrategies.length > 0 ? activeStrategies.map(s => `"${s.name}"`).join(', ') : 'ninguna'}`);
+        // No registrar en webhook_logs con strategy_id null (la columna no acepta null)
         res.status(404).json({ 
           error: 'Strategy not found',
-          message: `La estrategia "${strategyNameFromBody}" no está registrada o no está activa.`,
-          available_strategies: strategies.map(s => s.name),
+          message: `La estrategia "${strategyNameFromBody}" no está registrada en la base de datos.`,
           signal_received: true,
           alert_type: req.body.alertType || 'ENTRY'
         });
         return;
       }
 
-      console.log(`[Webhook] ✅ Estrategia encontrada: ${strategy.name} (ID: ${strategy.id})`);
+      console.log(`[Webhook] ✅ Estrategia encontrada: ${strategy.name} (ID: ${strategy.id}, is_active: ${strategy.is_active})`);
       const isValid = true; // Si encontramos la estrategia por nombre, es válida
 
       // Obtener el tipo de alerta para decidir si registrar
@@ -326,19 +275,18 @@ export class WebhookController {
       });
     } catch (error: any) {
       console.error('Webhook error:', error);
-      
-      // Intentar registrar el error en el log
-      try {
-        const strategyId = strategy ? strategy.id : 0;
-        await WebhookLogModel.create(
-          strategyId,
-          JSON.stringify(req.body),
-          req.headers['x-signature'] || req.headers['x-tradingview-signature'] || null,
-          'failed'
-        );
-      } catch (logError) {
-        console.error('Error creating error log:', logError);
-        // Ignorar error de log
+      // Registrar el error en webhook_logs solo si ya tenemos estrategia (strategy_id no puede ser null)
+      if (strategy?.id) {
+        try {
+          await WebhookLogModel.create(
+            strategy.id,
+            JSON.stringify(req.body),
+            req.headers['x-signature'] || req.headers['x-tradingview-signature'] || null,
+            'failed'
+          );
+        } catch (logError: any) {
+          console.error('Error creating error log:', logError?.message || logError);
+        }
       }
 
       // Retornar error con más detalles en desarrollo

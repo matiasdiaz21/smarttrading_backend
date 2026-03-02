@@ -22,6 +22,9 @@ perdida_ = input.float(1, title="Riesgo asumido (% de cuenta)", minval=0, step=0
 comision = input.float(0.08, title="Comisión Apertura + Cierre (%)", minval=0.01, maxval=0.2, step=0.005, group=group_cuenta)
 take_profit = input.float(1.7, title="Ratio Take Profit (RR)", step=0.1, group=group_cuenta)
 breakeven_ratio = input.float(0.5, title="Breakeven Ratio (0-1)", minval=0, maxval=1, step=0.05, group=group_cuenta)
+valid_entry_bars = input.int(10, title="Velas máx. esperando retorno a entrada", minval=1, maxval=150, tooltip="Cuántas velas esperamos a que el precio vuelva a tocar el nivel de entrada. Si no vuelve en ese tiempo, la señal se descarta.", group=group_cuenta)
+min_sl_atr = input.float(0.3, title="Mín. distancia SL (múltiplos ATR)", minval=0.05, maxval=3.0, step=0.05, tooltip="Exige que la distancia entrada–SL sea al menos este múltiplo del ATR. Evita trades con SL demasiado cerca.", group=group_cuenta)
+min_tp_atr = input.float(0.3, title="Mín. distancia TP (múltiplos ATR)", minval=0.05, maxval=3.0, step=0.05, tooltip="Exige que la distancia entrada–TP sea al menos este múltiplo del ATR. Omite trades demasiado cortos.", group=group_cuenta)
 
 // Grupo: Filtros de Estrategia
 group_filtros = 'Filtros de Estrategia'
@@ -336,6 +339,15 @@ var float[] normal_outcomes = array.new_float(0)
 var tp = 0.0
 var bool tp_hit = false
 var bool sl_hit = false
+// Pendiente: solo enviamos ENTRY cuando el precio vuelve a tocar la entrada (confirmación, sin repintar)
+var bool pendingLong = false
+var bool pendingShort = false
+var float pendingEntry = 0.0
+var float pendingStop = 0.0
+var float pendingTp = 0.0
+var float pendingBreakeven = 0.0
+var int pendingTradeId = 0
+var int pendingBarIndex = 0
 // Variables para balance de cuenta y estadísticas
 var float normalBalance = capital   // Balance normal (solo TP y SL completos)
 var float breakevenBalance = capital  // Balance con BE (TP completo, SL con BE=50%, SL sin BE=pérdida)
@@ -343,66 +355,144 @@ var int totalWins = 0
 var int totalLosses = 0
 var int totalBreakevens = 0
 var float currentQty = 0.0
-// Entradas y salidas - Solo ejecutar al cierre de barra para consistencia con alertas
-if longcondicion and not isTradeOpen and barstate.isconfirmed
-    limit := ema1
-    limitl := limit
-    limits := 0.0
-    stop := M_LOW
-    stopl := stop
-    stops := 0.0
-    tp := limit + (limit - stop) * take_profit
-    tpl := tp
-    tps := 0.0
-    breakeven := limit + (tp - limit) * breakeven_ratio
-    activeTradeType := "LONG"
-    activeEntry := limit
-    activeStop := stop
-    originalStop := stop  // Guardar stop original
-    activeTp := tp
-    alert_take_profit_triggered := false
-    alert_stop_loss_triggered := false
-    alert_breakeven_triggered := false
-    be_bar_index := -1  // Resetear para nueva operación
-    isTradeOpen := true
-    trade_id += 1  // Incrementa el contador de trades secuencialmente
-    qty = (perdida_ * normalBalance / 100) / math.abs(limit - stop)
-    currentQty := qty  // Guardar qty para calcular balance al cerrar
-    // Construir JSON multi-timeframe
-    string multi_tf_json = buildMultiTimeframeJSON()
-    // Construir alert con estructura completa (mantener compatibilidad + nueva estructura)
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(limit) + ', "stopLoss": ' + str.tostring(stop) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
-    label.new(bar_index, limit, text="Long Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(breakeven, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+var float qty = 0.0
+// Entradas: lógica pendiente + confirmación (touch back), sin repintar; filtro por distancia mínima SL/TP
+bool touchBackLong = pendingLong and low <= pendingEntry
+bool touchBackShort = pendingShort and high >= pendingEntry
+bool cancelLongPending = pendingLong and (low <= pendingStop or (bar_index - pendingBarIndex) >= valid_entry_bars)
+bool cancelShortPending = pendingShort and (high >= pendingStop or (bar_index - pendingBarIndex) >= valid_entry_bars)
 
-if shortcondicion and not isTradeOpen and barstate.isconfirmed
-    limit := ema1
-    limits := limit
-    limitl := 0.0
-    stop := M_HIGH
-    stops := stop
-    stopl := 0.0
-    tp := limit - math.abs(limit - stop) * take_profit
-    tps := tp
-    tpl := 0.0
-    breakeven := limit - (limit - tp) * breakeven_ratio
-    activeTradeType := "SHORT"
-    activeEntry := limit
-    activeStop := stop
-    originalStop := stop  // Guardar stop original
-    activeTp := tp
-    alert_take_profit_triggered := false
-    alert_stop_loss_triggered := false
-    alert_breakeven_triggered := false
-    be_bar_index := -1  // Resetear para nueva operación
-    isTradeOpen := true
-    trade_id += 1  // Incrementa el contador de trades secuencialmente
-    qty = (perdida_ * normalBalance / 100) / math.abs(stop - limit)
-    currentQty := qty  // Guardar qty para calcular balance al cerrar
-    // Construir JSON multi-timeframe
-    string multi_tf_json = buildMultiTimeframeJSON()
-    // Construir alert con estructura completa (mantener compatibilidad + nueva estructura)
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(limit) + ', "stopLoss": ' + str.tostring(stop) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
-    label.new(bar_index, limit, text="Short Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(breakeven, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+// 1) Confirmación LONG: precio volvió a tocar la entrada
+if barstate.isconfirmed and touchBackLong and not touchBackShort
+    float entry_ = pendingEntry
+    float stop_ = pendingStop
+    float tp_ = pendingTp
+    float be_ = pendingBreakeven
+    float sl_dist = math.abs(entry_ - stop_)
+    float tp_dist = math.abs(tp_ - entry_)
+    if sl_dist >= atrValue * min_sl_atr and tp_dist >= atrValue * min_tp_atr
+        limit := entry_
+        limitl := limit
+        limits := 0.0
+        stop := stop_
+        stopl := stop
+        stops := 0.0
+        tp := tp_
+        tpl := tp
+        tps := 0.0
+        breakeven := be_
+        activeTradeType := "LONG"
+        activeEntry := entry_
+        activeStop := stop_
+        originalStop := stop_
+        activeTp := tp_
+        alert_take_profit_triggered := false
+        alert_stop_loss_triggered := false
+        alert_breakeven_triggered := false
+        be_bar_index := -1
+        isTradeOpen := true
+        trade_id := pendingTradeId
+        qty := (perdida_ * normalBalance / 100) / sl_dist
+        currentQty := qty
+        pendingLong := false
+        pendingShort := false
+        string multi_tf_json = buildMultiTimeframeJSON()
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry_) + ', "stopLoss": ' + str.tostring(stop_) + ', "takeProfit": ' + str.tostring(tp_) + ', "breakeven": ' + str.tostring(be_) + ', "alertType": "ENTRY", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        label.new(bar_index, entry_, text="Long Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(be_, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+    else
+        pendingLong := false
+        pendingShort := false
+        label.new(bar_index, entry_, "Long invalidado\nSL/TP muy cerca de entrada", style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
+
+// 2) Confirmación SHORT: precio volvió a tocar la entrada
+if barstate.isconfirmed and touchBackShort and not touchBackLong
+    float entry_ = pendingEntry
+    float stop_ = pendingStop
+    float tp_ = pendingTp
+    float be_ = pendingBreakeven
+    float sl_dist = math.abs(stop_ - entry_)
+    float tp_dist = math.abs(entry_ - tp_)
+    if sl_dist >= atrValue * min_sl_atr and tp_dist >= atrValue * min_tp_atr
+        limit := entry_
+        limits := limit
+        limitl := 0.0
+        stop := stop_
+        stops := stop
+        stopl := 0.0
+        tp := tp_
+        tps := tp
+        tpl := 0.0
+        breakeven := be_
+        activeTradeType := "SHORT"
+        activeEntry := entry_
+        activeStop := stop_
+        originalStop := stop_
+        activeTp := tp_
+        alert_take_profit_triggered := false
+        alert_stop_loss_triggered := false
+        alert_breakeven_triggered := false
+        be_bar_index := -1
+        isTradeOpen := true
+        trade_id := pendingTradeId
+        qty := (perdida_ * normalBalance / 100) / sl_dist
+        currentQty := qty
+        pendingLong := false
+        pendingShort := false
+        string multi_tf_json = buildMultiTimeframeJSON()
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry_) + ', "stopLoss": ' + str.tostring(stop_) + ', "takeProfit": ' + str.tostring(tp_) + ', "breakeven": ' + str.tostring(be_) + ', "alertType": "ENTRY", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "rsi": ' + str.tostring(rsi) + ', "macd": {"line": ' + str.tostring(macd_line) + ', "signal": ' + str.tostring(signal_line) + ', "hist": ' + str.tostring(hist) + '}, "ema": ' + str.tostring(ema1) + ', "atr": ' + str.tostring(atrValue) + ', "volume": ' + str.tostring(vol) + ', "pivots": {"high": ' + str.tostring(M_HIGH) + ', "low": ' + str.tostring(M_LOW) + ', "med": ' + str.tostring(M_MED) + '}, "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        label.new(bar_index, entry_, text="Short Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(be_, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+    else
+        pendingLong := false
+        pendingShort := false
+        label.new(bar_index, entry_, "Short invalidado\nSL/TP muy cerca de entrada", style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
+
+// 3) Cancelar pendiente LONG por timeout o por toque al stop antes de la entrada
+if barstate.isconfirmed and cancelLongPending
+    pendingLong := false
+    pendingShort := false
+
+// 4) Cancelar pendiente SHORT por timeout o por toque al stop antes de la entrada
+if barstate.isconfirmed and cancelShortPending
+    pendingLong := false
+    pendingShort := false
+
+// 5) Nueva señal LONG: crear pendiente solo si distancias SL/TP son suficientes
+if longcondicion and not isTradeOpen and not pendingLong and not pendingShort and barstate.isconfirmed
+    float lim = ema1
+    float st = M_LOW
+    float tpx = lim + (lim - st) * take_profit
+    float bex = lim + (tpx - lim) * breakeven_ratio
+    float sl_dist = math.abs(lim - st)
+    float tp_dist = math.abs(tpx - lim)
+    if sl_dist >= atrValue * min_sl_atr and tp_dist >= atrValue * min_tp_atr
+        pendingLong := true
+        pendingShort := false
+        pendingEntry := lim
+        pendingStop := st
+        pendingTp := tpx
+        pendingBreakeven := bex
+        pendingTradeId := trade_id + 1
+        pendingBarIndex := bar_index
+        label.new(bar_index, lim, "Señal Long\nEsperando retorno a " + str.tostring(math.round(lim, 2)), style=label.style_label_up, color=color.teal, textcolor=color.white, size=textSize)
+
+// 6) Nueva señal SHORT: crear pendiente solo si distancias SL/TP son suficientes
+if shortcondicion and not isTradeOpen and not pendingLong and not pendingShort and barstate.isconfirmed
+    float lim = ema1
+    float st = M_HIGH
+    float tpx = lim - math.abs(lim - st) * take_profit
+    float bex = lim - (lim - tpx) * breakeven_ratio
+    float sl_dist = math.abs(st - lim)
+    float tp_dist = math.abs(lim - tpx)
+    if sl_dist >= atrValue * min_sl_atr and tp_dist >= atrValue * min_tp_atr
+        pendingShort := true
+        pendingLong := false
+        pendingEntry := lim
+        pendingStop := st
+        pendingTp := tpx
+        pendingBreakeven := bex
+        pendingTradeId := trade_id + 1
+        pendingBarIndex := bar_index
+        label.new(bar_index, lim, "Señal Short\nEsperando retorno a " + str.tostring(math.round(lim, 2)), style=label.style_label_down, color=color.purple, textcolor=color.white, size=textSize)
 
 // Determinar tipo de operación
 if activeEntry < activeStop and isTradeOpen
@@ -556,10 +646,13 @@ if high >= activeStop and activeTradeType == "SHORT" and not alert_stop_loss_tri
         loss_be := profit_be
     else
         // Pérdida completa para ambos balances (sin BE, usar stop original)
-        loss_normal := (originalStop - activeEntry) * currentQty - comision_trade_sl
+        loss_normal := (originalStop - activeEntry) * currentQty + comision_trade_sl
         loss_be := loss_normal
-    normalBalance += loss_normal
-    breakevenBalance += loss_be
+    normalBalance -= loss_normal
+    if alert_breakeven_triggered
+        breakevenBalance += loss_be
+    else
+        breakevenBalance -= loss_be
     totalLosses += 1
     alert_breakeven_triggered := false
     limits := 0.0
@@ -602,10 +695,13 @@ if low <= activeStop and activeTradeType == "LONG" and not alert_stop_loss_trigg
         loss_be := profit_be
     else
         // Pérdida completa para ambos balances (sin BE, usar stop original)
-        loss_normal := (activeEntry - originalStop) * currentQty - comision_trade_sl
+        loss_normal := (activeEntry - originalStop) * currentQty + comision_trade_sl
         loss_be := loss_normal
-    normalBalance += loss_normal
-    breakevenBalance += loss_be
+    normalBalance -= loss_normal
+    if alert_breakeven_triggered
+        breakevenBalance += loss_be
+    else
+        breakevenBalance -= loss_be
     totalLosses += 1
     alert_breakeven_triggered := false
     limitl := 0.0

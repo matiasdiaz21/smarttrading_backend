@@ -22,6 +22,17 @@ export class StrategyModel {
     return strategies[0] || null;
   }
 
+  /** Busca una estrategia por nombre (activas e inactivas). Para webhooks: recibir y registrar aunque no esté activa para trading. */
+  static async findByName(name: string): Promise<Strategy | null> {
+    if (!name || String(name).trim() === '') return null;
+    const [rows] = await pool.execute(
+      'SELECT * FROM strategies WHERE TRIM(LOWER(name)) = TRIM(LOWER(?)) LIMIT 1',
+      [String(name).trim()]
+    );
+    const strategies = rows as Strategy[];
+    return strategies[0] || null;
+  }
+
   static async create(
     name: string,
     description: string | null,

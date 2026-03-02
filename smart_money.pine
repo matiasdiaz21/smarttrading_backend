@@ -93,6 +93,7 @@ swingBearColorInput             = input(        RED,        '',                 
 swingStructureSize              = input.string( SMALL,      'Swing Label Size',         group = SWING_GROUP,    options = [TINY,SMALL,NORMAL])
 showSwingsInput                 = input(        false,      'Show Swings Points',       group = SWING_GROUP,    tooltip = showSwingsTooltip,inline = 'swings')
 swingsLengthInput               = input.int(    50,         '',                         group = SWING_GROUP,    minval = 10,                inline = 'swings')
+swingLengthModeInput            = input.string( 'Auto',      'Swing length',              group = SWING_GROUP,    options = ['Fixed', 'Auto'], tooltip = 'Fixed = use value above.\nAuto = adapt by timeframe so structure is similar in real time (more signals on lower TF).')
 showHighLowSwingsInput          = input(        true,       'Show Strong/Weak High/Low',group = SWING_GROUP,    tooltip = showHighLowSwingsTooltip)
 
 showInternalOrderBlocksInput    = input(        true,       'Internal Order Blocks' ,   group = BLOCKS_GROUP,   tooltip = showInternalOrderBlocksTooltip,   inline = 'iob')
@@ -113,7 +114,7 @@ equalHighsLowsSizeInput         = input.string( TINY,       'Label Size',       
 
 showFairValueGapsInput          = input(        false,      'Fair Value Gaps',          group = GAPS_GROUP,     tooltip = showFairValueGapsTooltip)
 fairValueGapsThresholdInput     = input(        true,       'Auto Threshold',           group = GAPS_GROUP,     tooltip = fairValueGapsThresholdTooltip)
-fairValueGapsTimeframeInput     = input.timeframe('',       'Timeframe',                group = GAPS_GROUP,     tooltip = fairValueGapsTimeframeTooltip)
+fairValueGapsTimeframeInput     = input.timeframe('',       'Timeframe',                group = GAPS_GROUP,     tooltip = 'Empty = chart TF (recommended for low TF entries). Higher TF = FVG from that TF.')
 fairValueGapsBullColorInput     = input.color(color.new(#00ff68, 70), 'Bullish FVG' , group = GAPS_GROUP)
 fairValueGapsBearColorInput     = input.color(color.new(#ff0008, 70), 'Bearish FVG' , group = GAPS_GROUP)
 fairValueGapsExtendInput        = input.int(    1,          'Extend FVG',               group = GAPS_GROUP,     tooltip = fairValueGapsExtendTooltip,       minval = 0)
@@ -650,7 +651,7 @@ displayStructure(bool internal = false) =>
         if displayCondition                        
             drawStructure(p_ivot,tag,bullishColor,lineStyle,label.style_label_down,labelSize)
 
-        if (internal and showInternalOrderBlocksInput) or (not internal and showSwingOrderBlocksInput)
+        if (internal and showInternalOrderBlocksInput) or (not internal and (showSwingOrderBlocksInput or useOBFilterInput))
             storeOrdeBlock(p_ivot,internal,BULLISH)
 
     p_ivot          := internal ? internalLow : swingLow    
@@ -675,7 +676,7 @@ displayStructure(bool internal = false) =>
         if displayCondition                        
             drawStructure(p_ivot,tag,bearishColor,lineStyle,label.style_label_up,labelSize)
 
-        if (internal and showInternalOrderBlocksInput) or (not internal and showSwingOrderBlocksInput)
+        if (internal and showInternalOrderBlocksInput) or (not internal and (showSwingOrderBlocksInput or useOBFilterInput))
             storeOrdeBlock(p_ivot,internal,BEARISH)
 
 // @function            draw one fair value gap box (each fair value gap has two boxes)
@@ -696,13 +697,14 @@ deleteFairValueGaps() =>
             eachFairValueGap.bottomBox.delete()
             fairValueGaps.remove(index)
     
-// @function            draw fair value gaps
+// @function            draw fair value gaps (uses effective FVG TF = chart when input empty, so FVG/OB work on low TF)
 // @returns             fairValueGap ID
 drawFairValueGaps() => 
-    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1], open[1], time[1], high[0], low[0], time[0], high[2], low[2]],lookahead = barmerge.lookahead_on)
+    effFvgTf = fairValueGapsTimeframeInput == '' ? timeframe.period : fairValueGapsTimeframeInput
+    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, effFvgTf, [close[1], open[1], time[1], high[0], low[0], time[0], high[2], low[2]], lookahead = barmerge.lookahead_on)
 
     barDeltaPercent     = (lastClose - lastOpen) / (lastOpen * 100)
-    newTimeframe        = timeframe.change(fairValueGapsTimeframeInput)
+    newTimeframe        = timeframe.change(effFvgTf)
     threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / bar_index * 2 : 0
 
     bullishFairValueGap = currentLow > last2High and lastClose > last2High and barDeltaPercent > threshold and newTimeframe
@@ -828,30 +830,32 @@ drawPremiumDiscountZones() =>
     drawZone(trailing.bottom, math.round(0.5*(trailing.barIndex + last_bar_index)), 0.95*trailing.bottom + 0.05*trailing.top, trailing.bottom, 'Discount', discountZoneColor, label.style_label_up)
 
 // ── TRADING HELPER FUNCTIONS ──
-// @function    Check if price is near a bullish order block
+// @function    Check if price is near a bullish order block (inside zone or retest: up to 0.5% above high)
 isNearBullishOB() =>
+    float tol = 0.005
     bool result = false
     for [idx, ob] in internalOrderBlocks
-        if ob.bias == BULLISH and close >= ob.barLow and close <= ob.barHigh * 1.01
+        if ob.bias == BULLISH and close >= ob.barLow * (1 - tol) and close <= ob.barHigh * (1 + tol)
             result := true
             break
     if not result
         for [idx, ob] in swingOrderBlocks
-            if ob.bias == BULLISH and close >= ob.barLow and close <= ob.barHigh * 1.01
+            if ob.bias == BULLISH and close >= ob.barLow * (1 - tol) and close <= ob.barHigh * (1 + tol)
                 result := true
                 break
     result
 
-// @function    Check if price is near a bearish order block
+// @function    Check if price is near a bearish order block (inside zone or retest: up to 0.5% below low)
 isNearBearishOB() =>
+    float tol = 0.005
     bool result = false
     for [idx, ob] in internalOrderBlocks
-        if ob.bias == BEARISH and close >= ob.barLow * 0.99 and close <= ob.barHigh
+        if ob.bias == BEARISH and close >= ob.barLow * (1 - tol) and close <= ob.barHigh * (1 + tol)
             result := true
             break
     if not result
         for [idx, ob] in swingOrderBlocks
-            if ob.bias == BEARISH and close >= ob.barLow * 0.99 and close <= ob.barHigh
+            if ob.bias == BEARISH and close >= ob.barLow * (1 - tol) and close <= ob.barHigh * (1 + tol)
                 result := true
                 break
     result
@@ -898,11 +902,17 @@ if showHighLowSwingsInput or showPremiumDiscountZonesInput
     if showPremiumDiscountZonesInput
         drawPremiumDiscountZones()
 
-if showFairValueGapsInput
+// FVG: compute when showing OR when filter is on, so OB/FVG confluence works on low TF
+if showFairValueGapsInput or useFVGFilterInput
     deleteFairValueGaps()
 
-getCurrentStructure(swingsLengthInput,false)
-getCurrentStructure(5,false,true)
+// Dynamic structure lengths for low TF: same "real time" concept across timeframes (more signals on lower TF)
+float secPerBar = math.max(1, timeframe.in_seconds())
+int effectiveSwingLength = swingLengthModeInput == 'Auto' ? math.max(10, math.min(200, math.round(250.0 * 60.0 / secPerBar))) : swingsLengthInput
+int effectiveInternalLength = math.max(3, math.min(12, math.round(300.0 / secPerBar * 1.2)))
+
+getCurrentStructure(effectiveSwingLength, false)
+getCurrentStructure(effectiveInternalLength, false, true)
 
 if showEqualHighsLowsInput
     getCurrentStructure(equalHighsLowsLengthInput,true)
@@ -919,13 +929,13 @@ if showInternalOrderBlocksInput
 if showSwingOrderBlocksInput
     deleteOrderBlocks()
 
-if showFairValueGapsInput
+if showFairValueGapsInput or useFVGFilterInput
     drawFairValueGaps()
 
 if barstate.islastconfirmedhistory or barstate.islast
     if showInternalOrderBlocksInput        
         drawOrderBlocks(true)
-        
+    // Draw swing OBs only when showing; arrays are filled when useOBFilterInput so filter can use them
     if showSwingOrderBlocksInput        
         drawOrderBlocks()
 
