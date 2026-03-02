@@ -31,11 +31,18 @@ interface ContractInfoCache {
 const contractInfoCache: ContractInfoCache = {};
 const CONTRACT_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 
-/** Genera clientOid válido para Bitget: solo [a-zA-Z0-9_], máx 64 chars (evita error 40305). */
+/** Longitud máxima de clientOid en Bitget (error 40305 si se supera o caracteres no permitidos). */
+const BITGET_CLIENT_OID_MAX_LEN = 64;
+
+
+/** Genera clientOid válido para Bitget: solo [a-zA-Z0-9_], máx 64 chars (evita error 40305). Escalable y seguro. */
 function makeBitgetClientOid(prefix: string, symbol: string, baseId: string, suffix: string): string {
-  const raw = `${prefix}_${symbol.substring(0, 8)}_${baseId}_${suffix}`;
+  const safeSymbol = (symbol || '').replace(/[^a-zA-Z0-9]/g, '').substring(0, 10);
+  const safeBaseId = (baseId || '').replace(/[^a-zA-Z0-9_]/g, '').substring(0, 28);
+  const safeSuffix = (suffix || '').replace(/[^a-zA-Z0-9_]/g, '').substring(0, 8);
+  const raw = `${prefix}_${safeSymbol}_${safeBaseId}_${safeSuffix}`;
   const sanitized = raw.replace(/[^a-zA-Z0-9_]/g, '');
-  return sanitized.substring(0, 64);
+  return sanitized.substring(0, BITGET_CLIENT_OID_MAX_LEN);
 }
 
 export class BitgetService {
@@ -120,8 +127,13 @@ export class BitgetService {
     } catch (error: any) {
       responseStatus = error.response?.status || null;
       responseData = error.response?.data || null;
-      const apiCode = error.response?.data?.code ?? '';
+      const apiCode = (error.response?.data?.code ?? '').toString();
       errorMessage = error.response?.data?.msg || error.message;
+      // 22002 "No position to close": tratar como éxito en log cuando es orden de cierre (posición ya cerrada por SL/TP)
+      if ((apiCode === '22002' || (errorMessage && String(errorMessage).includes('No position to close'))) &&
+          (body?.tradeSide === 'close' || body?.reduceOnly === 'YES')) {
+        success = true;
+      }
       const msg = apiCode ? `[${apiCode}] ${errorMessage}` : errorMessage;
       throw new Error(`Bitget API Request Failed: ${msg}`);
     } finally {
@@ -400,28 +412,33 @@ export class BitgetService {
       orderPayload.reduceOnly = orderData.reduceOnly;
     }
 
-    const result = await this.makeRequest(
-      'POST', 
-      endpoint, 
-      credentials, 
-      orderPayload,
-      logContext ? {
-        userId: logContext.userId,
-        strategyId: logContext.strategyId,
-        symbol: orderData.symbol,
-        operationType: 'placeOrder',
-        orderId: logContext.orderId,
-        clientOid: orderData.clientOid,
-      } : undefined
-    );
-    
-    const orderId = result.orderId || result.clientOid;
-    const clientOid = result.clientOid || orderData.clientOid || '';
-    
-    return {
-      orderId,
-      clientOid,
-    };
+    try {
+      const result = await this.makeRequest(
+        'POST',
+        endpoint,
+        credentials,
+        orderPayload,
+        logContext ? {
+          userId: logContext.userId,
+          strategyId: logContext.strategyId,
+          symbol: orderData.symbol,
+          operationType: 'placeOrder',
+          orderId: logContext.orderId,
+          clientOid: orderData.clientOid,
+        } : undefined
+      );
+      const orderId = result.orderId || result.clientOid;
+      const clientOid = result.clientOid || orderData.clientOid || '';
+      return { orderId, clientOid };
+    } catch (err: any) {
+      const msg = err?.message || '';
+      const isNoPositionToClose = (orderPayload.tradeSide === 'close' || orderPayload.reduceOnly === 'YES') &&
+        (msg.includes('22002') || msg.includes('No position to close'));
+      if (isNoPositionToClose) {
+        return { orderId: 'N/A', clientOid: orderData.clientOid || '' };
+      }
+      throw err;
+    }
   }
 
   /**
@@ -826,11 +843,12 @@ export class BitgetService {
         results.push({ type: 'stop_loss', success: false, error: e.message });
       }
 
-      // Determinar si usar TPs parciales o TP único
-      const usePartialTps = tpslData.breakevenPrice && tpslData.breakevenPrice > 0;
+      // Determinar si usar TPs parciales o TP único (evitar 43070: cada tramo debe ser >= minTradeNum)
+      const minSizeForPartial = 2 * minTradeNum;
+      const usePartialTps = tpslData.breakevenPrice && tpslData.breakevenPrice > 0 && fullSize >= minSizeForPartial - 1e-8;
       
       if (usePartialTps) {
-        // TPs parciales (50% BE + 50% final) con normal_plan
+        // TPs parciales (50% BE + 50% final) con normal_plan; cada mitad >= minTradeNum
         let halfSize = Math.floor((fullSize / 2) / sizeMultiplier) * sizeMultiplier;
         if (halfSize < minTradeNum) halfSize = minTradeNum;
         const halfSizeStr = halfSize.toFixed(volumePlace).replace(/\.?0+$/, '');
