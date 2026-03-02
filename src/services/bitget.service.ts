@@ -442,6 +442,27 @@ export class BitgetService {
   }
 
   /**
+   * Cancela una orden abierta (limit/market pendiente) en mix/futures.
+   * POST /api/v2/mix/order/cancel-order
+   */
+  async cancelOpenOrder(
+    credentials: BitgetCredentials,
+    orderId: string,
+    symbol: string,
+    productType: string,
+    marginCoin: string = 'USDT',
+    logContext?: { userId: number; strategyId: number | null }
+  ): Promise<void> {
+    const endpoint = '/api/v2/mix/order/cancel-order';
+    await this.makeRequest('POST', endpoint, credentials, {
+      orderId,
+      symbol: symbol.toUpperCase(),
+      productType: productType.toUpperCase(),
+      marginCoin: marginCoin.toUpperCase(),
+    }, logContext ? { ...logContext, symbol, operationType: 'cancelOrder', orderId } : undefined);
+  }
+
+  /**
    * Abre posición LIMIT con SL y TP parcial 50% + TP final 50%.
    * Solo place-order (órdenes limit). Sin triggers.
    * 1) Limit open + presetStopLossPrice
@@ -593,7 +614,22 @@ export class BitgetService {
           }
         }
         if (!orderFilled) {
-          throw new Error('Timeout: la orden de apertura no se llenó en 60s. Colocá manualmente las limit de cierre 50%+50% cuando esté filled.');
+          // Fallback: cancelar limit y abrir con market para no perder la señal
+          try {
+            console.warn('[Bitget] ⏱️ Timeout 60s: limit no se llenó. Cancelando limit y abriendo con market...');
+            await this.cancelOpenOrder(credentials, openResult.orderId, orderData.symbol, orderData.productType, orderData.marginCoin, logContext);
+            const marketResult = await this.placeOrder(credentials, {
+              ...orderData,
+              orderType: 'market',
+              price: '',
+              tradeSide: 'open',
+            }, logContext ? { ...logContext, orderId: undefined } : undefined);
+            openResult = marketResult;
+            console.log('[Bitget] ✅ Apertura con market. OrderId:', openResult.orderId);
+          } catch (fallbackErr: any) {
+            console.error('[Bitget] ❌ Fallback market falló:', fallbackErr.message);
+            throw new Error('Timeout: la orden de apertura no se llenó en 60s. Colocá manualmente las limit de cierre 50%+50% cuando esté filled.');
+          }
         }
       }
 
