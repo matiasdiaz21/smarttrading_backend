@@ -474,18 +474,45 @@ function formatTechnicalBlock(d: PromptData): string {
 - Estructura SMC 4H (EMAs 30/50/100): ${d.smc_structure4h}`;
 }
 
-/** JSON response format instruction (shared) */
-const JSON_RESPONSE_FORMAT = `Responde ÚNICAMENTE con JSON válido:
-{
+/**
+ * Formato de respuesta JSON y estrategia por categoría.
+ * Alineado con la investigación y prompts definidos en DB (ai_config):
+ * database/migrations/seed_ai_config_prompts_by_category.sql
+ * Crypto, Forex y Commodities NUNCA comparten el mismo bloque.
+ */
+function getJsonResponseFormatForCategory(category: AssetCategory): string {
+  const baseJson = `{
   "side": "LONG" o "SHORT",
   "entry_price": número,
   "stop_loss": número,
   "take_profit": número,
   "confidence": número 0-100,
   "timeframe": "1h" o "4h",
-  "reasoning": "explicación técnica breve incluyendo confluencia, indicadores clave y ATR para SL/TP"
+  "reasoning": "explicación técnica breve (...)"
+}`;
+  switch (category) {
+    case 'crypto':
+      return `Responde ÚNICAMENTE con un JSON válido:
+${baseJson}
+- reasoning (crypto): explicación técnica breve (confluencia, RSI/MACD, estructura SMC, EMAs, ATR). La 4H marca tendencia; la 1H el momento de entrada. Rechazos en EMA30/50 con confirmación; BOS/CHoCH si aplica.
+- timeframe: "4h" si la tendencia y estructura SMC en 4H dominan; "1h" si el trigger de entrada es más claro en 1H. No priorices solo 1h.
+Si no hay señal clara por falta de confluencia, usa confidence < 30.`;
+    case 'forex':
+      return `Responde ÚNICAMENTE con un JSON válido:
+${baseJson}
+- reasoning (forex): explicación técnica breve (confluencia, sesiones, RSI/MACD, estructura, ATR). Considerar sesiones (Asia, Londres, NY) y que noticias/macro pueden invalidar niveles; si hay duda, reducir confidence. ATR para SL/TP; mayor ATR en solapamiento Londres-NY.
+- timeframe: "4h" cuando tendencia 4H y contexto sesiones/macro alinean; "1h" cuando la entrada es más precisa en 1H.
+Si no hay señal clara por falta de confluencia o alta incertidumbre macro, usa confidence < 30.`;
+    case 'commodities':
+      return `Responde ÚNICAMENTE con un JSON válido:
+${baseJson}
+- reasoning (commodities): explicación técnica breve (confluencia, EMAs, S/R, RSI/MACD, ATR). Priorizar rechazos en EMAs 30/50/100 y en soportes/resistencias 1H y 4H. Oro (XAU): correlación inversa con dólar; si el contexto macro lo indica, tenerlo en cuenta. SL/TP justificar con ATR (ej. entry ± 1.5*ATR, TP ± 2.5*ATR).
+- timeframe: "4h" cuando la tendencia 4H y niveles clave dominan; "1h" cuando el trigger en 1H es más claro.
+Si no hay señal clara por falta de confluencia o rechazo definido en nivel clave, usa confidence < 30.`;
+    default:
+      return getJsonResponseFormatForCategory('crypto');
+  }
 }
-Si no hay confluencia clara entre timeframes o indicadores, usa confidence < 30.`;
 
 // ===================== CRYPTO Prompt Builder =====================
 
@@ -517,7 +544,7 @@ ${formatCandlesForPrompt(data.candles4h, 20)}
 6. SL y TP basados en ATR: SL = 1-1.5×ATR del TF operado, TP = 2-3×ATR.
 7. Si la estructura 4H o SMC 4H marca dirección, prioriza trades en esa dirección.
 
-${JSON_RESPONSE_FORMAT}`;
+${getJsonResponseFormatForCategory('crypto')}`;
 }
 
 // ===================== COMMODITY Prompt Builder =====================
@@ -595,7 +622,7 @@ ${formatCandlesForPrompt(data.candles4h, 20)}
 6. Si la estructura 4H muestra tendencia clara alineada con el contexto macro, alta confianza.
 7. Si no hay datos inter-mercado o son neutrales, opera solo con confluencia técnica pero con confidence reducida (max 60).
 
-${JSON_RESPONSE_FORMAT}`;
+${getJsonResponseFormatForCategory('commodities')}`;
 }
 
 // ===================== FOREX Prompt Builder =====================
@@ -664,7 +691,7 @@ ${formatCandlesForPrompt(data.candles4h, 20)}
 6. Bollinger %B: en forex los retornos a la media son frecuentes; %B extremos son señales fuertes.
 7. Si no hay datos inter-mercado, opera solo con confluencia técnica pero max confidence 55.
 
-${JSON_RESPONSE_FORMAT}`;
+${getJsonResponseFormatForCategory('forex')}`;
 }
 
 // ===================== Unified prompt builder (routes by category) =====================
@@ -742,7 +769,8 @@ async function callGroq(
     // Normalize
     parsed.side = parsed.side.toUpperCase() as 'LONG' | 'SHORT';
     parsed.confidence = Math.max(0, Math.min(100, Math.round(parsed.confidence || 50)));
-    parsed.timeframe = parsed.timeframe === '1h' ? '1h' : '4h';
+    const tf = String(parsed.timeframe ?? '').toLowerCase().trim();
+    parsed.timeframe = (tf === '1h' || tf === '1hr') ? '1h' : '4h';
 
     return { response: parsed, tokensUsed, rawResponse: rawContent };
   } catch (error: any) {
@@ -791,8 +819,9 @@ function getSystemPromptForCategory(category: AssetCategory): string {
 3. Usar ATR para SL/TP (ej. SL 1-1.5*ATR, TP 2-3*ATR).
 4. Considerar %B de Bollinger y posición del precio respecto a bandas.
 5. Si la estructura 4H (clásica o SMC) es alcista/bajista, priorizar operaciones en la misma dirección.
-6. Si no hay confluencia clara, devolver confidence < 30.
-7. Responder ÚNICAMENTE en JSON válido.`;
+6. Timeframe de la señal: debes poder emitir tanto "1h" como "4h". Usa "4h" cuando la tendencia y estructura en 4H dominen (swing); usa "1h" cuando el trigger de entrada sea más claro en 1H. No priorices solo 1h.
+7. Si no hay confluencia clara, devolver confidence < 30.
+8. Responder ÚNICAMENTE en JSON válido.`;
 
   switch (category) {
     case 'crypto':
@@ -922,7 +951,8 @@ export async function analyzeAsset(
       .replace(/\{\{current_price\}\}/g, currentPrice.toString())
       .replace(/\{\{asset_category\}\}/g, assetCategory)
       .replace(/\{\{category_instructions\}\}/g, categoryInstructions)
-      .replace(/\{\{market_news\}\}/g, marketNews);
+      .replace(/\{\{market_news\}\}/g, marketNews)
+      .replace(/\{\{json_response_format\}\}/g, getJsonResponseFormatForCategory(assetCategory));
     if (!analysisTemplate.includes('{{category_instructions}}')) {
       userPrompt = `## Contexto del activo (${assetCategory}):\n${categoryInstructions}\n\n` + userPrompt;
     }

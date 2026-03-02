@@ -1,6 +1,8 @@
 -- Prompts por categoría: valores por defecto para system_prompt y analysis_prompt_template
 -- de crypto, forex y commodities. Ejecutar contra ai_config (id=1).
 -- Incluye {{candles_1h}} y {{candles_4h}} obligatorios en todos los templates.
+-- El placeholder {{json_response_format}} es reemplazado por el backend con el formato/estrategia
+-- específico de cada categoría (getJsonResponseFormatForCategory), alineado con esta investigación.
 
 UPDATE ai_config SET
   system_prompt_crypto = 'Eres un analista técnico especializado en criptomonedas y futuros crypto. Tu análisis es estrictamente técnico y multi-timeframe: usa 1H para timing de entradas y 4H para dirección de tendencia. Utilizas EMAs (9/21/30/50/100), RSI, MACD, Bollinger Bands, ATR, estructura de precio y Smart Money (SMC). En crypto prioriza confluencia en 1H y 4H: estructura SMC, EMAs 30/50/100 como filtro y zonas de rechazo, RSI y MACD. La vela 4H define la tendencia; la 1H define la entrada. En tendencia fuerte el RSI puede mantenerse en sobrecompra o sobreventa; no des SHORT solo por RSI >70 sin confirmación de rechazo o cambio de estructura. Si en el prompt se incluyen noticias de mercado (API financiera), considéralas para ajustar confianza o evitar señales contrarias a eventos importantes. Usa ATR para SL/TP. Solo emite señal con confluencia clara. Responde ÚNICAMENTE en JSON válido.',
@@ -66,18 +68,7 @@ Analizar {{symbol}} con enfoque técnico multi-timeframe (1H + 4H). Priorizar co
 5. SL y TP: justificar con ATR (ej. SL = entry ± 1.5*ATR, TP = entry ± 2.5*ATR).
 6. Si no hay confluencia clara, devolver confidence < 30.
 
-Responde ÚNICAMENTE con un JSON válido:
-{
-  "side": "LONG" o "SHORT",
-  "entry_price": número,
-  "stop_loss": número,
-  "take_profit": número,
-  "confidence": número 0-100,
-  "timeframe": "1h" o "4h",
-  "reasoning": "explicación técnica breve (confluencia, RSI/MACD, estructura SMC, EMAs, ATR)"
-}
-
-Si no hay señal clara por falta de confluencia, usa confidence < 30.',
+{{json_response_format}}',
 
   analysis_prompt_template_forex = '## Contexto del activo ({{asset_category}})
 {{category_instructions}}
@@ -135,18 +126,7 @@ Analizar {{symbol}} con enfoque técnico 1H + 4H y contexto de sesiones (Asia, L
 4. SL y TP: justificar con ATR. Considerar mayor ATR en solapamiento Londres-NY.
 5. Si no hay confluencia clara o el contexto sugiere alta incertidumbre macro, devolver confidence < 30.
 
-Responde ÚNICAMENTE con un JSON válido:
-{
-  "side": "LONG" o "SHORT",
-  "entry_price": número,
-  "stop_loss": número,
-  "take_profit": número,
-  "confidence": número 0-100,
-  "timeframe": "1h" o "4h",
-  "reasoning": "explicación técnica breve (confluencia, sesiones, RSI/MACD, estructura, ATR)"
-}
-
-Si no hay señal clara por falta de confluencia, usa confidence < 30.',
+{{json_response_format}}',
 
   analysis_prompt_template_commodities = '## Contexto del activo ({{asset_category}})
 {{category_instructions}}
@@ -204,16 +184,5 @@ Analizar {{symbol}} con enfoque técnico 1H + 4H. En commodities las EMAs y los 
 4. SL y TP: justificar con ATR (ej. SL = entry ± 1.5*ATR, TP = entry ± 2.5*ATR).
 5. Si no hay confluencia clara o rechazo definido en nivel clave, devolver confidence < 30.
 
-Responde ÚNICAMENTE con un JSON válido:
-{
-  "side": "LONG" o "SHORT",
-  "entry_price": número,
-  "stop_loss": número,
-  "take_profit": número,
-  "confidence": número 0-100,
-  "timeframe": "1h" o "4h",
-  "reasoning": "explicación técnica breve (confluencia, EMAs, S/R, RSI/MACD, ATR)"
-}
-
-Si no hay señal clara por falta de confluencia, usa confidence < 30.'
+{{json_response_format}}'
 WHERE id = 1;
