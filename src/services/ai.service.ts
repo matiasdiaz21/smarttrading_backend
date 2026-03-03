@@ -233,6 +233,22 @@ function describeSMCStructure(
 
 // ===================== Bitget Market Data =====================
 
+/** Bitget solo ofrece crypto (spot/mix). No hay pares forex (AUD/USD, GBP/JPY). */
+function isForexLikeSymbol(symbol: string): boolean {
+  const s = String(symbol).toUpperCase().replace(/\//g, '');
+  const forexPairs = /^(EUR|GBP|USD|JPY|CHF|AUD|NZD|CAD)(USD|EUR|GBP|JPY|CHF|AUD|NZD|CAD)$/;
+  return s.length >= 6 && s.length <= 8 && forexPairs.test(s);
+}
+
+function normalizeBitgetError(error: any, symbol: string): Error {
+  if (error?.response?.status === 400 && isForexLikeSymbol(symbol)) {
+    return new Error(
+      'Bitget no ofrece datos para pares forex (AUD/USD, GBP/JPY, etc.). Solo se analizan activos listados en Bitget (crypto y commodities como XAU). Deshabilite el activo forex o use un proveedor de datos forex externo.'
+    );
+  }
+  return error instanceof Error ? error : new Error(String(error?.message || error));
+}
+
 async function fetchCandles(
   symbol: string,
   granularity: string,
@@ -263,7 +279,7 @@ async function fetchCandles(
     throw new Error(`Bitget candles error: ${response.data.msg || 'Unknown'}`);
   } catch (error: any) {
     console.error(`[AI Service] Error fetching candles for ${symbol} ${granularity}:`, error.message);
-    throw error;
+    throw normalizeBitgetError(error, symbol);
   }
 }
 
@@ -282,7 +298,7 @@ async function fetchCurrentPrice(symbol: string, productType: string = 'USDT-FUT
     throw new Error(`Bitget ticker error: ${response.data.msg || 'Unknown'}`);
   } catch (error: any) {
     console.error(`[AI Service] Error fetching price for ${symbol}:`, error.message);
-    throw error;
+    throw normalizeBitgetError(error, symbol);
   }
 }
 
