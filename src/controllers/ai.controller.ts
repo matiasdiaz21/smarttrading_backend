@@ -3,6 +3,7 @@ import { AuthRequest } from '../middleware/auth';
 import { AiConfigModel } from '../models/AiConfig';
 import { AiAssetModel } from '../models/AiAsset';
 import { AiPredictionModel } from '../models/AiPrediction';
+import { AiCronRunLogModel } from '../models/AiCronRunLog';
 import { GroqModel } from '../models/GroqModel';
 import { runFullAnalysis, checkPredictionResults } from '../services/ai.service';
 
@@ -347,6 +348,7 @@ export class AiController {
    * Llamado por Vercel Cron (GET) o servicio externo (POST).
    * Autenticación: header Authorization Bearer CRON_SECRET (Vercel lo envía automáticamente) o x-cron-secret = CRON_SECRET.
    * Solo ejecuta si auto_run_enabled e is_enabled están activos y ha pasado el intervalo desde last_auto_run_at.
+   * Cada llamada se registra en ai_cron_run_log (historial en /admin/ai-config).
    */
   static async cronAutoRun(req: Request, res: Response): Promise<void> {
     try {
@@ -356,12 +358,14 @@ export class AiController {
       const bearerSecret = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
       const valid = expected && (headerSecret === expected || bearerSecret === expected);
       if (!valid) {
+        await AiCronRunLogModel.create({ status: 'skipped', skip_reason: 'unauthorized' });
         res.status(401).json({ error: 'Unauthorized' });
         return;
       }
 
       const config = await AiConfigModel.get();
       if (!config.auto_run_enabled || !config.is_enabled) {
+        await AiCronRunLogModel.create({ status: 'skipped', skip_reason: 'auto_run or IA disabled' });
         res.status(200).json({ skipped: true, reason: 'auto_run or IA disabled' });
         return;
       }
@@ -371,6 +375,10 @@ export class AiController {
       const lastRun = config.last_auto_run_at ? new Date(config.last_auto_run_at).getTime() : 0;
       const nextRunAt = lastRun + intervalMs;
       if (Date.now() < nextRunAt) {
+        await AiCronRunLogModel.create({
+          status: 'skipped',
+          skip_reason: `interval (next in ${Math.ceil((nextRunAt - Date.now()) / 60000)} min)`,
+        });
         res.status(200).json({
           skipped: true,
           reason: 'interval',
@@ -382,9 +390,32 @@ export class AiController {
       console.log('[AI Controller] 🤖 Cron: ejecutando auto-run (check-results + analyze)');
       await checkPredictionResults();
       const result = await runFullAnalysis();
+      await AiCronRunLogModel.create({
+        status: 'ran',
+        success: true,
+        analyzed: result.analyzed,
+        predictions_count: result.predictions?.length ?? 0,
+        errors_count: result.errors?.length ?? 0,
+      });
       res.status(200).json({ ok: true, predictions: result.predictions?.length ?? 0, errors: result.errors?.length ?? 0 });
     } catch (error: any) {
       console.error('[AI Controller] ❌ Cron auto-run error:', error.message);
+      await AiCronRunLogModel.create({
+        status: 'ran',
+        success: false,
+        error_message: error.message || String(error),
+      }).catch(() => {});
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /** GET /api/admin/ai/cron-history - Historial de ejecuciones del cron (solo admin) */
+  static async getCronHistory(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const limit = Math.min(parseInt((req.query.limit as string) || '50', 10) || 50, 100);
+      const rows = await AiCronRunLogModel.getRecent(limit);
+      res.json(rows);
+    } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   }
