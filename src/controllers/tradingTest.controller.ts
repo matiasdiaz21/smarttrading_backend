@@ -25,6 +25,7 @@ export class TradingTestController {
         margin_mode,
         product_type,
         margin_coin,
+        simulate_tv_alert,
       } = req.body;
 
       // Validaciones
@@ -32,8 +33,10 @@ export class TradingTestController {
         res.status(400).json({ error: 'Campos requeridos: credential_id, symbol, side, size, stop_loss, take_profit' });
         return;
       }
-      const useLimitPartial = !!(order_type === 'limit' && entry_price && take_profit_partial);
-      if (take_profit_partial && (!entry_price || order_type !== 'limit')) {
+      // Simular alerta TradingView: 1 sola llamada place-order con preset SL + TP (Bitget lo permite).
+      const singleCall = !!simulate_tv_alert;
+      const useLimitPartial = !singleCall && !!(order_type === 'limit' && entry_price && take_profit_partial);
+      if (!singleCall && take_profit_partial && (!entry_price || order_type !== 'limit')) {
         res.status(400).json({ error: 'Para TP parcial 50%+50% se requiere order_type=limit y entry_price' });
         return;
       }
@@ -81,14 +84,19 @@ export class TradingTestController {
       const timestamp = Date.now();
       const clientOid = `TEST_${symbol.substring(0, 8)}_${timestamp}_${Math.floor(Math.random() * 10000)}`.substring(0, 64);
 
-      // Calcular partial take profit (breakeven) si se omitió pero se quiere usar limit partial
-      let calculatedPartialPrice = take_profit_partial ? parseFloat(take_profit_partial) : undefined;
-      if (!calculatedPartialPrice && useLimitPartial && entry_price && take_profit) {
-        // Calcular la mitad de la distancia entre el precio de entrada y el take profit
-        const entryNum = parseFloat(entry_price);
-        const tpNum = parseFloat(take_profit);
-        calculatedPartialPrice = entryNum + (tpNum - entryNum) / 2;
-        console.log(`[TestOrder] 📊 TP Parcial calculado automáticamente (50% de recorrido): ${calculatedPartialPrice}`);
+      // Simular alerta TV: siempre 1 llamada (market + preset SL+TP). Sin TP parcial.
+      const effectiveOrderType = singleCall ? 'market' : (useLimitPartial ? 'limit' : (order_type || 'market'));
+      const effectivePrice = singleCall ? '' : (useLimitPartial ? String(entry_price || '') : (entry_price ? String(entry_price) : undefined));
+
+      let calculatedPartialPrice: number | undefined;
+      if (!singleCall) {
+        calculatedPartialPrice = take_profit_partial ? parseFloat(take_profit_partial) : undefined;
+        if (!calculatedPartialPrice && useLimitPartial && entry_price && take_profit) {
+          const entryNum = parseFloat(entry_price);
+          const tpNum = parseFloat(take_profit);
+          calculatedPartialPrice = entryNum + (tpNum - entryNum) / 2;
+          console.log(`[TestOrder] 📊 TP Parcial calculado automáticamente (50% de recorrido): ${calculatedPartialPrice}`);
+        }
       }
 
       const tpslPayload: { stopLossPrice: number; takeProfitPrice: number; takeProfitPartialPrice?: number } = {
@@ -105,9 +113,9 @@ export class TradingTestController {
           marginMode: margin_mode || 'isolated',
           marginCoin,
           size: calculatedSize,
-          price: (useLimitPartial ? String(entry_price || '') : (entry_price ? String(entry_price) : undefined)) as string,
+          price: (effectivePrice ?? '') as string,
           side,
-          orderType: useLimitPartial ? 'limit' : (order_type || 'market'),
+          orderType: effectiveOrderType as 'limit' | 'market',
           clientOid,
         },
         tpslPayload,
@@ -212,6 +220,152 @@ export class TradingTestController {
       });
     } catch (error: any) {
       console.error('[TestBreakeven] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
+   * POST /api/admin/trading/test-breakeven-simulate
+   * Simula breakeven: cierra 50% de la posición y mueve el SL al precio de entrada para el resto.
+   */
+  static async testBreakevenSimulate(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const {
+        credential_id,
+        symbol,
+        side,
+        product_type,
+        margin_coin,
+        margin_mode,
+      } = req.body;
+
+      if (!credential_id || !symbol || !side) {
+        res.status(400).json({ error: 'Campos requeridos: credential_id, symbol, side' });
+        return;
+      }
+
+      const userId = req.user!.userId;
+      const credentials = await CredentialsModel.findById(credential_id, userId);
+      if (!credentials) {
+        res.status(404).json({ error: 'Credencial no encontrada' });
+        return;
+      }
+
+      const decryptedCredentials = BitgetService.getDecryptedCredentials({
+        api_key: credentials.api_key,
+        api_secret: credentials.api_secret,
+        passphrase: credentials.passphrase,
+      });
+
+      const productType = (product_type || 'USDT-FUTURES').toUpperCase();
+      const marginCoin = (margin_coin || 'USDT').toUpperCase();
+      const holdSide = side === 'buy' ? 'long' : 'short';
+      const closeSide = side === 'buy' ? 'sell' : 'buy';
+      const symbolUpper = symbol.toUpperCase();
+
+      let contractInfo: any = null;
+      try {
+        contractInfo = await bitgetService.getContractInfo(symbolUpper, productType);
+      } catch (_) {}
+
+      const positions = await bitgetService.getPositions(decryptedCredentials, symbolUpper, productType);
+      const position = Array.isArray(positions)
+        ? positions.find((p: any) => (p.symbol || p.symbolName) === symbolUpper && (p.holdSide || '').toLowerCase() === holdSide)
+        : null;
+
+      if (!position) {
+        res.status(400).json({ error: `No hay posición ${holdSide} abierta para ${symbol}` });
+        return;
+      }
+
+      const totalStr = position.total || position.available || position.openDelegateSize || '0';
+      const totalNum = parseFloat(totalStr);
+      const entryPrice = parseFloat(position.averageOpenPrice || position.openPriceAvg || '0');
+      const marginMode = position.marginMode || margin_mode || 'isolated';
+
+      if (totalNum <= 0) {
+        res.status(400).json({ error: 'Tamaño de posición inválido' });
+        return;
+      }
+
+      const minTradeNum = contractInfo?.minTradeNum ? parseFloat(contractInfo.minTradeNum) : 0.001;
+      const sizeMultiplier = contractInfo?.sizeMultiplier ? parseFloat(contractInfo.sizeMultiplier) : 0.001;
+      const volumePlace = contractInfo?.volumePlace != null ? parseInt(contractInfo.volumePlace) : 3;
+
+      const halfNum = totalNum / 2;
+      const halfSizeStr = bitgetService.calculateOrderSize(
+        String(halfNum),
+        String(contractInfo?.minTradeNum ?? minTradeNum),
+        String(contractInfo?.sizeMultiplier ?? sizeMultiplier)
+      );
+      const halfSizeNum = parseFloat(halfSizeStr);
+
+      if (halfSizeNum < minTradeNum) {
+        res.status(400).json({ error: `Posición demasiado pequeña para cerrar 50% (mínimo ${minTradeNum}). Total: ${totalStr}` });
+        return;
+      }
+      if (halfSizeNum >= totalNum) {
+        res.status(400).json({ error: '50% redondeado es >= total; no se puede dejar resto válido' });
+        return;
+      }
+
+      const steps: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
+
+      // 1) Cerrar 50% con market reduce
+      try {
+        await bitgetService.placeOrder(decryptedCredentials, {
+          symbol: symbolUpper,
+          productType,
+          marginMode,
+          marginCoin,
+          size: halfSizeStr,
+          side: closeSide,
+          tradeSide: 'close',
+          orderType: 'market',
+          holdSide,
+          reduceOnly: 'YES',
+        }, { userId, strategyId: null });
+        steps.push({ type: 'close_50_percent', success: true, result: { closedSize: halfSizeStr } });
+      } catch (closeErr: any) {
+        steps.push({ type: 'close_50_percent', success: false, error: closeErr.message });
+        res.status(400).json({
+          success: false,
+          error: `Error cerrando 50%: ${closeErr.message}`,
+          steps,
+        });
+        return;
+      }
+
+      const remainingNum = totalNum - halfSizeNum;
+      const remainingSizeStr = bitgetService.calculateOrderSize(
+        String(remainingNum),
+        String(contractInfo?.minTradeNum ?? minTradeNum),
+        String(contractInfo?.sizeMultiplier ?? sizeMultiplier)
+      );
+
+      // 2) Mover SL al precio de entrada para el resto
+      const beResult = await bitgetService.moveStopLossToBreakeven(
+        decryptedCredentials,
+        symbolUpper,
+        side,
+        entryPrice,
+        remainingSizeStr,
+        productType,
+        marginCoin,
+        contractInfo,
+        { userId, strategyId: null }
+      );
+      steps.push(...beResult.steps);
+
+      res.json({
+        success: beResult.success,
+        closedSize: halfSizeStr,
+        remainingSize: remainingSizeStr,
+        entryPrice,
+        steps,
+      });
+    } catch (error: any) {
+      console.error('[TestBreakevenSimulate] Error:', error.message);
       res.status(500).json({ error: error.message });
     }
   }
