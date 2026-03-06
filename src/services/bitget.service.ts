@@ -69,14 +69,16 @@ export class BitgetService {
     credentials: BitgetCredentials,
     body?: any,
     logContext?: {
-      userId: number;
-      strategyId: number | null;
-      symbol: string;
-      operationType: string;
+      userId?: number;
+      strategyId?: number | null;
+      symbol?: string;
+      operationType?: string;
       orderId?: string;
       clientOid?: string;
+      metrics?: { apiCalls: number };
     }
   ): Promise<any> {
+    if (logContext?.metrics) logContext.metrics.apiCalls = (logContext.metrics.apiCalls || 0) + 1;
     const timestamp = Date.now().toString();
     const requestPath = endpoint;
     const bodyString = body ? JSON.stringify(body) : '';
@@ -137,8 +139,8 @@ export class BitgetService {
       const msg = apiCode ? `[${apiCode}] ${errorMessage}` : errorMessage;
       throw new Error(`Bitget API Request Failed: ${msg}`);
     } finally {
-      // Guardar log si se proporcionó contexto
-      if (logContext) {
+      // Guardar log solo si se proporcionó contexto con userId (evitar cuando solo se pasa metrics)
+      if (logContext && logContext.userId != null) {
         try {
           console.log(`[BitgetService] 📝 Intentando guardar log de operación:`, {
             userId: logContext.userId,
@@ -152,9 +154,9 @@ export class BitgetService {
           
           const logId = await BitgetOperationLogModel.create(
             logContext.userId,
-            logContext.strategyId,
-            logContext.symbol,
-            logContext.operationType,
+            logContext.strategyId ?? null,
+            logContext.symbol ?? '',
+            logContext.operationType ?? '',
             method,
             endpoint,
             fullUrl,
@@ -269,7 +271,8 @@ export class BitgetService {
   // Usa cache en memoria con TTL de 5 minutos (la info de contratos no cambia frecuentemente)
   async getContractInfo(
     symbol: string,
-    productType: string = 'USDT-FUTURES'
+    productType: string = 'USDT-FUTURES',
+    options?: { metrics?: { apiCalls: number } }
   ): Promise<{
     minTradeNum: string;
     sizeMultiplier: string;
@@ -297,6 +300,7 @@ export class BitgetService {
       );
 
       if (response.data.code === '00000' && response.data.data && response.data.data.length > 0) {
+        if (options?.metrics) options.metrics.apiCalls = (options.metrics.apiCalls || 0) + 1;
         const contract = response.data.data[0];
         const data = {
           minTradeNum: contract.minTradeNum || '0.01',
@@ -377,9 +381,10 @@ export class BitgetService {
       reduceOnly?: string;
     },
     logContext?: {
-      userId: number;
-      strategyId: number | null;
+      userId?: number;
+      strategyId?: number | null;
       orderId?: string;
+      metrics?: { apiCalls: number };
     }
   ): Promise<{ orderId: string; clientOid: string }> {
     const endpoint = '/api/v2/mix/order/place-order';
@@ -444,6 +449,7 @@ export class BitgetService {
           operationType: 'placeOrder',
           orderId: logContext.orderId,
           clientOid: orderData.clientOid,
+          metrics: logContext.metrics,
         } : undefined
       );
       const orderId = result.orderId || result.clientOid;
@@ -1027,9 +1033,10 @@ export class BitgetService {
     marginCoin: string = 'USDT',
     contractInfo?: any,
     logContext?: {
-      userId: number;
-      strategyId: number | null;
+      userId?: number;
+      strategyId?: number | null;
       orderId?: string;
+      metrics?: { apiCalls: number };
     }
   ): Promise<{ success: boolean; steps: Array<{ type: string; success: boolean; result?: any; error?: string }> }> {
     const results: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
@@ -1042,7 +1049,7 @@ export class BitgetService {
       console.log(`[Bitget] 🔄 Moviendo SL a breakeven (${formattedSL}) para ${symbol} ${holdSide}...`);
       
       // Paso 1: Cancelar solo las órdenes pos_loss (SL) — no tocar los TPs
-      const pendingSLOrders = await this.getPendingTriggerOrders(credentials, symbol, productType, 'pos_loss');
+      const pendingSLOrders = await this.getPendingTriggerOrders(credentials, symbol, productType, 'pos_loss', logContext?.metrics ? { metrics: logContext.metrics } : undefined);
       
       if (pendingSLOrders.length > 0) {
         const cancelEndpoint = '/api/v2/mix/order/cancel-plan-order';
@@ -1058,7 +1065,7 @@ export class BitgetService {
                 orderId,
               }, logContext ? {
                 userId: logContext.userId, strategyId: logContext.strategyId,
-                symbol, operationType: 'cancelSL_forBreakeven', orderId: logContext.orderId,
+                symbol, operationType: 'cancelSL_forBreakeven', orderId: logContext.orderId, metrics: logContext.metrics,
               } : undefined);
               console.log(`[Bitget] ✅ SL viejo cancelado (${orderId})`);
               return { type: 'cancel_old_sl', success: true, result: { orderId } };
@@ -1094,7 +1101,7 @@ export class BitgetService {
       try {
         const slResult = await this.makeRequest('POST', tpslEndpoint, credentials, slPayload, logContext ? {
           userId: logContext.userId, strategyId: logContext.strategyId,
-          symbol, operationType: 'newSL_breakeven', orderId: logContext.orderId, clientOid: slClientOid,
+          symbol, operationType: 'newSL_breakeven', orderId: logContext.orderId, clientOid: slClientOid, metrics: logContext.metrics,
         } : undefined);
         console.log(`[Bitget] ✅ Nuevo SL en breakeven (${formattedSL}) configurado`);
         results.push({ type: 'new_sl_breakeven', success: true, result: slResult });
@@ -1912,7 +1919,8 @@ export class BitgetService {
     credentials: BitgetCredentials,
     symbol: string,
     productType: string = 'USDT-FUTURES',
-    planType?: string // 'pos_profit' | 'pos_loss' | 'normal_plan' | undefined (all)
+    planType?: string, // 'pos_profit' | 'pos_loss' | 'normal_plan' | undefined (all)
+    options?: { metrics?: { apiCalls: number } }
   ): Promise<any[]> {
     const fetchByApiPlanType = async (apiType: string): Promise<any[]> => {
       const params: Record<string, string> = {
@@ -1922,7 +1930,7 @@ export class BitgetService {
       };
       const queryString = Object.keys(params).map(key => `${key}=${params[key]}`).join('&');
       const endpoint = `/api/v2/mix/order/orders-plan-pending?${queryString}`;
-      const result = await this.makeRequest('GET', endpoint, credentials);
+      const result = await this.makeRequest('GET', endpoint, credentials, undefined, options?.metrics ? { metrics: options.metrics } : undefined);
       const orders = result?.entrustedList ?? result?.data?.entrustedList ?? (Array.isArray(result) ? result : []);
       return Array.isArray(orders) ? orders : [];
     };
@@ -2034,14 +2042,15 @@ export class BitgetService {
   async getPositions(
     credentials: BitgetCredentials,
     symbol?: string,
-    productType: string = 'USDT-FUTURES'
+    productType: string = 'USDT-FUTURES',
+    options?: { metrics?: { apiCalls: number } }
   ): Promise<any> {
     let endpoint = `/api/v2/mix/position/all-position?productType=${productType}`;
     if (symbol) {
       endpoint += `&symbol=${symbol}`;
     }
     
-    const result = await this.makeRequest('GET', endpoint, credentials);
+    const result = await this.makeRequest('GET', endpoint, credentials, undefined, options?.metrics ? { metrics: options.metrics } : undefined);
     
     // Log para diagnóstico: qué devolvió la API (símbolos y cantidad)
     if (result && Array.isArray(result)) {

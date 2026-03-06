@@ -277,12 +277,15 @@ export class TradingTestController {
       const closeSide = side === 'buy' ? 'sell' : 'buy';
       const symbolUpper = symbol.toUpperCase();
 
+      const metrics = { apiCalls: 0 };
+      const startMs = Date.now();
+
       let contractInfo: any = null;
       try {
-        contractInfo = await bitgetService.getContractInfo(symbolUpper, productType);
+        contractInfo = await bitgetService.getContractInfo(symbolUpper, productType, { metrics });
       } catch (_) {}
 
-      const positions = await bitgetService.getPositions(decryptedCredentials, symbolUpper, productType);
+      const positions = await bitgetService.getPositions(decryptedCredentials, symbolUpper, productType, { metrics });
       const position = Array.isArray(positions)
         ? positions.find((p: any) => (p.symbol || p.symbolName) === symbolUpper && (p.holdSide || '').toLowerCase() === holdSide)
         : null;
@@ -346,7 +349,7 @@ export class TradingTestController {
           orderType: 'market',
           holdSide,
           reduceOnly: closeReduceOnly,
-        }, { userId, strategyId: null });
+        }, { userId, strategyId: null, metrics });
         steps.push({ type: 'close_50_percent', success: true, result: { closedSize: halfSizeStr } });
       } catch (closeErr: any) {
         steps.push({ type: 'close_50_percent', success: false, error: closeErr.message });
@@ -354,6 +357,8 @@ export class TradingTestController {
           success: false,
           error: `Error cerrando 50%: ${closeErr.message}`,
           steps,
+          bitgetApiCalls: metrics.apiCalls,
+          durationMs: Date.now() - startMs,
         });
         return;
       }
@@ -375,16 +380,19 @@ export class TradingTestController {
         productType,
         marginCoin,
         contractInfo,
-        { userId, strategyId: null }
+        { userId, strategyId: null, metrics }
       );
       steps.push(...beResult.steps);
 
+      const durationMs = Date.now() - startMs;
       res.json({
         success: beResult.success,
         closedSize: halfSizeStr,
         remainingSize: remainingSizeStr,
         entryPrice,
         steps,
+        bitgetApiCalls: metrics.apiCalls,
+        durationMs,
       });
     } catch (error: any) {
       console.error('[TestBreakevenSimulate] Error:', error.message);
