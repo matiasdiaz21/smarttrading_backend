@@ -297,6 +297,7 @@ app.get('/api/admin/trading/ticker', authenticate, requireAdmin, TradingTestCont
 app.get('/api/admin/trading/symbols-config', authenticate, requireAdmin, TradingTestController.getSymbolsConfig);
 app.post('/api/admin/trading/test-open', authenticate, requireAdmin, TradingTestController.testOpenPosition);
 app.post('/api/admin/trading/test-breakeven', authenticate, requireAdmin, TradingTestController.testBreakeven);
+app.post('/api/admin/trading/test-breakeven-simulate', authenticate, requireAdmin, TradingTestController.testBreakevenSimulate);
 app.post('/api/admin/trading/test-close', authenticate, requireAdmin, TradingTestController.testClosePosition);
 app.post('/api/admin/trading/cancel-triggers', authenticate, requireAdmin, TradingTestController.cancelTriggers);
 
