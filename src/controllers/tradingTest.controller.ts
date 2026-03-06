@@ -296,6 +296,8 @@ export class TradingTestController {
       const totalNum = parseFloat(totalStr);
       const entryPrice = parseFloat(position.averageOpenPrice || position.openPriceAvg || '0');
       const marginMode = position.marginMode || margin_mode || 'isolated';
+      const posMode = (position.posMode || position.holdMode || 'one_way_mode') as string;
+      const isHedgeMode = posMode.toLowerCase() === 'hedge_mode';
 
       if (totalNum <= 0) {
         res.status(400).json({ error: 'Tamaño de posición inválido' });
@@ -326,6 +328,12 @@ export class TradingTestController {
       const steps: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
 
       // 1) Cerrar 50% con market reduce
+      // Bitget: en hedge_mode, close long = side=buy + tradeSide=close; close short = side=sell + tradeSide=close.
+      // En one_way_mode, tradeSide se ignora: close long = side=sell + reduceOnly=YES.
+      const closeOrderSide = isHedgeMode
+        ? (holdSide === 'long' ? 'buy' : 'sell')
+        : closeSide;
+      const closeReduceOnly = isHedgeMode ? undefined : 'YES';
       try {
         await bitgetService.placeOrder(decryptedCredentials, {
           symbol: symbolUpper,
@@ -333,11 +341,11 @@ export class TradingTestController {
           marginMode,
           marginCoin,
           size: halfSizeStr,
-          side: closeSide,
+          side: closeOrderSide,
           tradeSide: 'close',
           orderType: 'market',
           holdSide,
-          reduceOnly: 'YES',
+          reduceOnly: closeReduceOnly,
         }, { userId, strategyId: null });
         steps.push({ type: 'close_50_percent', success: true, result: { closedSize: halfSizeStr } });
       } catch (closeErr: any) {
