@@ -516,6 +516,7 @@ export class BitgetService {
     method: 'limit_open_sl_plus_limit_tp50_tp50' | 'preset_only' | 'open_with_sl_and_normal_plan_tps';
     error?: string;
     payloads?: any;
+    bitgetApiCalls?: number;
   }> {
     const steps: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
     const pricePlace = contractInfo?.pricePlace ? parseInt(contractInfo.pricePlace) : 4;
@@ -545,6 +546,7 @@ export class BitgetService {
           tpslResults: steps,
           method: 'preset_only',
           payloads: { endpoint: 'POST /api/v2/mix/order/place-order', presetStopLossPrice: formattedSL, presetStopSurplusPrice: formattedTP },
+          bitgetApiCalls: 1,
         };
       }
 
@@ -584,6 +586,7 @@ export class BitgetService {
           tpslResults: steps,
           method: 'preset_only',
           payloads: { endpoint: 'POST /api/v2/mix/order/place-order', presetStopLossPrice: formattedSL, presetStopSurplusPrice: formattedTP },
+          bitgetApiCalls: 1,
         };
       }
 
@@ -608,6 +611,8 @@ export class BitgetService {
       steps.push({ type: orderData.orderType === 'limit' ? 'limit_open' : 'market_open', success: true, result: openResult });
       console.log(`[Bitget] ✅ Orden ${orderData.orderType} abierta. OrderId: ${openResult.orderId}. Colocando SL y TPs...`);
 
+      let getOrderStatusCalls = 0;
+      let fallbackExtraCalls = 0; // cancel + place-order when limit timeout
       // Si es orden limit, esperar a que esté filled antes de colocar TPs
       if (orderData.orderType === 'limit') {
         const pollIntervalMs = 2000;
@@ -617,6 +622,7 @@ export class BitgetService {
           await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
           try {
             const raw = await this.getOrderStatus(credentials, openResult.orderId, orderData.symbol, orderData.productType);
+            getOrderStatusCalls += 1;
             const detail = raw && (raw.entrustedList && raw.entrustedList[0]) ? raw.entrustedList[0] : raw;
             const state = (detail && (detail.state || detail.status)) || '';
             if (state === 'filled') {
@@ -638,12 +644,14 @@ export class BitgetService {
           try {
             console.warn('[Bitget] ⏱️ Timeout 60s: limit no se llenó. Cancelando limit y abriendo con market...');
             await this.cancelOpenOrder(credentials, openResult.orderId, orderData.symbol, orderData.productType, orderData.marginCoin, logContext);
+            fallbackExtraCalls += 1;
             const marketResult = await this.placeOrder(credentials, {
               ...orderData,
               orderType: 'market',
               price: '',
               tradeSide: 'open',
             }, logContext ? { ...logContext, orderId: undefined } : undefined);
+            fallbackExtraCalls += 1;
             openResult = marketResult;
             console.log('[Bitget] ✅ Apertura con market. OrderId:', openResult.orderId);
           } catch (fallbackErr: any) {
@@ -802,6 +810,8 @@ export class BitgetService {
         }
       }
 
+      // 1 place-order + 1 place-tpsl-order + 2 place-plan-order + getOrderStatus (limit only) + fallback (cancel+place if timeout)
+      const bitgetApiCalls = 1 + 1 + 2 + getOrderStatusCalls + fallbackExtraCalls;
       return {
         success: true,
         orderId: openResult.orderId,
@@ -814,6 +824,7 @@ export class BitgetService {
           takeProfitPartial: { triggerPrice: formattedTPPartial, size: halfSizeStr },
           takeProfitFinal: { triggerPrice: formattedTP, size: remainderSizeStr },
         },
+        bitgetApiCalls,
       };
     } catch (error: any) {
       console.error(`[Bitget] ❌ openPositionWithFullTPSL error:`, error.message);

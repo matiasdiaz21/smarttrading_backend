@@ -26,6 +26,7 @@ export class TradingTestController {
         product_type,
         margin_coin,
         simulate_tv_alert,
+        open_mode,
       } = req.body;
 
       // Validaciones
@@ -33,10 +34,16 @@ export class TradingTestController {
         res.status(400).json({ error: 'Campos requeridos: credential_id, symbol, side, size, stop_loss, take_profit' });
         return;
       }
-      // Simular alerta TradingView: 1 sola llamada place-order con preset SL + TP (Bitget lo permite).
-      const singleCall = !!simulate_tv_alert;
-      const useLimitPartial = !singleCall && !!(order_type === 'limit' && entry_price && take_profit_partial);
-      if (!singleCall && take_profit_partial && (!entry_price || order_type !== 'limit')) {
+      // open_mode: 'preset' = 1 llamada (place-order con preset SL+TP); 'trigger' = place-order + place-tpsl + 2x place-plan.
+      const explicitPreset = open_mode === 'preset' || !!simulate_tv_alert;
+      const explicitTrigger = open_mode === 'trigger';
+      const singleCall = explicitPreset;
+      const useLimitPartial = !singleCall && (explicitTrigger ? !!(entry_price && (take_profit_partial || take_profit)) : !!(order_type === 'limit' && entry_price && take_profit_partial));
+      if (open_mode === 'trigger' && !take_profit_partial && !take_profit) {
+        res.status(400).json({ error: 'Para open_mode=trigger se requiere take_profit_partial (o se usará take_profit como TP parcial)' });
+        return;
+      }
+      if (!singleCall && !explicitTrigger && take_profit_partial && (!entry_price || order_type !== 'limit')) {
         res.status(400).json({ error: 'Para TP parcial 50%+50% se requiere order_type=limit y entry_price' });
         return;
       }
@@ -91,11 +98,14 @@ export class TradingTestController {
       let calculatedPartialPrice: number | undefined;
       if (!singleCall) {
         calculatedPartialPrice = take_profit_partial ? parseFloat(take_profit_partial) : undefined;
-        if (!calculatedPartialPrice && useLimitPartial && entry_price && take_profit) {
+        if (!calculatedPartialPrice && (useLimitPartial || explicitTrigger) && entry_price && take_profit) {
           const entryNum = parseFloat(entry_price);
           const tpNum = parseFloat(take_profit);
           calculatedPartialPrice = entryNum + (tpNum - entryNum) / 2;
           console.log(`[TestOrder] 📊 TP Parcial calculado automáticamente (50% de recorrido): ${calculatedPartialPrice}`);
+        }
+        if (explicitTrigger && !calculatedPartialPrice) {
+          calculatedPartialPrice = parseFloat(take_profit);
         }
       }
 
@@ -105,6 +115,7 @@ export class TradingTestController {
       };
       if (calculatedPartialPrice) tpslPayload.takeProfitPartialPrice = calculatedPartialPrice;
 
+      const t0 = Date.now();
       const result = await bitgetService.openPositionWithFullTPSL(
         decryptedCredentials,
         {
@@ -122,12 +133,15 @@ export class TradingTestController {
         contractInfo,
         { userId, strategyId: null }
       );
+      const durationMs = Date.now() - t0;
 
       res.json({
         success: result.success,
         orderId: result.orderId,
         method: result.method,
         calculatedSize,
+        durationMs,
+        bitgetApiCalls: result.bitgetApiCalls,
         contractInfo: contractInfo ? {
           minTradeNum: contractInfo.minTradeNum,
           sizeMultiplier: contractInfo.sizeMultiplier,
