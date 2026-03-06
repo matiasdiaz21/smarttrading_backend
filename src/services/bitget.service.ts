@@ -406,6 +406,9 @@ export class BitgetService {
       orderPayload.force = orderData.force;
     } else if (orderData.orderType === 'limit') {
       orderPayload.force = 'gtc';
+    } else if (orderData.orderType === 'market' && (orderData.tradeSide === 'close' || orderData.reduceOnly === 'YES')) {
+      // Cierre a mercado: IOC para que se ejecute de inmediato a precio de mercado (no quedar como pendiente).
+      orderPayload.force = 'ioc';
     }
 
     if (orderData.clientOid) {
