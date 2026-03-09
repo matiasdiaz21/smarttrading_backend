@@ -71,12 +71,13 @@ export class StatsController {
       const bestTrades = StatsController.getBestTrades(groupedBySymbol, symbolStats).slice(0, 5);
 
       // Estadísticas generales
-      // totalTrades solo cuenta operaciones cerradas (won + lost), no pendientes
       const totalWon = Object.values(symbolStats).reduce((sum, stats) => sum + stats.won, 0);
       const totalLost = Object.values(symbolStats).reduce((sum, stats) => sum + stats.lost, 0);
-      const totalTrades = totalWon + totalLost; // Solo trades cerrados
-      const overallWinrate = totalWon + totalLost > 0 
-        ? (totalWon / (totalWon + totalLost)) * 100 
+      const totalPending = Object.values(symbolStats).reduce((sum, stats) => sum + stats.pending, 0);
+      const totalTrades = totalWon + totalLost; // Solo trades cerrados (para winrate)
+      const totalOperations = totalWon + totalLost + totalPending; // Incluye pendientes
+      const overallWinrate = totalWon + totalLost > 0
+        ? (totalWon / (totalWon + totalLost)) * 100
         : 0;
 
       // Obtener lista de todas las monedas únicas
@@ -94,6 +95,10 @@ export class StatsController {
             totalTrades,
             totalWon,
             totalLost,
+            totalPending,
+            totalOperations,
+            totalAlerts: logs.length,
+            totalSymbols: allSymbols.length,
             overallWinrate: parseFloat(overallWinrate.toFixed(2)),
           },
         },
