@@ -28,6 +28,7 @@ import { NOWPaymentsController } from './controllers/nowpayments.controller';
 import { AdminController } from './controllers/admin.controller';
 import { StatsController } from './controllers/stats.controller';
 import { SettingsController } from './controllers/settings.controller';
+import { AiController } from './controllers/ai.controller';
 import { NotificationsController } from './controllers/notifications.controller';
 import { MassTradeController } from './controllers/massTrade.controller';
 import { TradingTestController } from './controllers/tradingTest.controller';
@@ -63,14 +64,87 @@ app.use('/api', (req, res, next) => {
   return apiLimiter(req, res, next);
 });
 
+// Root route
+app.get('/', (req: Request, res: Response) => {
+  res.json({
+    name: 'SyncTrade Backend API',
+    version: '1.0.0',
+    status: 'online',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/api/health',
+      publicStats: '/api/public/stats',
+      auth: '/api/auth',
+      api: '/api',
+      envCheck: '/api/env-check',
+    },
+  });
+});
+
+// Endpoint de diagnóstico de variables de entorno (solo para debugging)
+app.get('/api/env-check', (req: Request, res: Response) => {
+  const allEnvVars = Object.keys(process.env).filter(key =>
+    key.startsWith('DB_') ||
+    key === 'NODE_ENV' ||
+    key === 'VERCEL' ||
+    key === 'JWT_SECRET' ||
+    key === 'ENCRYPTION_KEY'
+  );
+
+  const envVars: Record<string, any> = {
+    NODE_ENV: process.env.NODE_ENV || 'no definido',
+    VERCEL: process.env.VERCEL || 'no definido',
+    VERCEL_ENV: process.env.VERCEL_ENV || 'no definido',
+  };
+
+  allEnvVars.forEach(key => {
+    if (key.startsWith('DB_')) {
+      const value = process.env[key];
+      envVars[key] = value ? `✅ configurado (${value.length} caracteres)` : '❌ NO configurado';
+    } else if (key === 'JWT_SECRET' || key === 'ENCRYPTION_KEY') {
+      const value = process.env[key];
+      envVars[key] = value ? `✅ configurado (${value.length} caracteres)` : '❌ NO configurado';
+    }
+  });
+
+  const requiredVars = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
+  const missingVars = requiredVars.filter(varName => !process.env[varName]);
+
+  const diagnosticInfo = {
+    totalEnvVars: Object.keys(process.env).length,
+    dbRelatedVars: allEnvVars.filter(k => k.startsWith('DB_')),
+    vercelEnv: process.env.VERCEL_ENV,
+    isProduction: process.env.NODE_ENV === 'production',
+  };
+
+  res.json({
+    message: 'Diagnóstico de Variables de Entorno',
+    environment: envVars,
+    missing: missingVars.length > 0 ? missingVars : 'Ninguna',
+    diagnostic: diagnosticInfo,
+    instructions: missingVars.length > 0
+      ? {
+          step1: 'Ve a Vercel Dashboard > Tu proyecto > Settings > Environment Variables',
+          step2: 'Verifica que las variables estén configuradas para "Production" (no solo Preview o Development)',
+          step3: 'Asegúrate de que los valores no tengan espacios al inicio o final',
+          step4: 'Haz clic en "Save" después de cada variable',
+          step5: 'Ve a Deployments y haz clic en "Redeploy" en el último deployment',
+          step6: 'Espera a que termine el deployment y verifica nuevamente',
+        }
+      : 'Todas las variables están configuradas',
+  });
+});
+
 // Health check
-app.get('/api/settings', SettingsController.getPublic);
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Public stats route (sin autenticación)
 app.get('/api/public/stats', StatsController.getPublicStats);
+
+// Settings (público: solo free_trial para el frontend)
+app.get('/api/settings', SettingsController.getPublic);
 
 // Auth routes
 app.post('/api/auth/register', authLimiter, AuthController.register);
@@ -86,16 +160,16 @@ app.delete('/api/strategies/:id', authenticate, requireAdmin, StrategyController
 
 // Credentials routes
 app.get('/api/bitget/credentials', authenticate, CredentialsController.list);
-  app.post('/api/bitget/credentials', authenticate, CredentialsController.create);
-  app.put('/api/bitget/credentials/:id', authenticate, CredentialsController.update);
-  app.delete('/api/bitget/credentials/:id', authenticate, CredentialsController.delete);
-  app.post('/api/bitget/credentials/:id/validate', authenticate, CredentialsController.validate);
+app.post('/api/bitget/credentials', authenticate, CredentialsController.create);
+app.put('/api/bitget/credentials/:id', authenticate, CredentialsController.update);
+app.delete('/api/bitget/credentials/:id', authenticate, CredentialsController.delete);
+app.post('/api/bitget/credentials/:id/validate', authenticate, CredentialsController.validate);
 
-  app.get('/api/bybit/credentials', authenticate, BybitCredentialsController.list);
-  app.post('/api/bybit/credentials', authenticate, BybitCredentialsController.create);
-  app.put('/api/bybit/credentials/:id', authenticate, BybitCredentialsController.update);
-  app.delete('/api/bybit/credentials/:id', authenticate, BybitCredentialsController.delete);
-  app.post('/api/bybit/credentials/:id/validate', authenticate, BybitCredentialsController.validate);
+app.get('/api/bybit/credentials', authenticate, BybitCredentialsController.list);
+app.post('/api/bybit/credentials', authenticate, BybitCredentialsController.create);
+app.put('/api/bybit/credentials/:id', authenticate, BybitCredentialsController.update);
+app.delete('/api/bybit/credentials/:id', authenticate, BybitCredentialsController.delete);
+app.post('/api/bybit/credentials/:id/validate', authenticate, BybitCredentialsController.validate);
 
 // User routes
 app.get('/api/user/strategies', authenticate, UserController.getStrategies);
@@ -162,6 +236,7 @@ app.get('/api/admin/nowpayments/currencies', authenticate, requireAdmin, NOWPaym
 
 // Admin routes
 app.get('/api/admin/users', authenticate, requireAdmin, AdminController.getUsers);
+app.post('/api/admin/users/:id/gift-subscription', authenticate, requireAdmin, AdminController.giftSubscription);
 app.get('/api/admin/webhook-logs', authenticate, requireAdmin, AdminController.getWebhookLogs);
 app.get('/api/admin/webhook-logs/symbols', authenticate, requireAdmin, AdminController.getWebhookLogSymbols);
 app.delete('/api/admin/webhook-logs/symbol-group', authenticate, requireAdmin, AdminController.deleteWebhookLogSymbolGroup);
@@ -176,6 +251,33 @@ app.post('/api/admin/bitget-operation-logs/:id/unreview', AdminController.markLo
 app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats);
 app.get('/api/admin/settings', authenticate, requireAdmin, SettingsController.getAdmin);
 app.put('/api/admin/settings', authenticate, requireAdmin, SettingsController.updateAdmin);
+app.put('/api/admin/settings/stats-strategies', authenticate, requireAdmin, SettingsController.updateStatsStrategies);
+
+// AI Trading routes (user)
+app.get('/api/ai/config', authenticate, AiController.getPublicConfig);
+app.get('/api/ai/predictions', authenticate, AiController.getPredictions);
+app.get('/api/ai/predictions/:id', authenticate, AiController.getPredictionById);
+app.get('/api/ai/stats', authenticate, AiController.getStats);
+app.get('/api/ai/assets', authenticate, AiController.getAssets);
+
+// AI Trading routes (admin)
+app.get('/api/admin/ai/config', authenticate, requireAdmin, AiController.getConfig);
+app.put('/api/admin/ai/config', authenticate, requireAdmin, AiController.updateConfig);
+app.get('/api/admin/ai/groq-models', authenticate, requireAdmin, AiController.getGroqModels);
+app.post('/api/admin/ai/analyze', authenticate, requireAdmin, AiController.triggerAnalysis);
+app.get('/api/admin/ai/assets', authenticate, requireAdmin, AiController.getAdminAssets);
+app.post('/api/admin/ai/assets', authenticate, requireAdmin, AiController.addAsset);
+app.put('/api/admin/ai/assets/:id', authenticate, requireAdmin, AiController.updateAsset);
+app.put('/api/admin/ai/assets/:id/toggle', authenticate, requireAdmin, AiController.toggleAsset);
+app.delete('/api/admin/ai/assets/:id', authenticate, requireAdmin, AiController.deleteAsset);
+app.delete('/api/admin/ai/predictions/:id', authenticate, requireAdmin, AiController.deletePrediction);
+app.put('/api/admin/ai/predictions/:id/resolve', authenticate, requireAdmin, AiController.resolvePrediction);
+app.post('/api/admin/ai/check-results', authenticate, requireAdmin, AiController.forceCheckResults);
+app.get('/api/admin/ai/cron-history', authenticate, requireAdmin, AiController.getCronHistory);
+
+// Cron: auto-run IA
+app.get('/api/cron/ai-auto-run', AiController.cronAutoRun);
+app.post('/api/cron/ai-auto-run', AiController.cronAutoRun);
 
 // Trading Test routes (admin)
 app.get('/api/admin/trading/credentials', authenticate, requireAdmin, TradingTestController.getCredentials);

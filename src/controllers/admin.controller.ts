@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { UserModel } from '../models/User';
+import { PaymentSubscriptionModel } from '../models/PaymentSubscription';
 import { WebhookLogModel } from '../models/WebhookLog';
 import { TradeModel } from '../models/Trade';
 import OrderErrorModel from '../models/orderError.model';
@@ -25,6 +26,30 @@ export class AdminController {
       res.json(users);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async giftSubscription(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+      const userId = parseInt(req.params.id, 10);
+      if (isNaN(userId)) {
+        res.status(400).json({ error: 'Invalid user id' });
+        return;
+      }
+      const months = req.body?.months;
+      if (![1, 3, 6].includes(months)) {
+        res.status(400).json({ error: 'months must be 1, 3 or 6' });
+        return;
+      }
+      const expiresAt = await PaymentSubscriptionModel.createGift(userId, months);
+      await UserModel.updateSubscription(userId, 'active', expiresAt);
+      res.json({ ok: true, expires_at: expiresAt.toISOString() });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Error al regalar suscripción' });
     }
   }
 

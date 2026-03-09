@@ -166,11 +166,55 @@ export class PaymentSubscriptionModel {
 
   static async findActiveByUserId(userId: number): Promise<Subscription | null> {
     const [rows] = await pool.execute(
-      'SELECT * FROM subscriptions WHERE user_id = ? AND status = ? AND (expires_at IS NULL OR expires_at > NOW())',
+      'SELECT * FROM subscriptions WHERE user_id = ? AND status = ? AND (expires_at IS NULL OR expires_at > NOW()) ORDER BY expires_at DESC LIMIT 1',
       [userId, 'confirmed']
     );
     const subscriptions = rows as Subscription[];
     return subscriptions[0] || null;
+  }
+
+  /**
+   * Crea una suscripción regalada por admin (sin pago). Si el usuario ya tiene suscripción activa, se extiende desde su expires_at.
+   * @returns expiresAt final
+   */
+  static async createGift(userId: number, months: 1 | 3 | 6): Promise<Date> {
+    const existing = await this.findActiveByUserId(userId);
+    const now = new Date();
+    const baseDate = existing?.expires_at && new Date(existing.expires_at) > now ? new Date(existing.expires_at) : now;
+    const expiresAt = new Date(baseDate);
+    expiresAt.setMonth(expiresAt.getMonth() + months);
+
+    const paymentId = `gift_${Date.now()}_${userId}`;
+    await pool.execute(
+      `INSERT INTO subscriptions (
+        user_id, payment_plan_id, payment_id, order_id,
+        payment_status, pay_address, pay_amount, pay_currency,
+        purchase_id, amount_received, network, expiration_estimate_date,
+        nowpayments_created_at, nowpayments_updated_at,
+        status, amount, currency, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        userId,
+        null,
+        paymentId,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        'confirmed',
+        0,
+        'USD',
+        expiresAt,
+      ]
+    );
+    return expiresAt;
   }
 }
 
