@@ -330,7 +330,32 @@ export class TradingTestController {
 
       const steps: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
 
-      // 1) Cerrar 50% con market reduce
+      // 1) PRIMERO: Mover SL al precio de entrada para toda la posición
+      const beResult = await bitgetService.moveStopLossToBreakeven(
+        decryptedCredentials,
+        symbolUpper,
+        side,
+        entryPrice,
+        totalStr,
+        productType,
+        marginCoin,
+        contractInfo,
+        { userId, strategyId: null, metrics }
+      );
+      steps.push(...beResult.steps);
+
+      if (!beResult.success) {
+        res.status(400).json({
+          success: false,
+          error: 'Error moviendo SL a precio de entrada',
+          steps,
+          bitgetApiCalls: metrics.apiCalls,
+          durationMs: Date.now() - startMs,
+        });
+        return;
+      }
+
+      // 2) DESPUÉS: Cerrar 50% con market reduce
       // Bitget: en hedge_mode, close long = side=buy + tradeSide=close; close short = side=sell + tradeSide=close.
       // En one_way_mode, tradeSide se ignora: close long = side=sell + reduceOnly=YES.
       const closeOrderSide = isHedgeMode
@@ -369,20 +394,6 @@ export class TradingTestController {
         String(contractInfo?.minTradeNum ?? minTradeNum),
         String(contractInfo?.sizeMultiplier ?? sizeMultiplier)
       );
-
-      // 2) Mover SL al precio de entrada para el resto
-      const beResult = await bitgetService.moveStopLossToBreakeven(
-        decryptedCredentials,
-        symbolUpper,
-        side,
-        entryPrice,
-        remainingSizeStr,
-        productType,
-        marginCoin,
-        contractInfo,
-        { userId, strategyId: null, metrics }
-      );
-      steps.push(...beResult.steps);
 
       const durationMs = Date.now() - startMs;
       res.json({
