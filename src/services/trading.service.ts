@@ -312,29 +312,9 @@ export class TradingService {
         console.log(`[TradeService] 📏 Tamaño solicitado: ${requestedSize}, Tamaño calculado: ${calculatedSize}`);
       }
 
-      // Si la señal tiene breakeven y el usuario tiene TP parcial, asegurar tamaño >= 2× minTradeNum
-      // para poder colocar TP 50% en breakeven + TP 50% en take profit (Bitget exige mínimo por orden)
-      const usePartialTp = strategySubscription.use_partial_tp !== false;
-      let breakevenPrice = alert.breakeven ? parseFloat(alert.breakeven.toString()) : undefined;
-      
-      // Auto-calcular breakeven si no viene en la alerta pero TP parcial está habilitado
-      if (!breakevenPrice && usePartialTp && entryPrice && alert.takeProfit) {
-        const entryNum = parseFloat(entryPrice.toString());
-        const tpNum = parseFloat(alert.takeProfit.toString());
-        breakevenPrice = entryNum + (tpNum - entryNum) / 2;
-        console.log(`[TradeService] 📊 TP Parcial (Breakeven) calculado automáticamente (50% de recorrido): ${breakevenPrice}`);
-      }
-
-      if (breakevenPrice && breakevenPrice > 0 && usePartialTp) {
-        const minTradeNum = parseFloat(contractInfo.minTradeNum || '0.01');
-        const minSizeForPartial = 2 * minTradeNum;
-        if (parseFloat(calculatedSize) < minSizeForPartial - 1e-8) {
-          const previousSize = calculatedSize;
-          calculatedSize = calcOrderSize(minSizeForPartial.toString(), contractInfo.minTradeNum, contractInfo.sizeMultiplier);
-          const approxUsdt = entryPrice ? (parseFloat(calculatedSize) * parseFloat(entryPrice.toString())).toFixed(2) : '?';
-          console.log(`[TradeService] 📊 Breakeven activo: tamaño ajustado al mínimo para TP 50%/50% (≥ 2× min): ${previousSize} → ${calculatedSize} contratos (~${approxUsdt} USDT)`);
-        }
-      }
+      // NUEVA LÓGICA: No colocar TPs parciales automáticos en ENTRY.
+      // Solo abrir con preset (1 llamada: SL + TP único al precio final).
+      // El breakeven se ejecutará manualmente cuando llegue la señal BREAKEVEN.
 
       // Configurar el apalancamiento Y verificar posiciones existentes EN PARALELO
       // (Optimización: antes eran 2 llamadas secuenciales + 500ms delay = ~1.5s, ahora ~0.5s)
@@ -442,16 +422,14 @@ export class TradingService {
         };
 
         if (alert.stopLoss != null && alert.takeProfit != null) {
-          // Mismo flujo que /admin/test-orders: openPositionWithFullTPSL (open + SL + TP en un solo método)
+          // Usar preset (1 llamada): open + SL + TP único (sin TPs parciales)
           try {
-            console.log(`[TradeService] 🚀 Abriendo posición + TP/SL con mismo flujo que test-orders (openPositionWithFullTPSL)...`);
+            console.log(`[TradeService] 🚀 Abriendo posición con preset (1 llamada: SL + TP único)...`);
             const tpslData: { stopLossPrice: number; takeProfitPrice: number; takeProfitPartialPrice?: number } = {
               stopLossPrice: parseFloat(alert.stopLoss.toString()),
               takeProfitPrice: parseFloat(alert.takeProfit.toString()),
+              // NO configurar takeProfitPartialPrice - el breakeven se ejecutará manualmente con la señal BREAKEVEN
             };
-            if (breakevenPrice && breakevenPrice > 0) {
-              tpslData.takeProfitPartialPrice = breakevenPrice;
-            }
             const openResult =
               exchange === 'bybit'
                 ? await this.bybitService.openPositionWithFullTPSL(
@@ -468,8 +446,9 @@ export class TradingService {
                     contractInfo,
                     { userId, strategyId }
                   )
-                : await (() => {
-                    const orderDataForOpen = {
+                : await this.bitgetService.openPositionWithFullTPSL(
+                    decryptedCredentials,
+                    {
                       symbol: symbol.toUpperCase(),
                       productType,
                       marginMode: alert.marginMode || 'isolated',
@@ -479,19 +458,11 @@ export class TradingService {
                       side: bitgetSide,
                       orderType: orderData.orderType,
                       clientOid: uniqueClientOid,
-                    };
-                    if (tpslData.takeProfitPartialPrice != null && orderDataForOpen.orderType !== 'limit') {
-                      orderDataForOpen.orderType = 'limit';
-                      orderDataForOpen.price = orderData.price ?? String(alert.entry_price ?? '');
-                    }
-                    return this.bitgetService.openPositionWithFullTPSL(
-                      decryptedCredentials,
-                      orderDataForOpen,
-                      tpslData,
-                      contractInfo,
-                      { userId, strategyId }
-                    );
-                  })();
+                    },
+                    tpslData,
+                    contractInfo,
+                    { userId, strategyId }
+                  );
             if (openResult.success && openResult.orderId) {
               result = { orderId: openResult.orderId, clientOid: uniqueClientOid };
               actualPositionSize = calculatedSize;
@@ -957,12 +928,50 @@ export class TradingService {
           continue;
         }
 
-        const positionSize = currentPosition.total || currentPosition.available || currentPosition.size || '0';
-        console.log(`[BREAKEVEN] 🔄 Moviendo SL a precio de entrada (${newStopLossPrice}) para ${symbol} ${holdSide} | Posición: ${positionSize} contratos`);
+        const totalStr = currentPosition.total || currentPosition.available || currentPosition.size || '0';
+        const totalNum = parseFloat(totalStr);
+        const marginMode = currentPosition.marginMode || alert.marginMode || 'isolated';
+        const posMode = (currentPosition.posMode || currentPosition.holdMode || 'one_way_mode') as string;
+        const isHedgeMode = posMode.toLowerCase() === 'hedge_mode';
 
-        // Mismo flujo que el botón "Mover SL a BE" de /admin/test-orders:
-        // Solo cancela el SL viejo (pos_loss) y coloca nuevo SL al precio de entrada.
-        // NO toca los TPs (ya están como triggers normal_plan desde el ENTRY).
+        console.log(`[BREAKEVEN] 🔄 Ejecutando breakeven para ${symbol} ${holdSide} | Posición: ${totalStr} contratos`);
+
+        if (totalNum <= 0) {
+          console.warn(`[BREAKEVEN] ⚠️ Tamaño de posición inválido: ${totalStr}`);
+          failed++;
+          continue;
+        }
+
+        const minTradeNum = contractInfo?.minTradeNum ? parseFloat(contractInfo.minTradeNum) : 0.001;
+        const sizeMultiplier = contractInfo?.sizeMultiplier ? parseFloat(contractInfo.sizeMultiplier) : 0.001;
+
+        const halfNum = totalNum / 2;
+        const calcOrderSize = (req: string, min: string, mult: string) =>
+          exchange === 'bybit'
+            ? this.bybitService.calculateOrderSize(req, min, mult)
+            : this.bitgetService.calculateOrderSize(req, min, mult);
+        const halfSizeStr = calcOrderSize(
+          String(halfNum),
+          String(contractInfo?.minTradeNum ?? minTradeNum),
+          String(contractInfo?.sizeMultiplier ?? sizeMultiplier)
+        );
+        const halfSizeNum = parseFloat(halfSizeStr);
+
+        if (halfSizeNum < minTradeNum) {
+          console.warn(`[BREAKEVEN] ⚠️ Posición demasiado pequeña para cerrar 50% (mínimo ${minTradeNum}). Total: ${totalStr}`);
+          failed++;
+          continue;
+        }
+        if (halfSizeNum >= totalNum) {
+          console.warn(`[BREAKEVEN] ⚠️ 50% redondeado es >= total; no se puede dejar resto válido`);
+          failed++;
+          continue;
+        }
+
+        const steps: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
+
+        // 1) PRIMERO: Mover SL al precio de entrada para toda la posición
+        console.log(`[BREAKEVEN] 📍 Paso 1: Moviendo SL a precio de entrada (${newStopLossPrice})...`);
         const beResult =
           exchange === 'bybit'
             ? await this.bybitService.moveStopLossToBreakeven(
@@ -970,7 +979,7 @@ export class TradingService {
                 symbol,
                 tradeFinal.side,
                 newStopLossPrice,
-                positionSize,
+                totalStr,
                 productType,
                 marginCoin,
                 contractInfo,
@@ -981,27 +990,72 @@ export class TradingService {
                 symbol,
                 tradeFinal.side,
                 newStopLossPrice,
-                positionSize,
+                totalStr,
                 productType,
                 marginCoin,
                 contractInfo,
                 logContext
               );
+        steps.push(...beResult.steps);
 
-        if (beResult.success) {
-          console.log(`[BREAKEVEN] ✅ SL movido a precio de entrada (${newStopLossPrice}) para usuario ${subscription.user_id}`);
-          // Actualizar SL en DB
-          try {
-            await TradeModel.updateStopLoss(tradeFinal.id, newStopLossPrice);
-            console.log(`[BREAKEVEN] ✅ Stop loss actualizado en DB a ${newStopLossPrice}`);
-          } catch (dbError: any) {
-            console.error(`[BREAKEVEN] ❌ Error al actualizar DB: ${dbError.message}`);
-          }
-        } else {
+        if (!beResult.success) {
           const errors = beResult.steps.filter((s: any) => !s.success).map((s: any) => s.error).join(', ');
           console.error(`[BREAKEVEN] ❌ Error moviendo SL para usuario ${subscription.user_id}: ${errors}`);
+          failed++;
+          continue;
         }
 
+        console.log(`[BREAKEVEN] ✅ Paso 1 completado: SL movido a precio de entrada (${newStopLossPrice})`);
+
+        // 2) DESPUÉS: Cerrar 50% con market reduce
+        console.log(`[BREAKEVEN] 💰 Paso 2: Cerrando 50% de la posición (${halfSizeStr} contratos)...`);
+        const closeSide = tradeFinal.side === 'buy' ? 'sell' : 'buy';
+        const closeOrderSide = isHedgeMode
+          ? (holdSide === 'long' ? 'buy' : 'sell')
+          : closeSide;
+        const closeReduceOnly = isHedgeMode ? undefined : 'YES';
+
+        try {
+          if (exchange === 'bybit') {
+            await this.bybitService.placeOrder(decryptedCredentials, {
+              symbol: symbol.toUpperCase(),
+              side: closeOrderSide,
+              orderType: 'market',
+              qty: halfSizeStr,
+              reduceOnly: true,
+            });
+          } else {
+            await this.bitgetService.placeOrder(decryptedCredentials, {
+              symbol: symbol.toUpperCase(),
+              productType,
+              marginMode,
+              marginCoin,
+              size: halfSizeStr,
+              side: closeOrderSide,
+              tradeSide: 'close',
+              orderType: 'market',
+              holdSide,
+              reduceOnly: closeReduceOnly,
+            }, logContext);
+          }
+          steps.push({ type: 'close_50_percent', success: true, result: { closedSize: halfSizeStr } });
+          console.log(`[BREAKEVEN] ✅ Paso 2 completado: 50% cerrado (${halfSizeStr} contratos)`);
+        } catch (closeErr: any) {
+          steps.push({ type: 'close_50_percent', success: false, error: closeErr.message });
+          console.error(`[BREAKEVEN] ❌ Error cerrando 50% para usuario ${subscription.user_id}: ${closeErr.message}`);
+          failed++;
+          continue;
+        }
+
+        // Actualizar SL en DB
+        try {
+          await TradeModel.updateStopLoss(tradeFinal.id, newStopLossPrice);
+          console.log(`[BREAKEVEN] ✅ Stop loss actualizado en DB a ${newStopLossPrice}`);
+        } catch (dbError: any) {
+          console.error(`[BREAKEVEN] ❌ Error al actualizar DB: ${dbError.message}`);
+        }
+
+        console.log(`[BREAKEVEN] ✅ Breakeven completado para usuario ${subscription.user_id}: SL a entrada + 50% cerrado`);
         successful++;
       } catch (error: any) {
         console.error(`Error procesando BREAKEVEN para usuario ${subscription.user_id}:`, error);
