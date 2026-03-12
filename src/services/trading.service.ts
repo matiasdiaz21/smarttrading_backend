@@ -902,8 +902,21 @@ export class TradingService {
             ? await this.bybitService.getPositions(decryptedCredentials, symbol, 'linear')
             : await this.bitgetService.getPositions(decryptedCredentials, symbol, productType);
         const holdSide = tradeFinal.side === 'buy' ? 'long' : 'short';
+        
+        // VALIDACIÓN ESTRICTA: La posición debe coincidir en símbolo, holdSide y tener tamaño > 0
         const currentPosition = Array.isArray(positions)
-          ? positions.find((p: any) => p.holdSide === holdSide && parseFloat(p.total || p.available || '0') > 0)
+          ? positions.find((p: any) => {
+              const posSymbol = (p.symbol || p.symbolName || '').toUpperCase();
+              const matchesSymbol = posSymbol === symbol.toUpperCase();
+              const matchesHoldSide = p.holdSide === holdSide;
+              const hasSize = parseFloat(p.total || p.available || '0') > 0;
+              
+              if (!matchesSymbol) {
+                console.log(`[BREAKEVEN] ⚠️ Posición ignorada: símbolo no coincide (${posSymbol} !== ${symbol})`);
+              }
+              
+              return matchesSymbol && matchesHoldSide && hasSize;
+            })
           : null;
 
         if (!currentPosition) {
@@ -916,17 +929,20 @@ export class TradingService {
           successful++; // No es un error, la posición ya no existe
           continue;
         }
+        
+        // Obtener precio de entrada SOLO de la posición en vivo (Bitget/Bybit) - NO usar DB como fallback
+        const entryPriceFromExchange = currentPosition.openPriceAvg 
+          ? parseFloat(currentPosition.openPriceAvg) 
+          : (currentPosition.averageOpenPrice ? parseFloat(currentPosition.averageOpenPrice) : null);
 
-        // Determinar precio de entrada: preferir el de Bitget (averageOpenPrice), luego el de DB
-        const entryPriceFromBitget = currentPosition.averageOpenPrice ? parseFloat(currentPosition.averageOpenPrice) : null;
-        const entryPriceFromDB = tradeFinal.entry_price ? parseFloat(tradeFinal.entry_price.toString()) : null;
-        const newStopLossPrice = entryPriceFromBitget || entryPriceFromDB;
-
-        if (!newStopLossPrice || newStopLossPrice <= 0) {
-          console.warn(`[BREAKEVEN] ⚠️ No se pudo determinar precio de entrada para ${symbol}. Bitget: ${entryPriceFromBitget}, DB: ${entryPriceFromDB}`);
+        if (!entryPriceFromExchange || entryPriceFromExchange <= 0) {
+          console.error(`[BREAKEVEN] ❌ No se pudo obtener precio de entrada desde ${exchange} para ${symbol}. Exchange devolvió: ${entryPriceFromExchange}`);
+          console.error(`[BREAKEVEN] ❌ Posición data:`, JSON.stringify(currentPosition, null, 2));
           failed++;
           continue;
         }
+
+        console.log(`[BREAKEVEN] ✅ Posición encontrada: ${currentPosition.symbol} ${currentPosition.holdSide} | Size: ${currentPosition.total || currentPosition.available} | Entry: ${entryPriceFromExchange}`);
 
         const totalStr = currentPosition.total || currentPosition.available || currentPosition.size || '0';
         const totalNum = parseFloat(totalStr);
@@ -934,7 +950,14 @@ export class TradingService {
         const posMode = (currentPosition.posMode || currentPosition.holdMode || 'one_way_mode') as string;
         const isHedgeMode = posMode.toLowerCase() === 'hedge_mode';
 
-        console.log(`[BREAKEVEN] 🔄 Ejecutando breakeven para ${symbol} ${holdSide} | Posición: ${totalStr} contratos`);
+        console.log(`
+${'='.repeat(80)}`);
+        console.log(`[BREAKEVEN] 🎯 INICIANDO BREAKEVEN`);
+        console.log(`  Usuario: ${subscription.user_id} | Estrategia: ${strategyId}`);
+        console.log(`  Símbolo: ${symbol} | Lado: ${holdSide}`);
+        console.log(`  Posición: ${totalStr} contratos | Entry: ${entryPriceFromExchange}`);
+        console.log(`${'='.repeat(80)}
+`);
 
         if (totalNum <= 0) {
           console.warn(`[BREAKEVEN] ⚠️ Tamaño de posición inválido: ${totalStr}`);
@@ -971,14 +994,16 @@ export class TradingService {
         const steps: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
 
         // 1) PRIMERO: Mover SL al precio de entrada para toda la posición
-        console.log(`[BREAKEVEN] 📍 Paso 1: Moviendo SL a precio de entrada (${newStopLossPrice})...`);
+        console.log(`[BREAKEVEN] 📍 PASO 1/2: Mover SL a precio de entrada`);
+        console.log(`  Precio de entrada: ${entryPriceFromExchange}`);
+        console.log(`  Tamaño posición: ${totalStr} contratos`);
         const beResult =
           exchange === 'bybit'
             ? await this.bybitService.moveStopLossToBreakeven(
                 decryptedCredentials,
                 symbol,
                 tradeFinal.side,
-                newStopLossPrice,
+                entryPriceFromExchange,
                 totalStr,
                 productType,
                 marginCoin,
@@ -989,7 +1014,7 @@ export class TradingService {
                 decryptedCredentials,
                 symbol,
                 tradeFinal.side,
-                newStopLossPrice,
+                entryPriceFromExchange,
                 totalStr,
                 productType,
                 marginCoin,
@@ -1000,15 +1025,22 @@ export class TradingService {
 
         if (!beResult.success) {
           const errors = beResult.steps.filter((s: any) => !s.success).map((s: any) => s.error).join(', ');
-          console.error(`[BREAKEVEN] ❌ Error moviendo SL para usuario ${subscription.user_id}: ${errors}`);
+          console.error(`
+[BREAKEVEN] ❌ ERROR EN PASO 1`);
+          console.error(`  Usuario: ${subscription.user_id}`);
+          console.error(`  Errores: ${errors}
+`);
           failed++;
           continue;
         }
 
-        console.log(`[BREAKEVEN] ✅ Paso 1 completado: SL movido a precio de entrada (${newStopLossPrice})`);
+        console.log(`[BREAKEVEN] ✅ PASO 1 COMPLETADO - SL movido a ${entryPriceFromExchange}`);
 
         // 2) DESPUÉS: Cerrar 50% con market reduce
-        console.log(`[BREAKEVEN] 💰 Paso 2: Cerrando 50% de la posición (${halfSizeStr} contratos)...`);
+        console.log(`
+[BREAKEVEN] 💰 PASO 2/2: Cerrar 50% de la posición`);
+        console.log(`  Tamaño a cerrar: ${halfSizeStr} contratos (50% de ${totalStr})`);
+        console.log(`  Tipo de orden: Market ${isHedgeMode ? '(Hedge Mode)' : '(One-Way Mode)'}`);
         const closeSide = tradeFinal.side === 'buy' ? 'sell' : 'buy';
         const closeOrderSide = isHedgeMode
           ? (holdSide === 'long' ? 'buy' : 'sell')
@@ -1039,23 +1071,34 @@ export class TradingService {
             }, logContext);
           }
           steps.push({ type: 'close_50_percent', success: true, result: { closedSize: halfSizeStr } });
-          console.log(`[BREAKEVEN] ✅ Paso 2 completado: 50% cerrado (${halfSizeStr} contratos)`);
+          console.log(`[BREAKEVEN] ✅ PASO 2 COMPLETADO - 50% cerrado (${halfSizeStr} contratos)`);
         } catch (closeErr: any) {
           steps.push({ type: 'close_50_percent', success: false, error: closeErr.message });
-          console.error(`[BREAKEVEN] ❌ Error cerrando 50% para usuario ${subscription.user_id}: ${closeErr.message}`);
+          console.error(`
+[BREAKEVEN] ❌ ERROR EN PASO 2`);
+          console.error(`  Usuario: ${subscription.user_id}`);
+          console.error(`  Error: ${closeErr.message}
+`);
           failed++;
           continue;
         }
 
-        // Actualizar SL en DB
+        // Actualizar SL en DB (solo para histórico)
         try {
-          await TradeModel.updateStopLoss(tradeFinal.id, newStopLossPrice);
-          console.log(`[BREAKEVEN] ✅ Stop loss actualizado en DB a ${newStopLossPrice}`);
+          await TradeModel.updateStopLoss(tradeFinal.id, entryPriceFromExchange);
         } catch (dbError: any) {
-          console.error(`[BREAKEVEN] ❌ Error al actualizar DB: ${dbError.message}`);
+          console.warn(`[BREAKEVEN] ⚠️ No se pudo actualizar DB (no crítico): ${dbError.message}`);
         }
 
-        console.log(`[BREAKEVEN] ✅ Breakeven completado para usuario ${subscription.user_id}: SL a entrada + 50% cerrado`);
+        console.log(`
+[BREAKEVEN] ✅ BREAKEVEN COMPLETADO EXITOSAMENTE`);
+        console.log(`  Usuario: ${subscription.user_id}`);
+        console.log(`  Símbolo: ${symbol} ${holdSide}`);
+        console.log(`  SL movido a: ${entryPriceFromExchange}`);
+        console.log(`  50% cerrado: ${halfSizeStr} contratos`);
+        console.log(`  Resto: ${(totalNum - halfSizeNum).toFixed(8)} contratos`);
+        console.log(`${'='.repeat(80)}
+`);
         successful++;
       } catch (error: any) {
         console.error(`Error procesando BREAKEVEN para usuario ${subscription.user_id}:`, error);
