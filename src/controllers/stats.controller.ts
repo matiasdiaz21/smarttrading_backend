@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { WebhookLogModel } from '../models/WebhookLog';
 import { AppSettingsModel } from '../models/AppSettings';
-import { StrategyModel } from '../models/Strategy';
 
 interface ParsedPayload {
   symbol?: string;
@@ -106,15 +105,6 @@ export class StatsController {
 
       const profitability = StatsController.computeProfitabilityStats(groupedBySymbol);
 
-      let strategyScope: { mode: 'all' | 'filtered'; names: string[] } = { mode: 'all', names: [] };
-      if (statsStrategyIds && statsStrategyIds.length > 0) {
-        const strats = await StrategyModel.findByIds(statsStrategyIds);
-        strategyScope = {
-          mode: 'filtered',
-          names: strats.map((s) => s.name),
-        };
-      }
-
       res.json({
         success: true,
         data: {
@@ -132,7 +122,6 @@ export class StatsController {
             overallWinrate: parseFloat(overallWinrate.toFixed(2)),
           },
           profitability,
-          strategyScope,
         },
       });
     } catch (error: any) {
