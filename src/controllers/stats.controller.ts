@@ -35,6 +35,12 @@ interface ProfitabilityPublic {
    * suma simple de (R × 1%) ≈ este % sobre la cuenta inicial (no compuesto).
    */
   illustrativeReturnPct: number | null;
+  /**
+   * R por trade cerrado, del cierre más reciente al más antiguo (para sumar “últimos X”).
+   * Capado para no inflar el JSON; ver recentRsTruncated.
+   */
+  recentClosedRsDesc: number[];
+  recentRsTruncated: boolean;
 }
 
 interface SymbolStats {
@@ -301,6 +307,8 @@ export class StatsController {
     return 0;
   }
 
+  private static readonly RECENT_R_CAP = 1000;
+
   static computeProfitabilityStats(
     groupedBySymbol: { [symbol: string]: { [tradeId: string]: any[] } }
   ): ProfitabilityPublic {
@@ -309,6 +317,8 @@ export class StatsController {
     let tradesSkippedNoPrices = 0;
     let sumPositiveR = 0;
     let sumAbsNegativeR = 0;
+
+    const withTime: { r: number; closedAtMs: number }[] = [];
 
     Object.keys(groupedBySymbol).forEach((symbol) => {
       Object.keys(groupedBySymbol[symbol]).forEach((tradeId) => {
@@ -324,8 +334,21 @@ export class StatsController {
         totalR += r;
         if (r > 0) sumPositiveR += r;
         if (r < 0) sumAbsNegativeR += Math.abs(r);
+
+        const closedAtMs =
+          tradeLogs.length > 0
+            ? Math.max(
+                ...tradeLogs.map((l: { processed_at: string }) => new Date(l.processed_at).getTime())
+              )
+            : 0;
+        withTime.push({ r, closedAtMs });
       });
     });
+
+    withTime.sort((a, b) => b.closedAtMs - a.closedAtMs);
+    const cap = StatsController.RECENT_R_CAP;
+    const recentClosedRsDesc = withTime.slice(0, cap).map((x) => parseFloat(x.r.toFixed(4)));
+    const recentRsTruncated = withTime.length > cap;
 
     const avgRPerTrade = tradesWithR > 0 ? totalR / tradesWithR : null;
     const profitFactor =
@@ -340,6 +363,8 @@ export class StatsController {
       tradesWithR,
       tradesSkippedNoPrices,
       illustrativeReturnPct,
+      recentClosedRsDesc,
+      recentRsTruncated,
     };
   }
 
