@@ -36,10 +36,10 @@ interface ProfitabilityPublic {
    */
   illustrativeReturnPct: number | null;
   /**
-   * R por trade cerrado, del cierre más reciente al más antiguo (para sumar “últimos X”).
-   * Capado para no inflar el JSON; ver recentRsTruncated.
+   * Cierres del más reciente al más antiguo. `won` coincide con el winrate del resumen.
+   * `r` null = cierre sin estimación R (no entra en ΣR ni profit factor).
    */
-  recentClosedRsDesc: number[];
+  recentClosedTradesDesc: Array<{ r: number | null; won: boolean }>;
   recentRsTruncated: boolean;
 }
 
@@ -318,22 +318,15 @@ export class StatsController {
     let sumPositiveR = 0;
     let sumAbsNegativeR = 0;
 
-    const withTime: { r: number; closedAtMs: number }[] = [];
+    const withTime: { r: number | null; won: boolean; closedAtMs: number }[] = [];
 
     Object.keys(groupedBySymbol).forEach((symbol) => {
       Object.keys(groupedBySymbol[symbol]).forEach((tradeId) => {
         const tradeLogs = groupedBySymbol[symbol][tradeId];
         const info = StatsController.getTradeIdInfo(tradeLogs);
         if (info.status === 'pending') return;
+        const won = info.status === 'won';
         const r = StatsController.estimateTradeR(tradeLogs, info);
-        if (r === null) {
-          tradesSkippedNoPrices += 1;
-          return;
-        }
-        tradesWithR += 1;
-        totalR += r;
-        if (r > 0) sumPositiveR += r;
-        if (r < 0) sumAbsNegativeR += Math.abs(r);
 
         const closedAtMs =
           tradeLogs.length > 0
@@ -341,13 +334,23 @@ export class StatsController {
                 ...tradeLogs.map((l: { processed_at: string }) => new Date(l.processed_at).getTime())
               )
             : 0;
-        withTime.push({ r, closedAtMs });
+
+        if (r === null) {
+          tradesSkippedNoPrices += 1;
+          withTime.push({ r: null, won, closedAtMs });
+          return;
+        }
+        tradesWithR += 1;
+        totalR += r;
+        if (r > 0) sumPositiveR += r;
+        if (r < 0) sumAbsNegativeR += Math.abs(r);
+        withTime.push({ r: parseFloat(r.toFixed(4)), won, closedAtMs });
       });
     });
 
     withTime.sort((a, b) => b.closedAtMs - a.closedAtMs);
     const cap = StatsController.RECENT_R_CAP;
-    const recentClosedRsDesc = withTime.slice(0, cap).map((x) => parseFloat(x.r.toFixed(4)));
+    const recentClosedTradesDesc = withTime.slice(0, cap).map(({ r, won }) => ({ r, won }));
     const recentRsTruncated = withTime.length > cap;
 
     const avgRPerTrade = tradesWithR > 0 ? totalR / tradesWithR : null;
@@ -363,7 +366,7 @@ export class StatsController {
       tradesWithR,
       tradesSkippedNoPrices,
       illustrativeReturnPct,
-      recentClosedRsDesc,
+      recentClosedTradesDesc,
       recentRsTruncated,
     };
   }
