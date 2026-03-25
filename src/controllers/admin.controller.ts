@@ -61,19 +61,30 @@ export class AdminController {
       }
 
       const { strategy_id, strategy_ids } = req.query;
-      const limit = parseInt(req.query.limit as string) || 100;
+      const rawLimit = req.query.limit;
+      const limitStr = rawLimit != null && rawLimit !== '' ? String(rawLimit).toLowerCase() : '';
+      const limitUnlimited =
+        rawLimit === undefined ||
+        rawLimit === '' ||
+        limitStr === 'all';
+      const limitParsed = limitUnlimited
+        ? undefined
+        : (() => {
+            const n = parseInt(String(rawLimit), 10);
+            return Number.isInteger(n) && n > 0 ? n : undefined;
+          })();
 
       let logs;
       if (strategy_ids && typeof strategy_ids === 'string' && strategy_ids.trim()) {
         const ids = strategy_ids.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && Number.isInteger(n));
-        logs = ids.length > 0 ? await WebhookLogModel.findByStrategyIds(ids, limit) : await WebhookLogModel.findAll(limit);
+        logs = ids.length > 0 ? await WebhookLogModel.findByStrategyIds(ids, limitParsed) : await WebhookLogModel.findAll(limitParsed);
       } else if (strategy_id) {
         logs = await WebhookLogModel.findByStrategyId(
           parseInt(strategy_id as string),
-          limit
+          limitParsed
         );
       } else {
-        logs = await WebhookLogModel.findAll(limit);
+        logs = await WebhookLogModel.findAll(limitParsed);
       }
 
       res.json(logs);

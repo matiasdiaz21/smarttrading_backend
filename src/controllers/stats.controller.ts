@@ -55,8 +55,8 @@ export class StatsController {
 
       // Si hay estrategias configuradas, filtrar logs por ellas; si no, obtener todos
       const logs = statsStrategyIds && statsStrategyIds.length > 0
-        ? await WebhookLogModel.findByStrategyIds(statsStrategyIds, 1000)
-        : await WebhookLogModel.findAll(1000);
+        ? await WebhookLogModel.findByStrategyIds(statsStrategyIds)
+        : await WebhookLogModel.findAll();
 
       // Agrupar logs por símbolo y trade ID
       const { groupedBySymbol } = StatsController.groupLogsBySymbolAndTradeId(logs);

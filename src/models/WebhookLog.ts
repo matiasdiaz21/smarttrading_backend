@@ -15,59 +15,64 @@ export class WebhookLogModel {
     return (result as any).insertId;
   }
 
-  static async findAll(limit = 100): Promise<WebhookLog[]> {
-    // Convertir limit a entero y validar (entre 1 y 1000)
-    const limitInt = Math.max(1, Math.min(1000, parseInt(String(limit), 10) || 100));
-    
-    // Validar que sea un entero válido
-    if (!Number.isInteger(limitInt) || limitInt < 1 || limitInt > 1000) {
+  /**
+   * @param limit Si se omite, devuelve todas las filas (sin LIMIT en SQL).
+   */
+  static async findAll(limit?: number): Promise<WebhookLog[]> {
+    const order = 'SELECT * FROM webhook_logs ORDER BY processed_at DESC, id DESC';
+    if (limit === undefined) {
+      const [rows] = await pool.execute(order);
+      return rows as WebhookLog[];
+    }
+    const limitInt = parseInt(String(limit), 10);
+    if (!Number.isInteger(limitInt) || limitInt < 1) {
       throw new Error('Invalid limit value');
     }
-    
-    // MySQL2 puede tener problemas con LIMIT como parámetro preparado
-    // Usamos execute con el número validado directamente en la query
-    // La validación previa asegura que no hay riesgo de SQL injection
-    const [rows] = await pool.execute(
-      `SELECT * FROM webhook_logs ORDER BY processed_at DESC, id DESC LIMIT ${limitInt}`
-    );
+    const [rows] = await pool.execute(`${order} LIMIT ${limitInt}`);
     return rows as WebhookLog[];
   }
 
-  static async findByStrategyIds(strategyIds: number[], limit = 1000): Promise<WebhookLog[]> {
+  /**
+   * @param limit Si se omite, devuelve todas las filas que coincidan (sin LIMIT).
+   */
+  static async findByStrategyIds(strategyIds: number[], limit?: number): Promise<WebhookLog[]> {
     if (!strategyIds || strategyIds.length === 0) {
       return [];
     }
-    const limitInt = Math.max(1, Math.min(1000, parseInt(String(limit), 10) || 1000));
     const validIds = strategyIds.map(id => parseInt(String(id), 10)).filter(id => !isNaN(id) && Number.isInteger(id));
     if (validIds.length === 0) return [];
     const placeholders = validIds.map(() => '?').join(',');
-    const [rows] = await pool.execute(
-      `SELECT * FROM webhook_logs WHERE strategy_id IN (${placeholders}) ORDER BY processed_at DESC, id DESC LIMIT ${limitInt}`,
-      validIds
-    );
+    const base = `SELECT * FROM webhook_logs WHERE strategy_id IN (${placeholders}) ORDER BY processed_at DESC, id DESC`;
+    if (limit === undefined) {
+      const [rows] = await pool.execute(base, validIds);
+      return rows as WebhookLog[];
+    }
+    const limitInt = parseInt(String(limit), 10);
+    if (!Number.isInteger(limitInt) || limitInt < 1) {
+      throw new Error('Invalid limit value');
+    }
+    const [rows] = await pool.execute(`${base} LIMIT ${limitInt}`, validIds);
     return rows as WebhookLog[];
   }
 
-  static async findByStrategyId(strategyId: number, limit = 50): Promise<WebhookLog[]> {
-    // Validar y convertir parámetros
+  /**
+   * @param limit Si se omite, devuelve todas las filas de la estrategia (sin LIMIT).
+   */
+  static async findByStrategyId(strategyId: number, limit?: number): Promise<WebhookLog[]> {
     const strategyIdInt = parseInt(String(strategyId), 10);
-    const limitInt = Math.max(1, Math.min(1000, parseInt(String(limit), 10) || 50));
-    
     if (isNaN(strategyIdInt) || !Number.isInteger(strategyIdInt)) {
       throw new Error('Invalid strategy_id');
     }
-    
-    if (!Number.isInteger(limitInt) || limitInt < 1 || limitInt > 1000) {
+    const order = 'SELECT * FROM webhook_logs WHERE strategy_id = ? ORDER BY processed_at DESC, id DESC';
+    if (limit === undefined) {
+      const [rows] = await pool.execute(order, [strategyIdInt]);
+      return rows as WebhookLog[];
+    }
+    const limitInt = parseInt(String(limit), 10);
+    if (!Number.isInteger(limitInt) || limitInt < 1) {
       throw new Error('Invalid limit value');
     }
-    
-    // MySQL2 puede tener problemas con LIMIT como parámetro preparado
-    // Usamos execute con strategy_id como parámetro y limit validado en la query
-    // La validación previa asegura que no hay riesgo de SQL injection
-    const [rows] = await pool.execute(
-      `SELECT * FROM webhook_logs WHERE strategy_id = ? ORDER BY processed_at DESC, id DESC LIMIT ${limitInt}`,
-      [strategyIdInt]
-    );
+    const [rows] = await pool.execute(`${order} LIMIT ${limitInt}`, [strategyIdInt]);
     return rows as WebhookLog[];
   }
 
