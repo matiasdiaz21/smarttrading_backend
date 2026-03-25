@@ -2,7 +2,7 @@
 // © LuxAlgo
 
 //@version=5
-indicator('Smart Money Concepts [Trading]', 'SMC Trading', overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500)
+strategy('Smart Money Concepts [Trading]', 'SMC Trading', overlay = true, max_labels_count = 500, max_lines_count = 500, max_boxes_count = 500, pyramiding=0, default_qty_type=strategy.fixed, initial_capital=100, commission_value=0.08, commission_type=strategy.commission.percent, calc_on_every_tick=true)
 //---------------------------------------------------------------------------------------------------------------------}
 //CONSTANTS & STRINGS & INPUTS
 //---------------------------------------------------------------------------------------------------------------------{
@@ -1065,6 +1065,8 @@ if enableTradingInput
         plotEntryS := 0.0
         plotStopS := 0.0
         plotTpS := 0.0
+        strategy.entry("Long", strategy.long, qty=tradeQty, limit=tradeEntry)
+        strategy.exit("ExitLong", "Long", stop=tradeStop, limit=tradeTp)
         alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(tradeEntry) + ', "stopLoss": ' + str.tostring(tradeStop) + ', "takeProfit": ' + str.tostring(tradeTp) + ', "breakeven": ' + str.tostring(tradeBreakeven) + ', "alertType": "ENTRY", "strategy": "Smart Money Concepts", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(tradeId) + ', "signal": "' + sigInfo + '", "trendBias": "' + (swingTrend.bias == BULLISH ? "BULLISH" : "BEARISH") + '", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
         label.new(bar_index, close, text="Long\nID:" + str.tostring(tradeId) + "\n" + sigInfo, style=label.style_label_up, color=color.green, textcolor=color.white, size=tradeTextSize)
 
@@ -1091,12 +1093,16 @@ if enableTradingInput
         plotEntryL := 0.0
         plotStopL := 0.0
         plotTpL := 0.0
+        strategy.entry("Short", strategy.short, qty=tradeQty, limit=tradeEntry)
+        strategy.exit("ExitShort", "Short", stop=tradeStop, limit=tradeTp)
         alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(tradeEntry) + ', "stopLoss": ' + str.tostring(tradeStop) + ', "takeProfit": ' + str.tostring(tradeTp) + ', "breakeven": ' + str.tostring(tradeBreakeven) + ', "alertType": "ENTRY", "strategy": "Smart Money Concepts", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(tradeId) + ', "signal": "' + sigInfo + '", "trendBias": "' + (swingTrend.bias == BULLISH ? "BULLISH" : "BEARISH") + '", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
         label.new(bar_index, close, text="Short\nID:" + str.tostring(tradeId) + "\n" + sigInfo, style=label.style_label_down, color=color.red, textcolor=color.white, size=tradeTextSize)
 
 // ── BREAKEVEN MANAGEMENT ──
 if enableTradingInput and tradeIsOpen and bar_index > tradeEntryBar
     if tradeType == "LONG" and high >= tradeBreakeven and not beTriggered
+        strategy.cancel("ExitLong")
+        strategy.exit("ExitLong", "Long", stop=tradeEntry, limit=tradeTp)
         alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(tradeEntry) + ', "stopLoss": ' + str.tostring(tradeEntry) + ', "takeProfit": ' + str.tostring(tradeTp) + ', "alertType": "BREAKEVEN", "strategy": "Smart Money Concepts", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(tradeId) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
         label.new(bar_index, tradeBreakeven, text="BE " + str.tostring(tradeId), style=label.style_label_down, color=color.orange, textcolor=color.white, size=tradeTextSize)
         tradeStop := tradeEntry
@@ -1106,6 +1112,8 @@ if enableTradingInput and tradeIsOpen and bar_index > tradeEntryBar
         totalBEs += 1
 
     if tradeType == "SHORT" and low <= tradeBreakeven and not beTriggered
+        strategy.cancel("ExitShort")
+        strategy.exit("ExitShort", "Short", stop=tradeEntry, limit=tradeTp)
         alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(tradeEntry) + ', "stopLoss": ' + str.tostring(tradeEntry) + ', "takeProfit": ' + str.tostring(tradeTp) + ', "alertType": "BREAKEVEN", "strategy": "Smart Money Concepts", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(tradeId) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
         label.new(bar_index, tradeBreakeven, text="BE " + str.tostring(tradeId), style=label.style_label_up, color=color.orange, textcolor=color.white, size=tradeTextSize)
         tradeStop := tradeEntry
@@ -1122,12 +1130,16 @@ if enableTradingInput and tradeIsOpen and useTrailingStopInput and bar_index > t
             tradeStop := newTrailLevel
             plotStopL := newTrailLevel
             lastTrailLevel := newTrailLevel
+            strategy.cancel("ExitLong")
+            strategy.exit("ExitLong", "Long", stop=tradeStop, limit=tradeTp)
     if tradeType == "SHORT"
         float newTrailLevel = internalHigh.currentLevel
         if not na(newTrailLevel) and newTrailLevel < tradeStop and newTrailLevel < tradeEntry and newTrailLevel > close
             tradeStop := newTrailLevel
             plotStopS := newTrailLevel
             lastTrailLevel := newTrailLevel
+            strategy.cancel("ExitShort")
+            strategy.exit("ExitShort", "Short", stop=tradeStop, limit=tradeTp)
 
 // ── CLOSE ON OPPOSITE SIGNAL ──
 if enableTradingInput and tradeIsOpen and useCloseOnOppositeInput and bar_index > tradeEntryBar
@@ -1138,6 +1150,7 @@ if enableTradingInput and tradeIsOpen and useCloseOnOppositeInput and bar_index 
         oppositeSignal := currentAlerts.swingBullishCHoCH or currentAlerts.internalBullishCHoCH
     if oppositeSignal and not tpTriggered and not slTriggered
         float exitPrice = close
+        strategy.close_all()
         float posSize_opp = tradeEntry * tradeQty
         float comm_opp = commissionInput * posSize_opp / 100
         float pnl_opp = tradeType == "LONG" ? (exitPrice - tradeEntry) * tradeQty - comm_opp : (tradeEntry - exitPrice) * tradeQty - comm_opp
@@ -1174,6 +1187,7 @@ if enableTradingInput and tradeIsOpen and useCloseOnOppositeInput and bar_index 
 if enableTradingInput and tradeIsOpen and useMaxDurationInput and bar_index > tradeEntryBar
     if (bar_index - tradeEntryBar) >= maxDurationBarsInput and not tpTriggered and not slTriggered
         float exitPrice = close
+        strategy.close_all()
         float posSize_dur = tradeEntry * tradeQty
         float comm_dur = commissionInput * posSize_dur / 100
         float pnl_dur = tradeType == "LONG" ? (exitPrice - tradeEntry) * tradeQty - comm_dur : (tradeEntry - exitPrice) * tradeQty - comm_dur

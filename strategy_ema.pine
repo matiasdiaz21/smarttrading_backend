@@ -1,5 +1,5 @@
 //@version=5
-indicator("Strategy GOLD 1 EMA 1.0.0", overlay=true, precision=4, max_bars_back=1440, max_lines_count=500, max_labels_count=500)
+strategy("Strategy GOLD 1 EMA 1.0.0", overlay=true, precision=4, max_bars_back=1440, max_lines_count=500, max_labels_count=500, pyramiding=0, default_qty_type=strategy.fixed, initial_capital=100, commission_value=0.08, commission_type=strategy.commission.percent, calc_on_every_tick=true, margin_long=0, margin_short=0)
 
 // ═══════════════════════════════════════════════════════════════
 // 📂 CONFIGURACIÓN
@@ -151,8 +151,10 @@ if longcondicion and not isTradeOpen and barstate.isconfirmed
     trade_id += 1
     float qty = (perdida_ * normalBalance / 100) / risk
     currentQty := qty
+    strategy.entry("Long", strategy.long, qty=qty, limit=entry)
+    strategy.exit("ExitLong", "Long", stop=sl, limit=tp)
 
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(be) + ', "alertType": "ENTRY", "strategy": "Strategy GOLD 1 EMA", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "atr": ' + str.tostring(atrValue) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(be) + ', "alertType": "ENTRY", "strategy": "Strategy GOLD 1 EMA", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
     label.new(bar_index, entry, text="Long Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(be, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
 
 if shortcondicion and not isTradeOpen and barstate.isconfirmed
@@ -191,8 +193,10 @@ if shortcondicion and not isTradeOpen and barstate.isconfirmed
     trade_id += 1
     float qty = (perdida_ * normalBalance / 100) / risk
     currentQty := qty
+    strategy.entry("Short", strategy.short, qty=qty, limit=entry)
+    strategy.exit("ExitShort", "Short", stop=sl, limit=tp)
 
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(be) + ', "alertType": "ENTRY", "strategy": "Strategy GOLD 1 EMA", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "atr": ' + str.tostring(atrValue) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": ' + str.tostring(be) + ', "alertType": "ENTRY", "strategy": "Strategy GOLD 1 EMA", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
     label.new(bar_index, entry, text="Short Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(be, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
 
 // ═══════════════════════════════════════════════════════════════
@@ -202,9 +206,11 @@ if shortcondicion and not isTradeOpen and barstate.isconfirmed
 if activeTradeType == "LONG" and high >= breakevenPrice and not alert_breakeven_triggered and isTradeOpen and bar_index > entry_bar_index
     activeStop := activeEntry
     stopl := activeEntry
+    strategy.cancel("ExitLong")
+    strategy.exit("ExitLong", "Long", stop=activeEntry, limit=activeTp)
     be_hit := true
     be_bar_index := bar_index
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "BREAKEVEN", "strategy": "Strategy GOLD 1 EMA", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "BREAKEVEN", "strategy": "Strategy GOLD 1 EMA", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
     label.new(bar_index, breakevenPrice, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
     alert_breakeven_triggered := true
     totalBreakevens += 1
@@ -212,9 +218,11 @@ if activeTradeType == "LONG" and high >= breakevenPrice and not alert_breakeven_
 if activeTradeType == "SHORT" and low <= breakevenPrice and not alert_breakeven_triggered and isTradeOpen and bar_index > entry_bar_index
     activeStop := activeEntry
     stops := activeEntry
+    strategy.cancel("ExitShort")
+    strategy.exit("ExitShort", "Short", stop=activeEntry, limit=activeTp)
     be_hit := true
     be_bar_index := bar_index
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "BREAKEVEN", "strategy": "Strategy GOLD 1 EMA", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "sma_fast": ' + str.tostring(sma_fast) + ', "sma_mid": ' + str.tostring(sma_mid) + ', "sma_slow": ' + str.tostring(sma_slow) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakevenPrice) + ', "alertType": "BREAKEVEN", "strategy": "Strategy GOLD 1 EMA", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
     label.new(bar_index, breakevenPrice, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
     alert_breakeven_triggered := true
     totalBreakevens += 1

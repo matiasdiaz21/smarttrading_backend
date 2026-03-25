@@ -1,5 +1,5 @@
 //@version=5
-indicator("Session Reversal NASDAQ 1.0.0", overlay=true, precision=4, max_bars_back=1440, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+strategy("Session Reversal NASDAQ 1.0.0", overlay=true, precision=4, max_bars_back=1440, max_boxes_count=500, max_lines_count=500, max_labels_count=500, pyramiding=0, default_qty_type=strategy.percent_of_equity, default_qty_value=100, calc_on_every_tick=true, margin_long=0, margin_short=0)
 
 // ═══════════════════════════════════════════════════════════════
 // 📂 CONFIGURACIÓN
@@ -185,9 +185,9 @@ twoGreenCandles = close > open and close[1] > open[1]
 
 // Condiciones finales de entrada
 // SHORT: Precio tocó máximo anterior + 2 velas rojas de rechazo
-shortCondition = inSession and touchedResistance and twoRedCandles and not tradeTakenThisSession and not na(prevSessionLow) and barstate.isconfirmed
+shortCondition = inSession and touchedResistance and twoRedCandles and not tradeTakenThisSession and not na(prevSessionLow)
 // LONG: Precio tocó mínimo anterior + 2 velas verdes de rechazo
-longCondition = inSession and touchedSupport and twoGreenCandles and not tradeTakenThisSession and not na(prevSessionHigh) and barstate.isconfirmed
+longCondition = inSession and touchedSupport and twoGreenCandles and not tradeTakenThisSession and not na(prevSessionHigh)
 
 // ═══════════════════════════════════════════════════════════════
 // 📊 LÓGICA DE ESTRATEGIA
@@ -221,12 +221,15 @@ var float currentQty = 0.0
 // ═══════════════════════════════════════════════════════════════
 // 📥 ENTRADAS - Solo 1 trade por sesión
 // ═══════════════════════════════════════════════════════════════
+// NOTA: A diferencia de auto_trading (que espera pullback a EMA con limit),
+// Session Reversal entra al cierre de la vela de confirmación (2 velas de rechazo).
+// La señal YA ES la confirmación → se usa entrada a mercado (sin limit).
 
-// LONG: Precio tocó mínimo anterior + 2 velas verdes de rechazo
-if longCondition and not isTradeOpen
-    float entry = close
-    float sl = math.min(low, low[1])    // Mínimo de las 2 velas verdes
-    float tp = prevSessionHigh           // TP en máximo de sesión anterior
+// LONG: Precio tocó mínimo anterior + 2 velas verdes de rechazo → entrada inmediata
+if longCondition and not isTradeOpen and strategy.position_size == 0
+    float entry = math.round_to_mintick(close)
+    float sl = math.round_to_mintick(math.min(low, low[1]))    // Mínimo de las 2 velas verdes
+    float tp = math.round_to_mintick(prevSessionHigh)           // TP en máximo de sesión anterior
     float risk = math.abs(entry - sl)
     
     if risk > 0 and tp > entry
@@ -248,16 +251,18 @@ if longCondition and not isTradeOpen
         isTradeOpen := true
         tradeTakenThisSession := true
         trade_id += 1
-        float qty = (perdida_ * normalBalance / 100) / risk
+        float qty = math.max((perdida_ * normalBalance / 100) / risk, 0.001)
         currentQty := qty
+        strategy.entry("Long", strategy.long)
+        strategy.exit("ExitLong", "Long", stop=sl, limit=tp)
         alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": 0, "alertType": "ENTRY", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "prevSessionHigh": ' + str.tostring(prevSessionHigh) + ', "prevSessionLow": ' + str.tostring(prevSessionLow) + ', "pattern": "2 green candles rejection at support", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
         label.new(bar_index, entry, text="Long Entry\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
 
-// SHORT: Precio tocó máximo anterior + 2 velas rojas de rechazo
-if shortCondition and not isTradeOpen
-    float entry = close
-    float sl = math.max(high, high[1])   // Máximo de las 2 velas rojas
-    float tp = prevSessionLow             // TP en mínimo de sesión anterior
+// SHORT: Precio tocó máximo anterior + 2 velas rojas de rechazo → entrada inmediata
+if shortCondition and not isTradeOpen and strategy.position_size == 0
+    float entry = math.round_to_mintick(close)
+    float sl = math.round_to_mintick(math.max(high, high[1]))   // Máximo de las 2 velas rojas
+    float tp = math.round_to_mintick(prevSessionLow)             // TP en mínimo de sesión anterior
     float risk = math.abs(sl - entry)
     
     if risk > 0 and tp < entry
@@ -279,8 +284,10 @@ if shortCondition and not isTradeOpen
         isTradeOpen := true
         tradeTakenThisSession := true
         trade_id += 1
-        float qty = (perdida_ * normalBalance / 100) / risk
+        float qty = math.max((perdida_ * normalBalance / 100) / risk, 0.001)
         currentQty := qty
+        strategy.entry("Short", strategy.short)
+        strategy.exit("ExitShort", "Short", stop=sl, limit=tp)
         alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": 0, "alertType": "ENTRY", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "prevSessionHigh": ' + str.tostring(prevSessionHigh) + ', "prevSessionLow": ' + str.tostring(prevSessionLow) + ', "pattern": "2 red candles rejection at resistance", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
         label.new(bar_index, entry, text="Short Entry\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
 
@@ -414,6 +421,9 @@ float LOTE = (isTradeOpen and activeEntry > 0 and POSICION > 0) ? POSICION / act
 float COMI = (isTradeOpen and POSICION > 0) ? (comision * POSICION / 100) * -1 : 0.0
 
 mysite = "Session Reversal NASDAQ"
+// Total operaciones = mismo criterio que el Informe de estrategia (cerradas + 1 si hay abierta)
+int totalOpsStrategy = strategy.closedtrades + (math.abs(strategy.position_size) > 0 ? 1 : 0)
+
 var infoTable = table.new(position=position.bottom_right, columns=1, rows=12, bgcolor=color.rgb(208, 207, 198), border_width=2)
 table.cell(infoTable, 0, 0, text=mysite, text_halign=text.align_center, text_size=textSize, text_color=chart.bg_color, bgcolor=chart.fg_color)
 table.cell(infoTable, 0, 1, text=op + " " + syminfo.ticker + " ▐ Session Reversal", text_size=textSize, text_halign=text.align_left, text_color=color.fuchsia, bgcolor=chart.bg_color)
@@ -422,7 +432,7 @@ table.cell(infoTable, 0, 3, text="STOP : " + (isTradeOpen ? str.tostring(math.ro
 table.cell(infoTable, 0, 4, text="TP : " + (isTradeOpen ? str.tostring(math.round(activeTp, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.green, bgcolor=chart.bg_color)
 table.cell(infoTable, 0, 5, text="LOTE : " + (isTradeOpen ? str.tostring(math.round(LOTE, 5)) + " ▐ $ " + str.tostring(math.round(POSICION, 2)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
 table.cell(infoTable, 0, 6, text="COMISIÓN: ▐ " + (isTradeOpen ? str.tostring(math.round(COMI, 4)) : "---") + " ▐ ", text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
-table.cell(infoTable, 0, 7, text="Trade ID: " + str.tostring(trade_id), text_size=textSize, text_halign=text.align_left, text_color=color.blue, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 7, text="Total operaciones: " + str.tostring(totalOpsStrategy) + "  |  ID trade actual: " + str.tostring(trade_id), text_size=textSize, text_halign=text.align_left, text_color=color.blue, bgcolor=chart.bg_color)
 
 // Balance
 float normalBalanceChange = normalBalance - capital
@@ -438,3 +448,5 @@ table.cell(infoTable, 0, 10, text="Winrate: " + str.tostring(math.round(winrate,
 
 // Niveles de liquidez (entre sesiones)
 table.cell(infoTable, 0, 11, text="Liquidez: H " + (not na(prevSessionHigh) ? str.tostring(math.round(prevSessionHigh, DEC)) : "---") + " / L " + (not na(prevSessionLow) ? str.tostring(math.round(prevSessionLow, DEC)) : "---"), text_size=textSize, text_halign=text.align_left, text_color=color.blue, bgcolor=chart.bg_color)
+
+// Fin del script
