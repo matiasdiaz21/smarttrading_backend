@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { WebhookLogModel } from '../models/WebhookLog';
 import { AppSettingsModel } from '../models/AppSettings';
+import { StrategyModel } from '../models/Strategy';
 
 interface ParsedPayload {
   symbol?: string;
@@ -17,6 +18,24 @@ interface TradeInfo {
   side: string;
   alertTypes: string[];
   status: 'won' | 'lost' | 'pending';
+}
+
+/** Rentabilidad agregada en múltiplos R (riesgo por trade) para el landing */
+interface ProfitabilityPublic {
+  /** Media de R en trades cerrados con precios ENTRY válidos */
+  avgRPerTrade: number | null;
+  /** Suma de R (trades con estimación) */
+  totalR: number;
+  /** Suma R ganadores / |suma R perdedores| */
+  profitFactor: number | null;
+  tradesWithR: number;
+  /** ENTRY sin precios suficientes para estimar R */
+  tradesSkippedNoPrices: number;
+  /**
+   * Retorno acumulado ilustrativo (%): si arriesgas 1% del capital por operación,
+   * suma simple de (R × 1%) ≈ este % sobre la cuenta inicial (no compuesto).
+   */
+  illustrativeReturnPct: number | null;
 }
 
 interface SymbolStats {
@@ -85,6 +104,17 @@ export class StatsController {
         .filter(symbol => symbol !== 'N/A')
         .sort();
 
+      const profitability = StatsController.computeProfitabilityStats(groupedBySymbol);
+
+      let strategyScope: { mode: 'all' | 'filtered'; names: string[] } = { mode: 'all', names: [] };
+      if (statsStrategyIds && statsStrategyIds.length > 0) {
+        const strats = await StrategyModel.findByIds(statsStrategyIds);
+        strategyScope = {
+          mode: 'filtered',
+          names: strats.map((s) => s.name),
+        };
+      }
+
       res.json({
         success: true,
         data: {
@@ -101,6 +131,8 @@ export class StatsController {
             totalSymbols: allSymbols.length,
             overallWinrate: parseFloat(overallWinrate.toFixed(2)),
           },
+          profitability,
+          strategyScope,
         },
       });
     } catch (error: any) {
@@ -170,7 +202,8 @@ export class StatsController {
     const side = payload?.side || 'N/A';
     const alertTypes = logs.map(log => {
       const p = StatsController.parsePayload(log.payload);
-      return p?.alertType || p?.alert_type || 'UNKNOWN';
+      const raw = p?.alertType || p?.alert_type || 'UNKNOWN';
+      return typeof raw === 'string' ? raw.toUpperCase() : 'UNKNOWN';
     });
 
     // Determinar estado del trade según la lógica de negocio:
@@ -200,6 +233,124 @@ export class StatsController {
       side: String(side),
       alertTypes: uniqueAlertTypes,
       status,
+    };
+  }
+
+  static numFromPayload(p: any, ...keys: string[]): number | null {
+    for (const k of keys) {
+      const v = (p as any)?.[k];
+      if (v != null && v !== '') {
+        const n = Number(v);
+        if (Number.isFinite(n)) return n;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Precios del trade desde el alert ENTRY (misma convención que Pine: entryPrice, stopLoss, takeProfit).
+   */
+  static extractEntryPricesFromLogs(logs: any[]): {
+    entry: number;
+    stop: number;
+    tp: number | null;
+    risk: number;
+    isLong: boolean;
+  } | null {
+    const sorted = [...logs].sort(
+      (a, b) => new Date(a.processed_at).getTime() - new Date(b.processed_at).getTime()
+    );
+    for (const log of sorted) {
+      const p = StatsController.parsePayload(log.payload) as ParsedPayload & Record<string, unknown>;
+      const rawType = (p?.alertType || p?.alert_type || '') as string;
+      if (String(rawType).toUpperCase() !== 'ENTRY') continue;
+      const entry = StatsController.numFromPayload(p, 'entryPrice', 'entry_price');
+      const stop = StatsController.numFromPayload(p, 'stopLoss', 'stop_loss');
+      const tp = StatsController.numFromPayload(p, 'takeProfit', 'take_profit');
+      const side = String(p?.side || '').toUpperCase();
+      const isLong = side === 'LONG' || side === 'BUY';
+      if (entry == null || stop == null) continue;
+      const risk = isLong ? Math.abs(entry - stop) : Math.abs(stop - entry);
+      if (risk <= 0) continue;
+      return { entry, stop, tp: tp ?? null, risk, isLong };
+    }
+    return null;
+  }
+
+  /**
+   * Estimación de R por trade cerrado: riesgo = |entrada − stop| en el ENTRY.
+   * TP: R = |TP − entrada| / riesgo; SL sin BE: −1; BE+SL sin TP: 0 R (conservador).
+   */
+  static estimateTradeR(logs: any[], info: TradeInfo): number | null {
+    if (info.status === 'pending') return null;
+    const prices = StatsController.extractEntryPricesFromLogs(logs);
+    if (!prices || prices.risk <= 0) return null;
+
+    const types = info.alertTypes.map((t) => String(t).toUpperCase());
+    const hasTP = types.includes('TAKE_PROFIT');
+    const hasBE = types.includes('BREAKEVEN');
+    const hasSL = types.includes('STOP_LOSS');
+
+    if (info.status === 'lost') {
+      return -1;
+    }
+
+    if (hasTP && prices.tp != null && Number.isFinite(prices.tp)) {
+      if (prices.isLong) {
+        const rr = (prices.tp - prices.entry) / prices.risk;
+        return Number.isFinite(rr) ? rr : null;
+      }
+      const rr = (prices.entry - prices.tp) / prices.risk;
+      return Number.isFinite(rr) ? rr : null;
+    }
+    if (hasBE && hasSL && !hasTP) {
+      return 0;
+    }
+    if (hasBE && !hasTP) {
+      return 0.5;
+    }
+    return 0;
+  }
+
+  static computeProfitabilityStats(
+    groupedBySymbol: { [symbol: string]: { [tradeId: string]: any[] } }
+  ): ProfitabilityPublic {
+    let totalR = 0;
+    let tradesWithR = 0;
+    let tradesSkippedNoPrices = 0;
+    let sumPositiveR = 0;
+    let sumAbsNegativeR = 0;
+
+    Object.keys(groupedBySymbol).forEach((symbol) => {
+      Object.keys(groupedBySymbol[symbol]).forEach((tradeId) => {
+        const tradeLogs = groupedBySymbol[symbol][tradeId];
+        const info = StatsController.getTradeIdInfo(tradeLogs);
+        if (info.status === 'pending') return;
+        const r = StatsController.estimateTradeR(tradeLogs, info);
+        if (r === null) {
+          tradesSkippedNoPrices += 1;
+          return;
+        }
+        tradesWithR += 1;
+        totalR += r;
+        if (r > 0) sumPositiveR += r;
+        if (r < 0) sumAbsNegativeR += Math.abs(r);
+      });
+    });
+
+    const avgRPerTrade = tradesWithR > 0 ? totalR / tradesWithR : null;
+    const profitFactor =
+      sumAbsNegativeR > 0 ? sumPositiveR / sumAbsNegativeR : sumPositiveR > 0 ? null : null;
+    const illustrativeReturnPct =
+      tradesWithR > 0 ? parseFloat((totalR * 1).toFixed(2)) : null;
+
+    return {
+      avgRPerTrade: avgRPerTrade != null ? parseFloat(avgRPerTrade.toFixed(3)) : null,
+      totalR: parseFloat(totalR.toFixed(3)),
+      profitFactor: profitFactor != null ? parseFloat(profitFactor.toFixed(2)) : null,
+      tradesWithR,
+      tradesSkippedNoPrices,
+      illustrativeReturnPct,
     };
   }
 

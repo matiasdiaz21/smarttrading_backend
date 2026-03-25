@@ -22,6 +22,20 @@ export class StrategyModel {
     return strategies[0] || null;
   }
 
+  /** Varias estrategias por id (p. ej. nombres para stats públicas del landing). */
+  static async findByIds(ids: number[]): Promise<Strategy[]> {
+    const valid = [...new Set(ids.map((i) => parseInt(String(i), 10)).filter((i) => !isNaN(i) && Number.isInteger(i)))];
+    if (valid.length === 0) return [];
+    const placeholders = valid.map(() => '?').join(',');
+    const [rows] = await pool.execute(
+      `SELECT * FROM strategies WHERE id IN (${placeholders})`,
+      valid
+    );
+    const list = rows as Strategy[];
+    const order = new Map(valid.map((id, i) => [id, i]));
+    return list.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  }
+
   /** Busca una estrategia por nombre (activas e inactivas). Para webhooks: recibir y registrar aunque no esté activa para trading. */
   static async findByName(name: string): Promise<Strategy | null> {
     if (!name || String(name).trim() === '') return null;
