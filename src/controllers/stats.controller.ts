@@ -38,8 +38,9 @@ interface ProfitabilityPublic {
   /**
    * Cierres del más reciente al más antiguo. `won` coincide con el winrate del resumen.
    * `r` null = cierre sin estimación R (no entra en ΣR ni profit factor).
+   * `closedAt` = ISO 8601 del último log del cierre (referencia temporal en el landing).
    */
-  recentClosedTradesDesc: Array<{ r: number | null; won: boolean }>;
+  recentClosedTradesDesc: Array<{ r: number | null; won: boolean; closedAt: string }>;
   recentRsTruncated: boolean;
 }
 
@@ -350,7 +351,11 @@ export class StatsController {
 
     withTime.sort((a, b) => b.closedAtMs - a.closedAtMs);
     const cap = StatsController.RECENT_R_CAP;
-    const recentClosedTradesDesc = withTime.slice(0, cap).map(({ r, won }) => ({ r, won }));
+    const recentClosedTradesDesc = withTime.slice(0, cap).map(({ r, won, closedAtMs }) => ({
+      r,
+      won,
+      closedAt: new Date(closedAtMs).toISOString(),
+    }));
     const recentRsTruncated = withTime.length > cap;
 
     const avgRPerTrade = tradesWithR > 0 ? totalR / tradesWithR : null;
