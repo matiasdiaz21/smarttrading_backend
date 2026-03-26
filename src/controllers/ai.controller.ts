@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import axios from 'axios';
 import { AuthRequest } from '../middleware/auth';
 import { AiConfigModel } from '../models/AiConfig';
 import { AiAssetModel } from '../models/AiAsset';
@@ -170,6 +171,57 @@ export class AiController {
       res.json(models);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  }
+
+  /** GET /api/admin/ai/news-provider/test - Probar conexión a Financial Modeling Prep */
+  static async testNewsProvider(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const apiKey = process.env.FMP_API_KEY || process.env.FINNHUB_API_KEY;
+      if (!apiKey || !apiKey.trim()) {
+        res.status(400).json({
+          ok: false,
+          provider: 'Financial Modeling Prep',
+          configured: false,
+          message: 'FMP_API_KEY no configurada en el entorno',
+        });
+        return;
+      }
+
+      const endpoint = 'https://financialmodelingprep.com/stable/news/general-latest';
+      const startedAt = Date.now();
+      const response = await axios.get(endpoint, {
+        params: { limit: 3, apikey: apiKey },
+        timeout: 9000,
+      });
+      const elapsedMs = Date.now() - startedAt;
+      const raw = response.data;
+      const news = Array.isArray(raw) ? raw : (raw?.data ?? []);
+      const first = Array.isArray(news) && news.length > 0 ? news[0] : null;
+
+      res.json({
+        ok: true,
+        provider: 'Financial Modeling Prep',
+        configured: true,
+        endpoint,
+        elapsed_ms: elapsedMs,
+        fetched_items: Array.isArray(news) ? news.length : 0,
+        sample: first
+          ? {
+              title: first.title || first.headline || null,
+              source: first.site || first.source || null,
+              publishedDate: first.publishedDate || first.date || first.datetime || null,
+            }
+          : null,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        ok: false,
+        provider: 'Financial Modeling Prep',
+        configured: true,
+        message: error?.message || 'Error al probar proveedor de noticias',
+        detail: error?.response?.data || null,
+      });
     }
   }
 

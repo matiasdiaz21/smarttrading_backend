@@ -5,7 +5,7 @@ import { AiPredictionModel, AiPredictionRow } from '../models/AiPrediction';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const BITGET_API_URL = 'https://api.bitget.com';
-const FINNHUB_API_URL = 'https://finnhub.io/api/v1';
+const FMP_API_URL = 'https://financialmodelingprep.com/stable';
 
 // ===================== Technical Indicators =====================
 
@@ -372,51 +372,71 @@ async function fetchCrossAssetContext(): Promise<CrossAssetContext | null> {
   }
 }
 
+/** Convierte símbolos internos (ej. BTCUSDT) al formato esperado por FMP en noticias. */
+function normalizeSymbolForFmpNews(symbol: string, category: AssetCategory): string {
+  const s = String(symbol || '').toUpperCase().replace(/\s+/g, '');
+  if (!s) return '';
+  if (s.includes('/')) return s.replace(/\//g, '');
+  // Crypto en este proyecto suele venir como BTCUSDT/ETHUSDT
+  if (category === 'crypto') {
+    if (s.endsWith('USDT')) return `${s.slice(0, -4)}USD`;
+    if (s.endsWith('USDC')) return `${s.slice(0, -4)}USD`;
+  }
+  // Commodities tipo XAUUSDT -> XAUUSD
+  if (category === 'commodities') {
+    if (s.endsWith('USDT')) return `${s.slice(0, -4)}USD`;
+    if (s.endsWith('USDC')) return `${s.slice(0, -4)}USD`;
+  }
+  return s;
+}
+
 /**
  * Fetch recent market/financial news for context in the AI prompt.
- * Uses Finnhub API (optional: set FINNHUB_API_KEY in env).
- * Category: crypto, forex, or general (commodities/rest).
+ * Uses Financial Modeling Prep (FMP) API.
+ * Env recomendado: FMP_API_KEY (compatibilidad temporal: FINNHUB_API_KEY).
  */
 async function fetchMarketNews(symbol: string, category: AssetCategory): Promise<string> {
-  const apiKey = process.env.FINNHUB_API_KEY;
+  const apiKey = process.env.FMP_API_KEY || process.env.FINNHUB_API_KEY;
   if (!apiKey || !apiKey.trim()) {
-    return 'API de noticias no configurada. Configura FINNHUB_API_KEY en el entorno para incluir noticias recientes del mercado.';
+    return 'API de noticias no configurada. Configura FMP_API_KEY en el entorno para incluir noticias recientes del mercado.';
   }
 
-  const categoryMap: Record<AssetCategory, string> = {
-    crypto: 'crypto',
-    forex: 'general',
-    commodities: 'general',
-  };
-  const finnhubCategory = categoryMap[category];
-
   try {
-    const res = await axios.get(
-      `${FINNHUB_API_URL}/news`,
-      {
-        params: { category: finnhubCategory, token: apiKey },
-        timeout: 8000,
-      }
-    );
+    const endpoint = category === 'crypto' ? `${FMP_API_URL}/news/crypto` : `${FMP_API_URL}/news/general-latest`;
+    const params: Record<string, string | number> = {
+      apikey: apiKey,
+      limit: 8,
+    };
+    if (category === 'crypto') {
+      const normalized = normalizeSymbolForFmpNews(symbol, category);
+      if (normalized) params.symbols = normalized;
+    }
+
+    const res = await axios.get(endpoint, { params, timeout: 9000 });
 
     const raw = res.data;
     const data = Array.isArray(raw) ? raw : (raw?.data ?? []);
     if (!Array.isArray(data) || data.length === 0) {
-      return 'No hay noticias recientes disponibles para esta categoría.';
+      return 'No hay noticias recientes disponibles en este momento.';
     }
 
     const items = data.slice(0, 8);
     const lines = items.map((n: any, i: number) => {
-      const date = n.datetime ? new Date(n.datetime * 1000).toISOString().slice(0, 16) : '';
-      const headline = n.headline || n.title || 'Sin título';
-      const summary = (n.summary || n.headline || '').slice(0, 200);
-      return `${i + 1}. [${date}] ${headline}${summary && summary !== headline ? ` — ${summary}` : ''} (${n.source || 'N/A'})`;
+      const publishedRaw = n.publishedDate || n.published_date || n.date || n.datetime;
+      const date = publishedRaw
+        ? new Date(typeof publishedRaw === 'number' ? publishedRaw : String(publishedRaw)).toISOString().slice(0, 16)
+        : '';
+      const headline = n.title || n.headline || 'Sin título';
+      const summary = (n.text || n.summary || '').slice(0, 200);
+      const source = n.site || n.source || 'N/A';
+      return `${i + 1}. [${date}] ${headline}${summary ? ` — ${summary}` : ''} (${source})`;
     });
 
-    return `Noticias recientes de mercado (${finnhubCategory}):\n${lines.join('\n')}`;
+    const contextTag = category === 'crypto' ? `crypto:${normalizeSymbolForFmpNews(symbol, category)}` : category;
+    return `Noticias recientes de mercado (${contextTag}, FMP):\n${lines.join('\n')}`;
   } catch (error: any) {
     console.warn(`[AI Service] ⚠️ No se pudieron obtener noticias: ${error.message}`);
-    return `No se pudo consultar la API de noticias (${error.message || 'error desconocido'}). Considera revisar FINNHUB_API_KEY.`;
+    return `No se pudo consultar la API de noticias (${error.message || 'error desconocido'}). Revisa FMP_API_KEY.`;
   }
 }
 

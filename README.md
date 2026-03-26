@@ -21,7 +21,8 @@ NOWPAYMENTS_WEBHOOK_SECRET=your-webhook-secret
 ```
 
 Opcional (análisis IA con noticias de mercado):
-- `FINNHUB_API_KEY`: API key de [Finnhub](https://finnhub.io) para incluir noticias recientes del mercado en los prompts de análisis por categoría (crypto, forex, commodities). Sin esta variable, el placeholder `{{market_news}}` mostrará un mensaje indicando que la API no está configurada.
+- `FMP_API_KEY`: API key de [Financial Modeling Prep](https://site.financialmodelingprep.com/developer/docs/quickstart) para incluir noticias recientes del mercado en los prompts de análisis por categoría (crypto, forex, commodities). Sin esta variable, el placeholder `{{market_news}}` mostrará un mensaje indicando que la API no está configurada.
+- Compatibilidad temporal: si no existe `FMP_API_KEY`, el backend intentará usar `FINNHUB_API_KEY` como fallback de variable de entorno.
 
 3. Ejecutar en desarrollo:
 ```bash
