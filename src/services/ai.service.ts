@@ -397,7 +397,10 @@ function normalizeSymbolForFmpNews(symbol: string, category: AssetCategory): str
  */
 async function fetchMarketNews(symbol: string, category: AssetCategory): Promise<string> {
   const apiKey = process.env.FMP_API_KEY || process.env.FINNHUB_API_KEY;
+  const keySource = process.env.FMP_API_KEY ? 'FMP_API_KEY' : (process.env.FINNHUB_API_KEY ? 'FINNHUB_API_KEY(fallback)' : 'none');
+  const maskedKey = apiKey ? `${apiKey.slice(0, 4)}***${apiKey.slice(-3)}` : null;
   if (!apiKey || !apiKey.trim()) {
+    console.warn(`[AI Service] [market-news] ❌ API key ausente para noticias. source=none symbol=${symbol} category=${category}`);
     return 'API de noticias no configurada. Configura FMP_API_KEY en el entorno para incluir noticias recientes del mercado.';
   }
 
@@ -412,10 +415,13 @@ async function fetchMarketNews(symbol: string, category: AssetCategory): Promise
       if (normalized) params.symbols = normalized;
     }
 
+    const logParams = { ...params, apikey: maskedKey };
+    console.log(`[AI Service] [market-news] ▶️ Request FMP endpoint=${endpoint} params=${JSON.stringify(logParams)} keySource=${keySource}`);
     const res = await axios.get(endpoint, { params, timeout: 9000 });
 
     const raw = res.data;
     const data = Array.isArray(raw) ? raw : (raw?.data ?? []);
+    console.log(`[AI Service] [market-news] ✅ status=${res.status} items=${Array.isArray(data) ? data.length : 0} symbol=${symbol} category=${category}`);
     if (!Array.isArray(data) || data.length === 0) {
       return 'No hay noticias recientes disponibles en este momento.';
     }
@@ -435,7 +441,11 @@ async function fetchMarketNews(symbol: string, category: AssetCategory): Promise
     const contextTag = category === 'crypto' ? `crypto:${normalizeSymbolForFmpNews(symbol, category)}` : category;
     return `Noticias recientes de mercado (${contextTag}, FMP):\n${lines.join('\n')}`;
   } catch (error: any) {
-    console.warn(`[AI Service] ⚠️ No se pudieron obtener noticias: ${error.message}`);
+    const status = error?.response?.status;
+    const detail = error?.response?.data;
+    console.warn(
+      `[AI Service] [market-news] ⚠️ Error FMP status=${status ?? 'n/a'} message=${error?.message || 'unknown'} symbol=${symbol} category=${category} detail=${typeof detail === 'string' ? detail : JSON.stringify(detail)}`
+    );
     return `No se pudo consultar la API de noticias (${error.message || 'error desconocido'}). Revisa FMP_API_KEY.`;
   }
 }

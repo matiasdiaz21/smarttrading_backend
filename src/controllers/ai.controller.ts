@@ -178,7 +178,10 @@ export class AiController {
   static async testNewsProvider(req: AuthRequest, res: Response): Promise<void> {
     try {
       const apiKey = process.env.FMP_API_KEY || process.env.FINNHUB_API_KEY;
+      const apiKeySource = process.env.FMP_API_KEY ? 'FMP_API_KEY' : (process.env.FINNHUB_API_KEY ? 'FINNHUB_API_KEY(fallback)' : 'none');
+      const maskedKey = apiKey ? `${apiKey.slice(0, 4)}***${apiKey.slice(-3)}` : null;
       if (!apiKey || !apiKey.trim()) {
+        console.warn('[AI Controller] [news-provider/test] ❌ API key ausente. source=none');
         res.status(400).json({
           ok: false,
           provider: 'Financial Modeling Prep',
@@ -189,6 +192,9 @@ export class AiController {
       }
 
       const endpoint = 'https://financialmodelingprep.com/stable/news/general-latest';
+      console.log(
+        `[AI Controller] [news-provider/test] ▶️ Probando conexión FMP endpoint=${endpoint} limit=3 keySource=${apiKeySource} key=${maskedKey}`
+      );
       const startedAt = Date.now();
       const response = await axios.get(endpoint, {
         params: { limit: 3, apikey: apiKey },
@@ -198,6 +204,9 @@ export class AiController {
       const raw = response.data;
       const news = Array.isArray(raw) ? raw : (raw?.data ?? []);
       const first = Array.isArray(news) && news.length > 0 ? news[0] : null;
+      console.log(
+        `[AI Controller] [news-provider/test] ✅ status=${response.status} elapsedMs=${elapsedMs} items=${Array.isArray(news) ? news.length : 0}`
+      );
 
       res.json({
         ok: true,
@@ -215,6 +224,11 @@ export class AiController {
           : null,
       });
     } catch (error: any) {
+      const status = error?.response?.status;
+      const detail = error?.response?.data;
+      console.error(
+        `[AI Controller] [news-provider/test] ❌ Error probando FMP status=${status ?? 'n/a'} message=${error?.message || 'unknown'} detail=${typeof detail === 'string' ? detail : JSON.stringify(detail)}`
+      );
       res.status(500).json({
         ok: false,
         provider: 'Financial Modeling Prep',
