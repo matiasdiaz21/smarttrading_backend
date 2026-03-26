@@ -274,6 +274,7 @@ app.get('/api/ai/assets', authenticate, AiController.getAssets);
 // AI Trading routes (admin)
 app.get('/api/admin/ai/config', authenticate, requireAdmin, AiController.getConfig);
 app.put('/api/admin/ai/config', authenticate, requireAdmin, AiController.updateConfig);
+app.get('/api/admin/ai/news-provider/test', authenticate, requireAdmin, AiController.testNewsProvider);
 app.get('/api/admin/ai/groq-models', authenticate, requireAdmin, AiController.getGroqModels);
 app.post('/api/admin/ai/analyze', authenticate, requireAdmin, AiController.triggerAnalysis);
 app.get('/api/admin/ai/assets', authenticate, requireAdmin, AiController.getAdminAssets);
