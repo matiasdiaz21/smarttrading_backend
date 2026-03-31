@@ -614,13 +614,16 @@ export class TradingTestController {
   /**
    * GET /api/admin/trading/closed-roundtrips
    * Posiciones cerradas agregadas desde historial de órdenes Bitget (PnL neto por roundtrip).
-   * Query: credential_id (requerido), product_type (opcional), days (opcional, default 90, max 365).
+   * Query: credential_id (requerido), product_type (opcional), days (opcional, default 90, max 365),
+   * start_time_ms (opcional): solo roundtrips con cierre >= este instante; la búsqueda de órdenes se amplía hacia atrás
+   * (buffer) para poder emparejar aperturas anteriores al corte.
    */
   static async getClosedRoundtrips(req: AuthRequest, res: Response): Promise<void> {
     try {
       const credentialId = parseInt(req.query.credential_id as string, 10);
       const productType = ((req.query.product_type as string) || 'USDT-FUTURES').toUpperCase();
       const days = Math.min(365, Math.max(1, parseInt(req.query.days as string, 10) || 90));
+      const comparisonStartMs = parseInt(req.query.start_time_ms as string, 10);
 
       if (!credentialId || Number.isNaN(credentialId)) {
         res.status(400).json({ error: 'credential_id es requerido' });
@@ -641,22 +644,41 @@ export class TradingTestController {
       });
 
       const endTime = Date.now();
-      const startTime = endTime - days * 24 * 60 * 60 * 1000;
+      const maxLookbackMs = 365 * 24 * 60 * 60 * 1000;
+      let orderFetchStart = endTime - days * 24 * 60 * 60 * 1000;
+
+      const hasComparisonStart =
+        Number.isFinite(comparisonStartMs) &&
+        !Number.isNaN(comparisonStartMs) &&
+        comparisonStartMs > 0 &&
+        comparisonStartMs <= endTime;
+
+      if (hasComparisonStart) {
+        const OPEN_BUFFER_MS = 21 * 24 * 60 * 60 * 1000;
+        orderFetchStart = Math.min(orderFetchStart, comparisonStartMs - OPEN_BUFFER_MS);
+        orderFetchStart = Math.max(orderFetchStart, endTime - maxLookbackMs);
+      }
+
       const orders = await bitgetService.getOrdersHistory(
         decryptedCredentials,
         productType,
         1000,
-        startTime,
+        orderFetchStart,
         endTime
       );
-      const roundtrips = aggregateClosedRoundtripsFromOrders(orders, credentialId);
+      let roundtrips = aggregateClosedRoundtripsFromOrders(orders, credentialId);
+
+      if (hasComparisonStart) {
+        roundtrips = roundtrips.filter((r) => new Date(r.close_time).getTime() >= comparisonStartMs);
+      }
 
       res.json({
         roundtrips,
         count: roundtrips.length,
-        startTime,
+        startTime: orderFetchStart,
         endTime,
         productType,
+        comparisonStartMs: hasComparisonStart ? comparisonStartMs : null,
       });
     } catch (error: any) {
       console.error('[ClosedRoundtrips] Error:', error.message);
