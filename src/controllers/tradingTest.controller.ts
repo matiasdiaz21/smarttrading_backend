@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { BitgetService } from '../services/bitget.service';
 import { CredentialsModel } from '../models/Credentials';
+import { aggregateClosedRoundtripsFromOrders } from '../utils/bitgetClosedRoundtrips';
 
 const bitgetService = new BitgetService();
 
@@ -606,6 +607,59 @@ export class TradingTestController {
       });
     } catch (error: any) {
       console.error('[CancelTriggers] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
+   * GET /api/admin/trading/closed-roundtrips
+   * Posiciones cerradas agregadas desde historial de órdenes Bitget (PnL neto por roundtrip).
+   * Query: credential_id (requerido), product_type (opcional), days (opcional, default 90, max 365).
+   */
+  static async getClosedRoundtrips(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const credentialId = parseInt(req.query.credential_id as string, 10);
+      const productType = ((req.query.product_type as string) || 'USDT-FUTURES').toUpperCase();
+      const days = Math.min(365, Math.max(1, parseInt(req.query.days as string, 10) || 90));
+
+      if (!credentialId || Number.isNaN(credentialId)) {
+        res.status(400).json({ error: 'credential_id es requerido' });
+        return;
+      }
+
+      const userId = req.user!.userId;
+      const credentials = await CredentialsModel.findById(credentialId, userId);
+      if (!credentials) {
+        res.status(404).json({ error: 'Credencial no encontrada' });
+        return;
+      }
+
+      const decryptedCredentials = BitgetService.getDecryptedCredentials({
+        api_key: credentials.api_key,
+        api_secret: credentials.api_secret,
+        passphrase: credentials.passphrase,
+      });
+
+      const endTime = Date.now();
+      const startTime = endTime - days * 24 * 60 * 60 * 1000;
+      const orders = await bitgetService.getOrdersHistory(
+        decryptedCredentials,
+        productType,
+        1000,
+        startTime,
+        endTime
+      );
+      const roundtrips = aggregateClosedRoundtripsFromOrders(orders, credentialId);
+
+      res.json({
+        roundtrips,
+        count: roundtrips.length,
+        startTime,
+        endTime,
+        productType,
+      });
+    } catch (error: any) {
+      console.error('[ClosedRoundtrips] Error:', error.message);
       res.status(500).json({ error: error.message });
     }
   }
