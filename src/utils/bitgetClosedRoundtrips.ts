@@ -3,6 +3,21 @@
  * Misma lógica base que UserController.getPositions (cerradas), sin mapeo a estrategias/trades internos.
  */
 
+/**
+ * SmartTrading ENTRY envía clientOid: ST_{userId}_{strategyId}_{webhookTradeId}_{ts}_...
+ * Coincide con `trade_id` / alertData.id en webhook_logs y columna trades.trade_id.
+ */
+export function parseSmartTradingEntryClientOid(clientOid: string | null | undefined): string | null {
+  if (clientOid == null || typeof clientOid !== 'string') return null;
+  const s = clientOid.trim();
+  if (!s.startsWith('ST_')) return null;
+  const parts = s.slice(3).split('_');
+  if (parts.length < 4) return null;
+  const tradeId = parts[2];
+  if (!tradeId || tradeId === 'ENTRY') return null;
+  return tradeId;
+}
+
 export interface BitgetClosedRoundtrip {
   position_id: string;
   symbol: string;
@@ -15,6 +30,8 @@ export interface BitgetClosedRoundtrip {
   open_price: string;
   close_price: string;
   size: string;
+  /** Mismo identificador que webhook `alertData.id` / `trade_id` cuando la apertura fue vía SmartTrading */
+  linked_webhook_trade_id: string | null;
 }
 
 /**
@@ -135,6 +152,9 @@ export function aggregateClosedRoundtripsFromOrders(
       const netPnl = grossPnl - totalFees;
       const holdSide = groupOpenOrders[0]?.posSide?.toLowerCase() || posSide;
 
+      const entryClientOid = groupOpenOrders[0]?.clientOid ?? groupOpenOrders[0]?.client_oid;
+      const linkedWebhookTradeId = parseSmartTradingEntryClientOid(entryClientOid);
+
       const openTimeMs = parseInt(groupOpenOrders[0]?.cTime || groupOpenOrders[0]?.uTime || '0', 10);
       const closeTimeMs = parseInt(
         groupCloseOrders[groupCloseOrders.length - 1]?.uTime ||
@@ -155,6 +175,7 @@ export function aggregateClosedRoundtripsFromOrders(
         open_price: openPrice.toString(),
         close_price: closePrice.toString(),
         size: totalOpenSize.toString(),
+        linked_webhook_trade_id: linkedWebhookTradeId,
       });
     });
   });
