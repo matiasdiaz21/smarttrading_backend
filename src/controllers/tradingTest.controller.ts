@@ -687,6 +687,70 @@ export class TradingTestController {
   }
 
   /**
+   * GET /api/admin/trading/futures-account-context
+   * Saldo (equity/available) y apalancamientos de posiciones abiertas para alinear sim vs real.
+   */
+  static async getFuturesAccountContext(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const credentialId = parseInt(req.query.credential_id as string, 10);
+      const productType = ((req.query.product_type as string) || 'USDT-FUTURES').toUpperCase();
+      const marginCoin = ((req.query.margin_coin as string) || 'USDT').toUpperCase();
+
+      if (!credentialId || Number.isNaN(credentialId)) {
+        res.status(400).json({ error: 'credential_id es requerido' });
+        return;
+      }
+
+      const userId = req.user!.userId;
+      const credentials = await CredentialsModel.findById(credentialId, userId);
+      if (!credentials) {
+        res.status(404).json({ error: 'Credencial no encontrada' });
+        return;
+      }
+
+      const decryptedCredentials = BitgetService.getDecryptedCredentials({
+        api_key: credentials.api_key,
+        api_secret: credentials.api_secret,
+        passphrase: credentials.passphrase,
+      });
+
+      const [balance, positionsRaw] = await Promise.all([
+        bitgetService.getAccountBalance(decryptedCredentials, productType, marginCoin),
+        bitgetService.getPositions(decryptedCredentials, undefined, productType),
+      ]);
+
+      const positions = Array.isArray(positionsRaw) ? positionsRaw : [];
+      const openPositions = positions
+        .filter((p: any) => parseFloat(p.total || p.size || p.available || '0') > 0)
+        .map((p: any) => {
+          const lev = p.leverage != null ? parseFloat(String(p.leverage)) : NaN;
+          return {
+            symbol: String(p.symbol || p.symbolName || '').toUpperCase(),
+            holdSide: String(p.holdSide || '').toLowerCase(),
+            leverage: Number.isFinite(lev) ? lev : null,
+            total: p.total ?? p.size ?? null,
+          };
+        });
+
+      const numericLevs = openPositions.map((p) => p.leverage).filter((n): n is number => n != null && n > 0);
+      const suggestedLeverage =
+        numericLevs.length > 0 ? Math.max(...numericLevs) : null;
+
+      res.json({
+        equity: balance.equity,
+        available: balance.available,
+        unrealizedPL: balance.unrealizedPL,
+        marginCoin: balance.marginCoin,
+        openPositions,
+        suggestedLeverage,
+      });
+    } catch (error: any) {
+      console.error('[FuturesAccountContext] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
    * GET /api/admin/trading/credentials
    * Lista las credenciales del admin (solo id y nombre)
    */
