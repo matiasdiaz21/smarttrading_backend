@@ -32,36 +32,12 @@ export interface BitgetClosedRoundtrip {
   size: string;
   /** Mismo identificador que webhook `alertData.id` / `trade_id` cuando la apertura fue vía SmartTrading */
   linked_webhook_trade_id: string | null;
-  /** Cantidad de órdenes de cierre agregadas en este roundtrip (1 = único cierre, 2+ = parciales). */
-  close_fill_count: number;
-  /** Resumen heurístico según historial de fills (comparar con ruta de webhooks). */
-  real_path_summary: string;
-  /** Apalancamiento reportado en la orden de apertura (Bitget), si viene en el historial. */
+  /** Apalancamiento de la orden de apertura (Bitget mix), si viene en el historial */
   leverage: string | null;
-}
-
-function buildRealPathSummary(closeOrders: any[], totalOpenSize: number, netPnl: number): string {
-  const sorted = [...closeOrders].sort(
-    (a, b) =>
-      parseInt(String(a.uTime || a.cTime || '0'), 10) - parseInt(String(b.uTime || b.cTime || '0'), 10)
-  );
-  const n = sorted.length;
-  if (n === 0) return '—';
-  if (n === 1) {
-    return `1 cierre · ${netPnl >= 0 ? 'PnL neto ≥ 0' : 'PnL neto < 0'}`;
-  }
-  const sizes = sorted.map((o) => parseFloat(String(o.baseVolume || o.size || '0')));
-  const half = totalOpenSize > 0 ? totalOpenSize / 2 : 0;
-  const first = sizes[0];
-  const firstNearHalf =
-    half > 0 &&
-    first != null &&
-    Number.isFinite(first) &&
-    Math.abs(first - half) <= Math.max(half * 0.22, totalOpenSize * 0.05);
-  if (n === 2 && firstNearHalf) {
-    return '2 cierres (~50%+50%) · típico parcial + resto (p. ej. BE/TP + SL)';
-  }
-  return `${n} cierres · posibles salidas parciales`;
+  /** Número de órdenes de cierre agregadas (1 = un solo fill de cierre; 2+ sugiere parcial + cierre) */
+  close_fill_count: number;
+  /** Detalle de cada cierre (cronológico) para contrastar con ruta webhook */
+  close_legs: Array<{ price_avg: string; size: string; time: string }>;
 }
 
 /**
@@ -185,20 +161,32 @@ export function aggregateClosedRoundtripsFromOrders(
       const entryClientOid = groupOpenOrders[0]?.clientOid ?? groupOpenOrders[0]?.client_oid;
       const linkedWebhookTradeId = parseSmartTradingEntryClientOid(entryClientOid);
 
-      const levRaw = groupOpenOrders[0]?.leverage;
-      const leverageStr =
-        levRaw != null && String(levRaw).trim() !== '' ? String(levRaw).trim() : null;
-
-      const closeFillCount = groupCloseOrders.length;
-      const realPathSummary = buildRealPathSummary(groupCloseOrders, totalOpenSize, netPnl);
-
       const openTimeMs = parseInt(groupOpenOrders[0]?.cTime || groupOpenOrders[0]?.uTime || '0', 10);
+      const sortedCloseOrders = [...groupCloseOrders].sort(
+        (a: any, b: any) =>
+          parseInt(a.cTime || a.uTime || '0', 10) - parseInt(b.cTime || b.uTime || '0', 10)
+      );
       const closeTimeMs = parseInt(
-        groupCloseOrders[groupCloseOrders.length - 1]?.uTime ||
-          groupCloseOrders[groupCloseOrders.length - 1]?.cTime ||
+        sortedCloseOrders[sortedCloseOrders.length - 1]?.uTime ||
+          sortedCloseOrders[sortedCloseOrders.length - 1]?.cTime ||
           '0',
         10
       );
+
+      const levRaw = groupOpenOrders[0]?.leverage;
+      const leverage =
+        levRaw != null && String(levRaw).trim() !== '' ? String(levRaw).trim() : null;
+
+      const close_legs = sortedCloseOrders.map((co: any) => {
+        const t = parseInt(co.uTime || co.cTime || '0', 10);
+        const sz = parseFloat(co.baseVolume || co.size || '0');
+        const px = parseFloat(co.priceAvg || co.price || '0');
+        return {
+          price_avg: Number.isFinite(px) ? px.toString() : '0',
+          size: Number.isFinite(sz) ? sz.toString() : '0',
+          time: t > 0 ? new Date(t).toISOString() : '',
+        };
+      });
 
       closedPositions.push({
         position_id: `${credentialId}_${symbol}_${holdSide}_${openTimeMs}`,
@@ -213,9 +201,9 @@ export function aggregateClosedRoundtripsFromOrders(
         close_price: closePrice.toString(),
         size: totalOpenSize.toString(),
         linked_webhook_trade_id: linkedWebhookTradeId,
-        close_fill_count: closeFillCount,
-        real_path_summary: realPathSummary,
-        leverage: leverageStr,
+        leverage,
+        close_fill_count: sortedCloseOrders.length,
+        close_legs,
       });
     });
   });

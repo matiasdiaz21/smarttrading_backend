@@ -2377,7 +2377,14 @@ export class BitgetService {
     credentials: BitgetCredentials,
     productType: string = 'USDT-FUTURES',
     marginCoin: string = 'USDT'
-  ): Promise<{ available: number; equity: number; unrealizedPL: number; marginCoin: string }> {
+  ): Promise<{
+    available: number;
+    equity: number;
+    unrealizedPL: number;
+    marginCoin: string;
+    /** Apalancamiento de cuenta cruzada si Bitget lo devuelve (varía por producto/cuenta) */
+    accountLeverage: string | null;
+  }> {
     const endpoint = `/api/v2/mix/account/accounts?productType=${productType.toUpperCase()}`;
     const result = await this.makeRequest('GET', endpoint, credentials);
 
@@ -2386,11 +2393,19 @@ export class BitgetService {
     }
 
     const account = result.find((a: any) => a.marginCoin?.toUpperCase() === marginCoin.toUpperCase()) || result[0];
+    const levRaw =
+      account.crossMarginLeverage ??
+      account.crossedMarginLeverage ??
+      account.marginLeverage ??
+      account.leverage;
+    const accountLeverage =
+      levRaw != null && String(levRaw).trim() !== '' ? String(levRaw).trim() : null;
     return {
       available: parseFloat(account.available || account.crossedMaxAvailable || '0'),
       equity: parseFloat(account.accountEquity || account.usdtEquity || '0'),
       unrealizedPL: parseFloat(account.unrealizedPL || '0'),
       marginCoin: account.marginCoin || marginCoin,
+      accountLeverage,
     };
   }
 

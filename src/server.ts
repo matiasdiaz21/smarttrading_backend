@@ -294,6 +294,12 @@ app.get(
   requireAdmin,
   TradingTestController.getFuturesAccountContext
 );
+app.get(
+  '/api/admin/trading/futures-account-snapshot',
+  authenticate,
+  requireAdmin,
+  TradingTestController.getFuturesAccountSnapshot
+);
 app.get('/api/admin/trading/credentials', authenticate, requireAdmin, TradingTestController.getCredentials);
 app.get('/api/admin/trading/positions', authenticate, requireAdmin, TradingTestController.getPositions);
 app.get('/api/admin/trading/pending-triggers', authenticate, requireAdmin, TradingTestController.getPendingTriggers);

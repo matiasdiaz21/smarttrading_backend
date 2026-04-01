@@ -733,19 +733,62 @@ export class TradingTestController {
         });
 
       const numericLevs = openPositions.map((p) => p.leverage).filter((n): n is number => n != null && n > 0);
-      const suggestedLeverage =
-        numericLevs.length > 0 ? Math.max(...numericLevs) : null;
+      const suggestedLeverage = numericLevs.length > 0 ? Math.max(...numericLevs) : null;
 
       res.json({
         equity: balance.equity,
         available: balance.available,
         unrealizedPL: balance.unrealizedPL,
         marginCoin: balance.marginCoin,
+        accountLeverage: balance.accountLeverage,
         openPositions,
         suggestedLeverage,
       });
     } catch (error: any) {
       console.error('[FuturesAccountContext] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
+   * GET /api/admin/trading/futures-account-snapshot
+   * Respuesta mínima para Sim vs Real (equity + apalancamiento de cuenta si la API lo expone).
+   */
+  static async getFuturesAccountSnapshot(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const credentialId = parseInt(req.query.credential_id as string, 10);
+      const productType = ((req.query.product_type as string) || 'USDT-FUTURES').toUpperCase();
+      const marginCoin = ((req.query.margin_coin as string) || 'USDT').toUpperCase();
+
+      if (!credentialId || Number.isNaN(credentialId)) {
+        res.status(400).json({ error: 'credential_id es requerido' });
+        return;
+      }
+
+      const userId = req.user!.userId;
+      const credentials = await CredentialsModel.findById(credentialId, userId);
+      if (!credentials) {
+        res.status(404).json({ error: 'Credencial no encontrada' });
+        return;
+      }
+
+      const decryptedCredentials = BitgetService.getDecryptedCredentials({
+        api_key: credentials.api_key,
+        api_secret: credentials.api_secret,
+        passphrase: credentials.passphrase,
+      });
+
+      const snap = await bitgetService.getAccountBalance(decryptedCredentials, productType, marginCoin);
+      res.json({
+        productType,
+        marginCoin: snap.marginCoin,
+        equity: snap.equity,
+        available: snap.available,
+        unrealizedPL: snap.unrealizedPL,
+        accountLeverage: snap.accountLeverage,
+      });
+    } catch (error: any) {
+      console.error('[FuturesAccountSnapshot] Error:', error.message);
       res.status(500).json({ error: error.message });
     }
   }
