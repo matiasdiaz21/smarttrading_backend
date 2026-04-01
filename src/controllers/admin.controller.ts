@@ -348,7 +348,7 @@ export class AdminController {
         res.status(400).json({ error: 'Invalid limit (1–500)' });
         return;
       }
-      const logs = await BitgetOperationLogModel.getByUserAndTradeId(req.user.id, tradeId, limit);
+      const logs = await BitgetOperationLogModel.getByUserAndTradeId(req.user.userId, tradeId, limit);
       res.json({ trade_id: tradeId, logs });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

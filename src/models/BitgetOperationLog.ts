@@ -263,6 +263,14 @@ class BitgetOperationLogModel {
     tradeId: string,
     limit: number = 200
   ): Promise<BitgetOperationLogWithDetails[]> {
+    const uid = Number(userId);
+    const tid = tradeId == null ? '' : String(tradeId).trim();
+    if (!Number.isFinite(uid)) {
+      throw new Error('Invalid userId');
+    }
+    if (!tid) {
+      throw new Error('Invalid tradeId');
+    }
     const limitInt = Math.max(1, Math.min(500, parseInt(String(limit), 10) || 200));
     const [rows] = await pool.execute<RowDataPacket[]>(
       `SELECT bol.*, u.email as user_email, s.name as strategy_name
@@ -272,7 +280,7 @@ class BitgetOperationLogModel {
        WHERE bol.user_id = ? AND bol.trade_id = ?
        ORDER BY bol.created_at ASC
        LIMIT ${limitInt}`,
-      [userId, tradeId]
+      [uid, tid]
     );
     return rows.map((row) => ({
       ...row,

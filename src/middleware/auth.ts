@@ -20,9 +20,17 @@ export function authenticate(
     }
 
     const token = authHeader.substring(7);
-    const payload = verifyToken(token);
-    
-    req.user = payload;
+    const payload = verifyToken(token) as JWTPayload & { id?: number };
+    const userId = payload.userId ?? payload.id;
+    if (userId === undefined || userId === null || !Number.isFinite(Number(userId))) {
+      res.status(401).json({ error: 'Invalid token payload' });
+      return;
+    }
+    req.user = {
+      userId: Number(userId),
+      email: payload.email,
+      role: payload.role,
+    };
     next();
   } catch (error) {
     res.status(401).json({ error: 'Invalid token' });

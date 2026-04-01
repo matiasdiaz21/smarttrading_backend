@@ -622,7 +622,7 @@ export class BitgetService {
       const baseId = `${timestamp}_${randomSuffix}_${random5}_${hexEntropy}`;
 
       // 1) Orden de apertura (market o limit según orderData) SIN preset SL/TP
-      const openResult = await this.placeOrder(credentials, {
+      let openResult = await this.placeOrder(credentials, {
         ...orderData,
         tradeSide: 'open',
         // NO usar presetStopLossPrice para evitar error 45062
