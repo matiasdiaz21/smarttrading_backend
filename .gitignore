@@ -8,3 +8,10 @@ build/
 *.tsbuildinfo
 .vercel
 
+# Salida de `npm run build` / `tsc` (outDir=./api, rootDir=./src). No versionar:
+# solo se commitea api/index.ts como entry Vercel; el resto es artefacto local.
+api/**/*.js
+api/**/*.js.map
+api/**/*.d.ts
+api/**/*.d.ts.map
+

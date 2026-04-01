@@ -1,0 +1,12 @@
+# Fin de línea LF en el repo (evita diffs masivos por CRLF en Windows).
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
