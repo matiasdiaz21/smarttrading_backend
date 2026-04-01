@@ -342,6 +342,7 @@ export class MassTradeController {
           console.log(`[MassTrade] 📊 ${symbol}: precio=${currentPrice}, size=${sizeStr}, SL=${formattedSL}, TP=${formattedTP || 'N/A'}`);
 
           // Abrir posición
+          const limitOpenPrice = parseFloat(currentPrice.toFixed(pricePlace)).toString();
           const orderResult = await bitgetService.placeOrder(
             decryptedCredentials,
             {
@@ -352,7 +353,9 @@ export class MassTradeController {
               size: sizeStr,
               side,
               tradeSide: 'open',
-              orderType: 'market',
+              orderType: 'limit',
+              price: limitOpenPrice,
+              force: 'gtc',
               clientOid,
             },
             { userId: req.user!.userId, strategyId: null }

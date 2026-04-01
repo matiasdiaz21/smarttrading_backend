@@ -288,7 +288,11 @@ export class TradingService {
         exchange === 'bybit'
           ? this.bybitService.calculateOrderSize(req, min, mult)
           : this.bitgetService.calculateOrderSize(req, min, mult);
-      let calculatedSize = calcOrderSize(requestedSize, contractInfo.minTradeNum, contractInfo.sizeMultiplier);
+      let calculatedSize = calcOrderSize(
+        requestedSize ?? String(contractInfo.minTradeNum),
+        contractInfo.minTradeNum,
+        contractInfo.sizeMultiplier
+      );
 
       // Convertir side de LONG/SHORT a buy/sell para Bitget
       const bitgetSide: 'buy' | 'sell' = alert.side === 'LONG' || alert.side === 'buy' ? 'buy' : 'sell';
@@ -413,18 +417,24 @@ export class TradingService {
         const hexEntropy = crypto.randomBytes(4).toString('hex');
         const randomSuffix = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
         const uniqueClientOid = `ST_${userId}_${strategyId}_${alert.trade_id || 'ENTRY'}_${ts}_${randomSuffix}_${hexEntropy}`.substring(0, 64);
-        
+
+        if (!entryPrice) {
+          throw new Error(
+            'ENTRY requiere entryPrice o price en la alerta para abrir con orden limit (mismo precio que la estrategia).'
+          );
+        }
+
         const orderData = {
           symbol: symbol,
           productType: productType,
           marginMode: alert.marginMode || 'isolated',
           marginCoin: alert.marginCoin || 'USDT',
           size: calculatedSize,
-          price: entryPrice ? entryPrice.toString() : undefined,
+          price: entryPrice.toString(),
           side: bitgetSide,
           tradeSide: alert.tradeSide || 'open',
-          orderType: (alert.orderType || 'market') as 'market' | 'limit',
-          force: alert.force || (alert.orderType === 'limit' ? 'gtc' : undefined),
+          orderType: 'limit' as const,
+          force: alert.force || 'gtc',
           clientOid: uniqueClientOid,
         };
 
@@ -444,7 +454,7 @@ export class TradingService {
                     {
                       symbol: symbol.toUpperCase(),
                       size: calculatedSize,
-                      price: orderData.price || '',
+                      price: orderData.price,
                       side: bitgetSide,
                       orderType: orderData.orderType,
                       clientOid: uniqueClientOid,
@@ -461,7 +471,7 @@ export class TradingService {
                       marginMode: alert.marginMode || 'isolated',
                       marginCoin: alert.marginCoin || 'USDT',
                       size: calculatedSize,
-                      price: orderData.price || '',
+                      price: orderData.price,
                       side: bitgetSide,
                       orderType: orderData.orderType,
                       clientOid: uniqueClientOid,
@@ -591,7 +601,7 @@ export class TradingService {
         result?.orderId || existingPosition?.positionId || 'N/A',
         alert.symbol,
         dbSide,
-        alert.orderType || 'market',
+        'limit',
         actualPositionSize,
         entryPrice ? entryPrice.toString() : null,
         'pending',

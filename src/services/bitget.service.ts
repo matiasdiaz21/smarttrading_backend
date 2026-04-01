@@ -661,24 +661,18 @@ export class BitgetService {
           }
         }
         if (!orderFilled) {
-          // Fallback: cancelar limit y abrir con market para no perder la señal
           try {
-            console.warn('[Bitget] ⏱️ Timeout 60s: limit no se llenó. Cancelando limit y abriendo con market...');
+            console.warn(
+              '[Bitget] ⏱️ Timeout 60s: limit no se llenó. Cancelando orden (sin entrada a mercado; precio alineado a la estrategia).'
+            );
             await this.cancelOpenOrder(credentials, openResult.orderId, orderData.symbol, orderData.productType, orderData.marginCoin, logContext);
             fallbackExtraCalls += 1;
-            const marketResult = await this.placeOrder(credentials, {
-              ...orderData,
-              orderType: 'market',
-              price: '',
-              tradeSide: 'open',
-            }, logContext ? { ...logContext, orderId: undefined } : undefined);
-            fallbackExtraCalls += 1;
-            openResult = marketResult;
-            console.log('[Bitget] ✅ Apertura con market. OrderId:', openResult.orderId);
-          } catch (fallbackErr: any) {
-            console.error('[Bitget] ❌ Fallback market falló:', fallbackErr.message);
-            throw new Error('Timeout: la orden de apertura no se llenó en 60s. Colocá manualmente las limit de cierre 50%+50% cuando esté filled.');
+          } catch (cancelErr: any) {
+            console.error('[Bitget] ⚠️ No se pudo cancelar la limit tras timeout:', cancelErr.message);
           }
+          throw new Error(
+            'La orden limit de apertura no se ejecutó en 60s. Se intentó cancelar la pendiente; no se abre a mercado. Revisa precio/liquidez o reenvía la señal.'
+          );
         }
       }
 
@@ -835,7 +829,7 @@ export class BitgetService {
         }
       }
 
-      // 1 place-order + 1 place-tpsl-order + 2 place-plan-order + getOrderStatus (limit only) + fallback (cancel+place if timeout)
+      // 1 place-order + 1 place-tpsl-order + 2 place-plan-order + getOrderStatus (limit only) + cancel si timeout (sin market)
       const bitgetApiCalls = 1 + 1 + 2 + getOrderStatusCalls + fallbackExtraCalls;
       return {
         success: true,

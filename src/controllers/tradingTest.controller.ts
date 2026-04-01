@@ -93,7 +93,7 @@ export class TradingTestController {
       const clientOid = `TEST_${symbol.substring(0, 8)}_${timestamp}_${Math.floor(Math.random() * 10000)}`.substring(0, 64);
 
       // Simular alerta TV: siempre 1 llamada (market + preset SL+TP). Sin TP parcial.
-      const effectiveOrderType = singleCall ? 'market' : (useLimitPartial ? 'limit' : (order_type || 'market'));
+      const effectiveOrderType = singleCall ? 'market' : (useLimitPartial ? 'limit' : (order_type || 'limit'));
       const effectivePrice = singleCall ? '' : (useLimitPartial ? String(entry_price || '') : (entry_price ? String(entry_price) : undefined));
 
       let calculatedPartialPrice: number | undefined;

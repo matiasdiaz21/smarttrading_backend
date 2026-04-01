@@ -125,7 +125,7 @@ export class WebhookController {
       const alert: TradingViewAlert = {
         symbol: req.body.symbol || req.body.ticker,
         side: req.body.side || (req.body.action === 'buy' ? 'buy' : 'sell'),
-        orderType: req.body.orderType || req.body.type || 'market',
+        orderType: req.body.orderType || req.body.type || 'limit',
         size: req.body.size || req.body.quantity,
         price: req.body.price,
         productType: req.body.productType || 'USDT-FUTURES',
