@@ -34,6 +34,13 @@ const CONTRACT_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
 /** Longitud máxima de clientOid en Bitget (error 40305 si se supera o caracteres no permitidos). */
 const BITGET_CLIENT_OID_MAX_LEN = 64;
 
+/** trade_id Pine/webhook para cruzar logs; null si no hay id usable (p. ej. placeholder ENTRY en clientOid). */
+function normalizeTradeIdForLog(v: string | number | null | undefined): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s || s === 'N/A' || s === 'ENTRY') return null;
+  return s.length > 64 ? s.substring(0, 64) : s;
+}
 
 /** Genera clientOid válido para Bitget: solo [a-zA-Z0-9_], máx 64 chars (evita error 40305). Escalable y seguro. */
 function makeBitgetClientOid(prefix: string, symbol: string, baseId: string, suffix: string): string {
@@ -71,6 +78,7 @@ export class BitgetService {
     logContext?: {
       userId?: number;
       strategyId?: number | null;
+      tradeId?: string | number | null;
       symbol?: string;
       operationType?: string;
       orderId?: string;
@@ -167,7 +175,8 @@ export class BitgetService {
             success,
             errorMessage,
             logContext.orderId || null,
-            logContext.clientOid || null
+            logContext.clientOid || null,
+            normalizeTradeIdForLog(logContext.tradeId)
           );
           
           console.log(`[BitgetService] ✅ Log de operación guardado exitosamente con ID: ${logId}`);
@@ -383,6 +392,7 @@ export class BitgetService {
     logContext?: {
       userId?: number;
       strategyId?: number | null;
+      tradeId?: string | number | null;
       orderId?: string;
       metrics?: { apiCalls: number };
     }
@@ -445,6 +455,7 @@ export class BitgetService {
         logContext ? {
           userId: logContext.userId,
           strategyId: logContext.strategyId,
+          tradeId: logContext.tradeId,
           symbol: orderData.symbol,
           operationType: 'placeOrder',
           orderId: logContext.orderId,
@@ -476,7 +487,7 @@ export class BitgetService {
     symbol: string,
     productType: string,
     marginCoin: string = 'USDT',
-    logContext?: { userId: number; strategyId: number | null }
+    logContext?: { userId: number; strategyId: number | null; tradeId?: string | number | null }
   ): Promise<void> {
     const endpoint = '/api/v2/mix/order/cancel-order';
     await this.makeRequest('POST', endpoint, credentials, {
@@ -516,6 +527,7 @@ export class BitgetService {
     logContext?: {
       userId: number;
       strategyId: number | null;
+      tradeId?: string | number | null;
     }
   ): Promise<{
     success: boolean;
@@ -715,6 +727,7 @@ export class BitgetService {
         tpPartialResult = await this.makeRequest('POST', planEndpoint, credentials, tpPartialPayload, logContext ? {
           userId: logContext.userId,
           strategyId: logContext.strategyId,
+          tradeId: logContext.tradeId,
           symbol: orderData.symbol,
           operationType: 'take_profit_partial',
           orderId: openResult.orderId,
@@ -737,6 +750,7 @@ export class BitgetService {
             tpPartialResult = await this.makeRequest('POST', planEndpoint, credentials, adjustedPayload, logContext ? {
               userId: logContext.userId,
               strategyId: logContext.strategyId,
+              tradeId: logContext.tradeId,
               symbol: orderData.symbol,
               operationType: 'take_profit_partial_adjusted',
               orderId: openResult.orderId,
@@ -780,6 +794,7 @@ export class BitgetService {
         tpFinalResult = await this.makeRequest('POST', planEndpoint, credentials, tpFinalPayload, logContext ? {
           userId: logContext.userId,
           strategyId: logContext.strategyId,
+          tradeId: logContext.tradeId,
           symbol: orderData.symbol,
           operationType: 'take_profit_final',
           orderId: openResult.orderId,
@@ -802,6 +817,7 @@ export class BitgetService {
             tpFinalResult = await this.makeRequest('POST', planEndpoint, credentials, adjustedPayload, logContext ? {
               userId: logContext.userId,
               strategyId: logContext.strategyId,
+              tradeId: logContext.tradeId,
               symbol: orderData.symbol,
               operationType: 'take_profit_final_adjusted',
               orderId: openResult.orderId,
@@ -868,7 +884,7 @@ export class BitgetService {
       breakevenPrice?: number;
     },
     contractInfo?: any,
-    logContext?: { userId: number; strategyId: number | null; orderId?: string },
+    logContext?: { userId: number; strategyId: number | null; orderId?: string; tradeId?: string | number | null },
     currentPrice?: number
   ): Promise<Array<{ type: string; success: boolean; result?: any; error?: string }>> {
     const results: Array<{ type: string; success: boolean; result?: any; error?: string }> = [];
@@ -892,7 +908,7 @@ export class BitgetService {
       const planEndpoint = '/api/v2/mix/order/place-plan-order';
 
       const makeLogCtx = (opType: string, clientOid: string) => logContext ? {
-        userId: logContext.userId, strategyId: logContext.strategyId,
+        userId: logContext.userId, strategyId: logContext.strategyId, tradeId: logContext.tradeId,
         symbol: positionData.symbol, operationType: opType,
         orderId: logContext.orderId, clientOid,
       } : undefined;
@@ -1036,6 +1052,7 @@ export class BitgetService {
       userId?: number;
       strategyId?: number | null;
       orderId?: string;
+      tradeId?: string | number | null;
       metrics?: { apiCalls: number };
     }
   ): Promise<{ success: boolean; steps: Array<{ type: string; success: boolean; result?: any; error?: string }> }> {
@@ -1064,7 +1081,7 @@ export class BitgetService {
                 marginCoin: marginCoin.toUpperCase(),
                 orderId,
               }, logContext ? {
-                userId: logContext.userId, strategyId: logContext.strategyId,
+                userId: logContext.userId, strategyId: logContext.strategyId, tradeId: logContext.tradeId,
                 symbol, operationType: 'cancelSL_forBreakeven', orderId: logContext.orderId, metrics: logContext.metrics,
               } : undefined);
               console.log(`[Bitget] ✅ SL viejo cancelado (${orderId})`);
@@ -1100,7 +1117,7 @@ export class BitgetService {
       
       try {
         const slResult = await this.makeRequest('POST', tpslEndpoint, credentials, slPayload, logContext ? {
-          userId: logContext.userId, strategyId: logContext.strategyId,
+          userId: logContext.userId, strategyId: logContext.strategyId, tradeId: logContext.tradeId,
           symbol, operationType: 'newSL_breakeven', orderId: logContext.orderId, clientOid: slClientOid, metrics: logContext.metrics,
         } : undefined);
         console.log(`[Bitget] ✅ Nuevo SL en breakeven (${formattedSL}) configurado`);
@@ -1137,6 +1154,7 @@ export class BitgetService {
       userId: number;
       strategyId: number | null;
       orderId?: string;
+      tradeId?: string | number | null;
     }
   ): Promise<any> {
     const endpoint = '/api/v2/mix/order/place-tpsl-order';
@@ -1164,6 +1182,7 @@ export class BitgetService {
     return this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
       userId: logContext.userId,
       strategyId: logContext.strategyId,
+      tradeId: logContext.tradeId,
       symbol: tpslData.symbol,
       operationType,
       orderId: logContext.orderId,
@@ -1287,6 +1306,7 @@ export class BitgetService {
       userId: number;
       strategyId: number | null;
       orderId?: string;
+      tradeId?: string | number | null;
     },
     knownCurrentPrice?: number
   ): Promise<any> {
@@ -1419,6 +1439,7 @@ export class BitgetService {
           this.makeRequest('POST', endpoint, credentials, tpPayload, logContext ? {
             userId: logContext.userId,
             strategyId: logContext.strategyId,
+            tradeId: logContext.tradeId,
             symbol: symbol,
             operationType: 'setTakeProfit',
             orderId: logContext.orderId,
@@ -1444,6 +1465,7 @@ export class BitgetService {
           this.makeRequest('POST', endpoint, credentials, slPayload, logContext ? {
             userId: logContext.userId,
             strategyId: logContext.strategyId,
+            tradeId: logContext.tradeId,
             symbol: symbol,
             operationType: 'setStopLoss',
             orderId: logContext.orderId,
@@ -1496,6 +1518,7 @@ export class BitgetService {
       userId: number;
       strategyId: number | null;
       orderId?: string;
+      tradeId?: string | number | null;
     },
     knownCurrentPrice?: number
   ): Promise<{ results: any[]; success: boolean; fallbackRecommended?: boolean }> {
@@ -1602,6 +1625,7 @@ export class BitgetService {
             const result = await this.makeRequest('POST', endpoint, credentials, order.payload, logContext ? {
               userId: logContext.userId,
               strategyId: logContext.strategyId,
+              tradeId: logContext.tradeId,
               symbol: symbol,
               operationType: order.type,
               orderId: logContext.orderId,
@@ -1648,6 +1672,7 @@ export class BitgetService {
       userId: number;
       strategyId: number | null;
       orderId?: string;
+      tradeId?: string | number | null;
     },
     knownCurrentPrice?: number
   ): Promise<any> {
@@ -1766,6 +1791,7 @@ export class BitgetService {
             const result = await this.makeRequest('POST', endpoint, credentials, order.payload, logContext ? {
               userId: logContext.userId,
               strategyId: logContext.strategyId,
+              tradeId: logContext.tradeId,
               symbol: symbol,
               operationType: order.type,
               orderId: logContext.orderId,
@@ -1804,6 +1830,7 @@ export class BitgetService {
       userId: number;
       strategyId: number | null;
       orderId?: string;
+      tradeId?: string | number | null;
     }
   ): Promise<any> {
     try {
@@ -1903,6 +1930,7 @@ export class BitgetService {
       return await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
         userId: logContext.userId,
         strategyId: logContext.strategyId,
+        tradeId: logContext.tradeId,
         symbol: symbol,
         operationType: 'modifyStopLoss',
         orderId: logContext.orderId,
@@ -1979,6 +2007,7 @@ export class BitgetService {
       userId: number;
       strategyId: number | null;
       orderId?: string;
+      tradeId?: string | number | null;
     }
   ): Promise<{ cancelled: number; failed: number; remaining: number }> {
     const endpoint = '/api/v2/mix/order/cancel-plan-order';
@@ -1994,6 +2023,7 @@ export class BitgetService {
         }, logContext ? {
           userId: logContext.userId,
           strategyId: logContext.strategyId,
+          tradeId: logContext.tradeId,
           symbol,
           operationType: 'cancelTriggerOrder',
           orderId: logContext.orderId,
@@ -2080,7 +2110,7 @@ export class BitgetService {
       productType?: string;
       marginMode?: string;
     },
-    logContext?: { userId: number; strategyId: number | null; orderId?: string }
+    logContext?: { userId: number; strategyId: number | null; orderId?: string; tradeId?: string | number | null }
   ): Promise<{ success: boolean; closedSize?: string; cancelledTriggers?: any; remainingTriggers?: number; error?: string }> {
     try {
       const symbol = positionData.symbol.toUpperCase();
@@ -2269,6 +2299,7 @@ export class BitgetService {
       userId: number;
       strategyId: number | null;
       orderId?: string;
+      tradeId?: string | number | null;
     }
   ): Promise<any> {
     const endpoint = '/api/v2/mix/account/set-leverage';
@@ -2294,6 +2325,7 @@ export class BitgetService {
       const result = await this.makeRequest('POST', endpoint, credentials, payload, logContext ? {
         userId: logContext.userId,
         strategyId: logContext.strategyId,
+        tradeId: logContext.tradeId,
         symbol: symbol,
         operationType: 'setLeverage',
         orderId: logContext.orderId,

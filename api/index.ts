@@ -257,6 +257,12 @@ app.get('/api/admin/order-errors', authenticate, requireAdmin, AdminController.g
 app.get('/api/admin/bitget/fee-rate', authenticate, requireAdmin, AdminController.getBitgetFeeRate);
 // Endpoint público para logs de operaciones Bitget
 app.get('/api/admin/bitget-operation-logs', AdminController.getBitgetOperationLogs);
+app.get(
+  '/api/admin/bitget-operation-logs/by-trade/:tradeId',
+  authenticate,
+  requireAdmin,
+  AdminController.getBitgetOperationLogsByTradeId
+);
 app.post('/api/admin/bitget-operation-logs/:id/review', AdminController.markLogAsReviewed);
 app.post('/api/admin/bitget-operation-logs/:id/unreview', AdminController.markLogAsUnreviewed);
 app.get('/api/admin/stats', authenticate, requireAdmin, AdminController.getStats);

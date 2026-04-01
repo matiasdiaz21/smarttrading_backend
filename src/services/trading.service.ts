@@ -319,6 +319,13 @@ export class TradingService {
       // Configurar el apalancamiento Y verificar posiciones existentes EN PARALELO
       // (Optimización: antes eran 2 llamadas secuenciales + 500ms delay = ~1.5s, ahora ~0.5s)
       const holdSide = alert.side === 'LONG' || alert.side === 'buy' ? 'long' : 'short';
+
+      const entryTradeIdForLog =
+        alert.trade_id != null &&
+        String(alert.trade_id).trim() !== '' &&
+        String(alert.trade_id).trim() !== 'N/A'
+          ? String(alert.trade_id).trim().substring(0, 64)
+          : null;
       
       let existingPosition = null;
       let actualPositionSize = calculatedSize;
@@ -339,7 +346,7 @@ export class TradingService {
               productType,
               alert.marginCoin || 'USDT',
               holdSide,
-              { userId, strategyId }
+              { userId, strategyId, tradeId: entryTradeIdForLog }
             ),
         exchange === 'bybit'
           ? this.bybitService.getPositions(decryptedCredentials, symbol, 'linear')
@@ -390,7 +397,7 @@ export class TradingService {
                 symbol.toUpperCase(),
                 productType,
                 alert.marginCoin || 'USDT',
-                { userId, strategyId }
+                { userId, strategyId, tradeId: entryTradeIdForLog }
               );
         if (exchange === 'bitget' && (cancelResult as { remaining?: number }).remaining != null && (cancelResult as { remaining: number }).remaining > 0) {
           const msg = `No se pudieron cancelar todos los triggers en ${symbol} (quedan ${(cancelResult as { remaining: number }).remaining}). No se abre posición.`;
@@ -461,7 +468,7 @@ export class TradingService {
                     },
                     tpslData,
                     contractInfo,
-                    { userId, strategyId }
+                    { userId, strategyId, tradeId: entryTradeIdForLog }
                   );
             if (openResult.success && openResult.orderId) {
               result = { orderId: openResult.orderId, clientOid: uniqueClientOid };
@@ -500,7 +507,7 @@ export class TradingService {
               result = await this.bitgetService.placeOrder(
                 decryptedCredentials,
                 orderData,
-                { userId, strategyId }
+                { userId, strategyId, tradeId: entryTradeIdForLog }
               );
             }
             console.log(`[TradeService] ✅ Orden ejecutada en ${exchange}. Order ID: ${result.orderId}, Client OID: ${result.clientOid}`);
@@ -523,7 +530,12 @@ export class TradingService {
           
           const usePartialTp = strategySubscription.use_partial_tp !== false;
           const hasBreakeven = alert.breakeven && parseFloat(alert.breakeven.toString()) > 0 && usePartialTp;
-          const fallbackLogContext = { userId, strategyId, orderId: result?.orderId };
+          const fallbackLogContext = {
+            userId,
+            strategyId,
+            orderId: result?.orderId,
+            tradeId: entryTradeIdForLog,
+          };
           
           const tpslResults = await this.bitgetService.setPositionTPSLTriggers(
             decryptedCredentials,
@@ -891,10 +903,19 @@ export class TradingService {
           contractInfo = { minTradeNum: '0.01', sizeMultiplier: '0.01', minTradeUSDT: '5', volumePlace: '2', pricePlace: '1' };
         }
 
+        const breakevenTradeId =
+          tradeFinal.trade_id != null && String(tradeFinal.trade_id).trim() !== ''
+            ? String(tradeFinal.trade_id).trim().substring(0, 64)
+            : alert.trade_id != null &&
+                String(alert.trade_id).trim() !== '' &&
+                String(alert.trade_id).trim() !== 'N/A'
+              ? String(alert.trade_id).trim().substring(0, 64)
+              : null;
         const logContext = {
           userId: subscription.user_id,
           strategyId: strategyId,
           orderId: tradeFinal.bitget_order_id || undefined,
+          tradeId: breakevenTradeId,
         };
 
         const positions =
@@ -1279,7 +1300,19 @@ ${'='.repeat(80)}`);
             : await this.bitgetService.closePositionAndCancelTriggers(
                 decryptedCredentials,
                 { symbol, side, productType, marginMode },
-                { userId: subscription.user_id, strategyId, orderId: tradeFinal.bitget_order_id || undefined }
+                {
+                  userId: subscription.user_id,
+                  strategyId,
+                  orderId: tradeFinal.bitget_order_id || undefined,
+                  tradeId:
+                    tradeFinal.trade_id != null && String(tradeFinal.trade_id).trim() !== ''
+                      ? String(tradeFinal.trade_id).trim().substring(0, 64)
+                      : alert.trade_id != null &&
+                          String(alert.trade_id).trim() !== '' &&
+                          String(alert.trade_id).trim() !== 'N/A'
+                        ? String(alert.trade_id).trim().substring(0, 64)
+                        : null,
+                }
               );
 
         if (closeResult.success) {

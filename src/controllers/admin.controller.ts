@@ -330,6 +330,31 @@ export class AdminController {
     }
   }
 
+  /** Logs Bitget HTTP del usuario autenticado (admin) filtrados por trade_id (cruce con webhooks). */
+  static async getBitgetOperationLogsByTradeId(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+      const tradeId = (req.params.tradeId || '').trim();
+      if (!tradeId || tradeId === 'N/A') {
+        res.status(400).json({ error: 'Invalid tradeId' });
+        return;
+      }
+      const limitParam = req.query.limit as string;
+      const limit = limitParam ? parseInt(limitParam, 10) : 200;
+      if (isNaN(limit) || limit < 1 || limit > 500) {
+        res.status(400).json({ error: 'Invalid limit (1–500)' });
+        return;
+      }
+      const logs = await BitgetOperationLogModel.getByUserAndTradeId(req.user.id, tradeId, limit);
+      res.json({ trade_id: tradeId, logs });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   static async markLogAsReviewed(req: AuthRequest, res: Response): Promise<void> {
     try {
       // Endpoint público - sin autenticación requerida

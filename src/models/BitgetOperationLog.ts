@@ -5,6 +5,7 @@ export interface BitgetOperationLog {
   id: number;
   user_id: number;
   strategy_id: number | null;
+  trade_id: string | null;
   symbol: string;
   operation_type: string;
   http_method: string;
@@ -108,20 +109,22 @@ class BitgetOperationLogModel {
     success: boolean,
     errorMessage: string | null,
     orderId: string | null = null,
-    clientOid: string | null = null
+    clientOid: string | null = null,
+    tradeId: string | null = null
   ): Promise<number> {
     // Marcar automáticamente como revisado si la operación fue exitosa (200 y success=true)
     const isReviewed = responseStatus === 200 && success === true;
     
     const [result] = await pool.execute<ResultSetHeader>(
       `INSERT INTO bitget_operation_logs 
-       (user_id, strategy_id, symbol, operation_type, http_method, endpoint, full_url, 
+       (user_id, strategy_id, trade_id, symbol, operation_type, http_method, endpoint, full_url, 
         request_payload, request_headers, response_data, response_status, success, 
         is_reviewed, error_message, order_id, client_oid)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         strategyId || null,
+        tradeId || null,
         symbol,
         operationType,
         httpMethod,
@@ -252,6 +255,31 @@ class BitgetOperationLogModel {
       'UPDATE bitget_operation_logs SET is_reviewed = false WHERE id = ?',
       [id]
     );
+  }
+
+  /** Logs HTTP Bitget para un usuario y trade_id (orden cronológico). */
+  async getByUserAndTradeId(
+    userId: number,
+    tradeId: string,
+    limit: number = 200
+  ): Promise<BitgetOperationLogWithDetails[]> {
+    const limitInt = Math.max(1, Math.min(500, parseInt(String(limit), 10) || 200));
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT bol.*, u.email as user_email, s.name as strategy_name
+       FROM bitget_operation_logs bol
+       LEFT JOIN users u ON bol.user_id = u.id
+       LEFT JOIN strategies s ON bol.strategy_id = s.id
+       WHERE bol.user_id = ? AND bol.trade_id = ?
+       ORDER BY bol.created_at ASC
+       LIMIT ${limitInt}`,
+      [userId, tradeId]
+    );
+    return rows.map((row) => ({
+      ...row,
+      request_payload: safeJsonParse(row.request_payload),
+      request_headers: safeJsonParse(row.request_headers),
+      response_data: safeJsonParse(row.response_data),
+    })) as BitgetOperationLogWithDetails[];
   }
 }
 
