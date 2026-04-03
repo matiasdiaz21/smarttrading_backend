@@ -148,6 +148,34 @@ export class StatsController {
     }
   }
 
+  /**
+   * Un mismo `trade_id` puede repetirse en Pine (varias operaciones). Cada ciclo cerrado =
+   * último ENTRY antes de un STOP_LOSS/TAKE_PROFIT, hasta ese cierre (inclusive).
+   * Alineado con la sim admin (`getClosedTradesChronological` en frontend).
+   */
+  static segmentIntoClosedLifecycles(logs: any[]): { closed: any[][]; pendingTail: any[] | null } {
+    const sorted = [...logs].sort(
+      (a, b) => new Date(a.processed_at).getTime() - new Date(b.processed_at).getTime()
+    );
+    const closed: any[][] = [];
+    let cur: any[] | null = null;
+    for (const log of sorted) {
+      const p = StatsController.parsePayload(log.payload);
+      const t = String(p?.alertType || p?.alert_type || '').toUpperCase();
+      if (t === 'ENTRY') {
+        cur = [log];
+        continue;
+      }
+      if (!cur) continue;
+      cur.push(log);
+      if (t === 'STOP_LOSS' || t === 'TAKE_PROFIT') {
+        closed.push(cur);
+        cur = null;
+      }
+    }
+    return { closed, pendingTail: cur };
+  }
+
   static groupLogsBySymbolAndTradeId(logs: any[]) {
     const groupedBySymbol: { [symbol: string]: { [tradeId: string]: any[] } } = {};
 
@@ -324,28 +352,38 @@ export class StatsController {
     Object.keys(groupedBySymbol).forEach((symbol) => {
       Object.keys(groupedBySymbol[symbol]).forEach((tradeId) => {
         const tradeLogs = groupedBySymbol[symbol][tradeId];
-        const info = StatsController.getTradeIdInfo(tradeLogs);
-        if (info.status === 'pending') return;
-        const won = info.status === 'won';
-        const r = StatsController.estimateTradeR(tradeLogs, info);
+        const { closed: lifecycles } = StatsController.segmentIntoClosedLifecycles(tradeLogs);
 
-        const closedAtMs =
-          tradeLogs.length > 0
-            ? Math.max(
-                ...tradeLogs.map((l: { processed_at: string }) => new Date(l.processed_at).getTime())
-              )
-            : 0;
+        const pushOne = (seg: any[]) => {
+          const info = StatsController.getTradeIdInfo(seg);
+          if (info.status === 'pending') return;
+          const won = info.status === 'won';
+          const r = StatsController.estimateTradeR(seg, info);
+          const closedAtMs =
+            seg.length > 0
+              ? Math.max(...seg.map((l: { processed_at: string }) => new Date(l.processed_at).getTime()))
+              : 0;
+          if (r === null) {
+            tradesSkippedNoPrices += 1;
+            withTime.push({ r: null, won, closedAtMs });
+            return;
+          }
+          tradesWithR += 1;
+          totalR += r;
+          if (r > 0) sumPositiveR += r;
+          if (r < 0) sumAbsNegativeR += Math.abs(r);
+          withTime.push({ r: parseFloat(r.toFixed(4)), won, closedAtMs });
+        };
 
-        if (r === null) {
-          tradesSkippedNoPrices += 1;
-          withTime.push({ r: null, won, closedAtMs });
-          return;
+        for (const seg of lifecycles) {
+          pushOne(seg);
         }
-        tradesWithR += 1;
-        totalR += r;
-        if (r > 0) sumPositiveR += r;
-        if (r < 0) sumAbsNegativeR += Math.abs(r);
-        withTime.push({ r: parseFloat(r.toFixed(4)), won, closedAtMs });
+        if (lifecycles.length === 0 && tradeLogs.length > 0) {
+          const info = StatsController.getTradeIdInfo(tradeLogs);
+          if (info.status !== 'pending') {
+            pushOne(tradeLogs);
+          }
+        }
       });
     });
 
@@ -386,9 +424,24 @@ export class StatsController {
 
       Object.keys(groupedBySymbol[symbol]).forEach(tradeId => {
         const tradeLogs = groupedBySymbol[symbol][tradeId];
-        const info = StatsController.getTradeIdInfo(tradeLogs);
-        stats[symbol][info.status]++;
-        stats[symbol].total++;
+        const { closed: lifecycles, pendingTail } = StatsController.segmentIntoClosedLifecycles(tradeLogs);
+        for (const seg of lifecycles) {
+          const info = StatsController.getTradeIdInfo(seg);
+          stats[symbol][info.status]++;
+          stats[symbol].total++;
+        }
+        if (pendingTail && pendingTail.length > 0) {
+          const info = StatsController.getTradeIdInfo(pendingTail);
+          if (info.status === 'pending') {
+            stats[symbol].pending++;
+            stats[symbol].total++;
+          }
+        }
+        if (lifecycles.length === 0 && (!pendingTail || pendingTail.length === 0) && tradeLogs.length > 0) {
+          const info = StatsController.getTradeIdInfo(tradeLogs);
+          stats[symbol][info.status]++;
+          stats[symbol].total++;
+        }
       });
 
       // Calcular winrate (solo basado en trades cerrados: won + lost)
@@ -413,17 +466,22 @@ export class StatsController {
 
       Object.keys(groupedBySymbol[symbol]).forEach(tradeId => {
         const tradeLogs = groupedBySymbol[symbol][tradeId];
-        const info = StatsController.getTradeIdInfo(tradeLogs);
-
-        // Solo incluir trades ganados
-        if (info.status === 'won') {
-          const mostRecentLog = tradeLogs[0];
+        const { closed: lifecycles } = StatsController.segmentIntoClosedLifecycles(tradeLogs);
+        const segments = lifecycles.length > 0 ? lifecycles : [tradeLogs];
+        for (const seg of segments) {
+          const info = StatsController.getTradeIdInfo(seg);
+          if (info.status !== 'won') continue;
+          const lastLog = seg.reduce(
+            (latest, l) =>
+              new Date(l.processed_at).getTime() > new Date(latest.processed_at).getTime() ? l : latest,
+            seg[0]
+          );
           bestTrades.push({
             symbol,
             tradeId: info.tradeId,
             side: info.side,
             winrate: stats.winrate,
-            processedAt: mostRecentLog.processed_at,
+            processedAt: lastLog.processed_at,
           });
         }
       });
