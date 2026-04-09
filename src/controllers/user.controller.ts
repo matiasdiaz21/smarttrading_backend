@@ -1254,6 +1254,38 @@ export class UserController {
     }
   }
 
+  static async getUserBalance(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const { CredentialsModel } = await import('../models/Credentials');
+      const credentialsList = await CredentialsModel.findAllActiveByUserId(req.user.userId);
+
+      if (credentialsList.length === 0) {
+        res.json({ equity: null, available: null, unrealizedPL: null, accountLeverage: null, message: 'Sin credencial activa' });
+        return;
+      }
+
+      const { BitgetService } = await import('../services/bitget.service');
+      const bitgetService = new BitgetService();
+
+      const credentials = credentialsList[0];
+      const decrypted = BitgetService.getDecryptedCredentials({
+        api_key: credentials.api_key,
+        api_secret: credentials.api_secret,
+        passphrase: credentials.passphrase,
+      });
+
+      const balance = await bitgetService.getAccountBalance(decrypted);
+      res.json(balance);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   static async getTradingTermsStatus(
     req: AuthRequest,
     res: Response

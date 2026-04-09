@@ -181,6 +181,7 @@ app.put('/api/user/strategies/:id/excluded-symbols', authenticate, UserControlle
 app.put('/api/user/strategies/:id/partial-tp', authenticate, UserController.updatePartialTp);
 app.put('/api/user/strategies/:id/credential', authenticate, UserController.updateStrategyCredential);
 app.get('/api/user/positions', authenticate, UserController.getPositions);
+app.get('/api/user/balance', authenticate, UserController.getUserBalance);
 app.get('/api/user/trades/closed', authenticate, UserController.getClosedTrades);
 app.get('/api/user/subscription', authenticate, UserController.getSubscriptionStatus);
 app.get('/api/user/pending-payment', authenticate, UserController.getPendingPayment);
