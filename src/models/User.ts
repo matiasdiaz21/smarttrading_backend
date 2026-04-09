@@ -85,5 +85,12 @@ export class UserModel {
     const users = rows as any[];
     return users[0]?.trading_terms_accepted_at !== null;
   }
+
+  static async updatePassword(userId: number, passwordHash: string): Promise<void> {
+    await pool.execute(
+      'UPDATE users SET password_hash = ? WHERE id = ?',
+      [passwordHash, userId]
+    );
+  }
 }
 

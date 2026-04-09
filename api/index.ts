@@ -161,6 +161,7 @@ app.get('/api/settings', SettingsController.getPublic);
 app.post('/api/auth/register', authLimiter, AuthController.register);
 app.post('/api/auth/login', authLimiter, AuthController.login);
 app.get('/api/auth/me', authenticate, AuthController.me);
+app.put('/api/auth/change-password', authenticate, AuthController.changePassword);
 
 // Strategy routes
 app.get('/api/strategies', authenticate, StrategyController.list);

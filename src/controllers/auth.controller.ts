@@ -100,6 +100,46 @@ export class AuthController {
     }
   }
 
+  static async changePassword(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        res.status(400).json({ error: 'currentPassword and newPassword are required' });
+        return;
+      }
+
+      if (newPassword.length < 8) {
+        res.status(400).json({ error: 'New password must be at least 8 characters' });
+        return;
+      }
+
+      const user = await UserModel.findById(req.user.userId);
+      if (!user) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+
+      const isValid = await comparePassword(currentPassword, user.password_hash);
+      if (!isValid) {
+        res.status(401).json({ error: 'Current password is incorrect' });
+        return;
+      }
+
+      const newHash = await hashPassword(newPassword);
+      await UserModel.updatePassword(req.user.userId, newHash);
+
+      res.json({ message: 'Password updated successfully' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   static async me(req: AuthRequest, res: Response): Promise<void> {
     try {
       if (!req.user) {
