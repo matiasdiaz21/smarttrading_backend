@@ -331,7 +331,7 @@ export class StatsController {
       return 0;
     }
     if (hasBE && !hasTP) {
-      return 0.5;
+      return null;
     }
     return 0;
   }
@@ -399,8 +399,18 @@ export class StatsController {
     const avgRPerTrade = tradesWithR > 0 ? totalR / tradesWithR : null;
     const profitFactor =
       sumAbsNegativeR > 0 ? sumPositiveR / sumAbsNegativeR : sumPositiveR > 0 ? null : null;
-    const illustrativeReturnPct =
-      tradesWithR > 0 ? parseFloat((totalR * 1).toFixed(2)) : null;
+
+    const illustrativeReturnPct = (() => {
+      if (tradesWithR === 0) return null;
+      const RISK_F = 0.01;
+      const START = 100;
+      const asc = [...withTime].sort((a, b) => a.closedAtMs - b.closedAtMs);
+      let bal = START;
+      for (const t of asc) {
+        if (t.r != null) bal += bal * RISK_F * t.r;
+      }
+      return parseFloat(((bal / START - 1) * 100).toFixed(2));
+    })();
 
     return {
       avgRPerTrade: avgRPerTrade != null ? parseFloat(avgRPerTrade.toFixed(3)) : null,
