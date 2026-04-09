@@ -752,28 +752,52 @@ export class UserController {
         // Si no hay órdenes de cierre, no es una posición cerrada
         if (closeOrders.length === 0) return;
         
-        // Agrupar por proximidad temporal (posiciones que se abrieron y cerraron juntas)
+        // Agrupar cronológicamente: acumular opens → acumular closes hasta igualar tamaño.
+        // Sin ventana de tiempo fija — permite posiciones abiertas durante días/semanas.
         const positionGroups: any[] = [];
-        const usedCloseOrders = new Set<string>();
-        
-        openOrders.forEach((openOrder: any) => {
-          const openTime = parseInt(openOrder.cTime || openOrder.uTime || '0');
-          
-          // Buscar órdenes de cierre cercanas (dentro de 24 horas)
-          const relatedCloseOrders = closeOrders.filter((closeOrder: any) => {
-            if (usedCloseOrders.has(closeOrder.orderId)) return false;
-            const closeTime = parseInt(closeOrder.uTime || closeOrder.cTime || '0');
-            return closeTime >= openTime && closeTime <= (openTime + 24 * 60 * 60 * 1000);
-          });
-          
-          if (relatedCloseOrders.length > 0) {
-            relatedCloseOrders.forEach((co: any) => usedCloseOrders.add(co.orderId));
-            positionGroups.push({
-              openOrders: [openOrder],
-              closeOrders: relatedCloseOrders
-            });
-          }
+
+        // Ordenar todas las órdenes del bucket por timestamp
+        const allOrdersSorted = [...orders].sort((a: any, b: any) => {
+          const aTime = parseInt(a.uTime || a.cTime || '0');
+          const bTime = parseInt(b.uTime || b.cTime || '0');
+          return aTime - bTime;
         });
+
+        let pendingOpens: any[] = [];
+        let pendingOpenSize = 0;
+        let pendingCloses: any[] = [];
+        let pendingCloseSize = 0;
+
+        for (const order of allOrdersSorted) {
+          const tradeSide = order.tradeSide?.toLowerCase();
+          const orderSize = parseFloat(order.baseVolume || order.size || '0');
+
+          if (tradeSide === 'open') {
+            // Si ya teníamos un ciclo completo (cerrado ≥90% del abierto), emitirlo antes de empezar uno nuevo
+            if (pendingOpens.length > 0 && pendingCloses.length > 0 && pendingOpenSize > 0 && pendingCloseSize >= pendingOpenSize * 0.90) {
+              positionGroups.push({ openOrders: [...pendingOpens], closeOrders: [...pendingCloses] });
+              pendingOpens = [];
+              pendingOpenSize = 0;
+              pendingCloses = [];
+              pendingCloseSize = 0;
+            }
+            pendingOpens.push(order);
+            pendingOpenSize += orderSize;
+          } else if (tradeSide === 'close' && pendingOpens.length > 0) {
+            pendingCloses.push(order);
+            pendingCloseSize += orderSize;
+
+            // Ciclo completo cuando la suma de cierres alcanza al menos el 90% del tamaño abierto
+            if (pendingOpenSize > 0 && pendingCloseSize >= pendingOpenSize * 0.90) {
+              positionGroups.push({ openOrders: [...pendingOpens], closeOrders: [...pendingCloses] });
+              pendingOpens = [];
+              pendingOpenSize = 0;
+              pendingCloses = [];
+              pendingCloseSize = 0;
+            }
+          }
+        }
+        // pendingOpens restantes = posición actualmente abierta en Bitget (no emitir como cerrada)
         
         // Crear una posición por cada grupo
         positionGroups.forEach((group) => {
