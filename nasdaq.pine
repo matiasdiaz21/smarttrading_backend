@@ -63,10 +63,15 @@ if not inSession
     betweenLow := na(betweenLow) ? low : math.min(betweenLow, low)
 
 // Al inicio de sesión: fijar niveles de liquidez como referencia
+// Si no hubo trading overnight (betweenHigh/Low son na), usar el high/low
+// de la barra actual como fallback para no bloquear toda la sesión.
 if sessionStart
     if not na(betweenHigh) and not na(betweenLow)
         prevSessionHigh := betweenHigh
-        prevSessionLow := betweenLow
+        prevSessionLow  := betweenLow
+    else
+        prevSessionHigh := high
+        prevSessionLow  := low
 
 // Dibujar niveles de liquidez solo FUERA de la sesión NY (no continuas dentro de la zona)
 // Así las líneas no atraviesan la caja de New York y se interrumpen durante la sesión
@@ -226,7 +231,7 @@ var float currentQty = 0.0
 // La señal YA ES la confirmación → se usa entrada a mercado (sin limit).
 
 // LONG: Precio tocó mínimo anterior + 2 velas verdes de rechazo → entrada inmediata
-if longCondition and not isTradeOpen and strategy.position_size == 0
+if longCondition and not isTradeOpen
     float entry = math.round_to_mintick(close)
     float sl = math.round_to_mintick(math.min(low, low[1]))    // Mínimo de las 2 velas verdes
     float tp = math.round_to_mintick(prevSessionHigh)           // TP en máximo de sesión anterior
@@ -257,9 +262,14 @@ if longCondition and not isTradeOpen and strategy.position_size == 0
         strategy.exit("ExitLong", "Long", stop=sl, limit=tp)
         alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": 0, "alertType": "ENTRY", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "prevSessionHigh": ' + str.tostring(prevSessionHigh) + ', "prevSessionLow": ' + str.tostring(prevSessionLow) + ', "pattern": "2 green candles rejection at support", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
         label.new(bar_index, entry, text="Long Entry\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+    else if risk == 0
+        label.new(bar_index, entry, text="⚠ Long inválido\nRisk = 0 (SL = Entry)", style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
+    else
+        // TP (prevSessionHigh) está por debajo o igual a la entrada → precio ya superó el nivel
+        label.new(bar_index, entry, text="⚠ Long inválido\nTP=" + str.tostring(math.round(tp, DEC)) + " ≤ Entry=" + str.tostring(math.round(entry, DEC)), style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
 
 // SHORT: Precio tocó máximo anterior + 2 velas rojas de rechazo → entrada inmediata
-if shortCondition and not isTradeOpen and strategy.position_size == 0
+if shortCondition and not isTradeOpen
     float entry = math.round_to_mintick(close)
     float sl = math.round_to_mintick(math.max(high, high[1]))   // Máximo de las 2 velas rojas
     float tp = math.round_to_mintick(prevSessionLow)             // TP en mínimo de sesión anterior
@@ -290,6 +300,11 @@ if shortCondition and not isTradeOpen and strategy.position_size == 0
         strategy.exit("ExitShort", "Short", stop=sl, limit=tp)
         alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry) + ', "stopLoss": ' + str.tostring(sl) + ', "takeProfit": ' + str.tostring(tp) + ', "breakeven": 0, "alertType": "ENTRY", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "prevSessionHigh": ' + str.tostring(prevSessionHigh) + ', "prevSessionLow": ' + str.tostring(prevSessionLow) + ', "pattern": "2 red candles rejection at resistance", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
         label.new(bar_index, entry, text="Short Entry\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+    else if risk == 0
+        label.new(bar_index, entry, text="⚠ Short inválido\nRisk = 0 (SL = Entry)", style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
+    else
+        // TP (prevSessionLow) está por encima o igual a la entrada → precio ya rompió el nivel
+        label.new(bar_index, entry, text="⚠ Short inválido\nTP=" + str.tostring(math.round(tp, DEC)) + " ≥ Entry=" + str.tostring(math.round(entry, DEC)), style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
 
 // ═══════════════════════════════════════════════════════════════
 // 🎯 TAKE PROFIT
@@ -298,7 +313,7 @@ if shortCondition and not isTradeOpen and strategy.position_size == 0
 // LONG TP: high toca o supera el take profit
 if high >= activeTp and activeTradeType == "LONG" and not alert_take_profit_triggered and isTradeOpen and bar_index > entry_bar_index
     tp_hit := true
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "TAKE_PROFIT", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "TAKE_PROFIT", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
     label.new(bar_index, high, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
     alert_take_profit_triggered := true
     alert_stop_loss_triggered := true
@@ -321,7 +336,7 @@ if high >= activeTp and activeTradeType == "LONG" and not alert_take_profit_trig
 // SHORT TP: low toca o cae bajo el take profit
 if low <= activeTp and activeTradeType == "SHORT" and not alert_take_profit_triggered and isTradeOpen and bar_index > entry_bar_index
     tp_hit := true
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "TAKE_PROFIT", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "TAKE_PROFIT", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Take profit alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
     label.new(bar_index, low, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.green, textcolor=color.white, size=textSize)
     alert_take_profit_triggered := true
     alert_stop_loss_triggered := true
@@ -348,7 +363,7 @@ if low <= activeTp and activeTradeType == "SHORT" and not alert_take_profit_trig
 // LONG SL: low toca o cae por debajo del stop
 if low <= activeStop and activeTradeType == "LONG" and not alert_stop_loss_triggered and isTradeOpen and bar_index > entry_bar_index
     sl_hit := true
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "STOP_LOSS", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "STOP_LOSS", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
     label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.red, textcolor=color.white, size=textSize)
     alert_stop_loss_triggered := true
     alert_take_profit_triggered := true
@@ -371,7 +386,7 @@ if low <= activeStop and activeTradeType == "LONG" and not alert_stop_loss_trigg
 // SHORT SL: high toca o supera el stop
 if high >= activeStop and activeTradeType == "SHORT" and not alert_stop_loss_triggered and isTradeOpen and bar_index > entry_bar_index
     sl_hit := true
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "STOP_LOSS", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": 0, "alertType": "STOP_LOSS", "strategy": "Session Reversal NASDAQ", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Stop loss alcanzado", "currentPrice": ' + str.tostring(close) + '}}', alert.freq_once_per_bar_close)
     label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
     alert_stop_loss_triggered := true
     alert_take_profit_triggered := true
