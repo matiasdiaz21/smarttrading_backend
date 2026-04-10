@@ -413,5 +413,15 @@ export class WebhookLogModel {
     );
     return (result as any).affectedRows || 0;
   }
+
+  static async deleteByStrategy(strategyId: number): Promise<number> {
+    const id = parseInt(String(strategyId), 10);
+    if (!Number.isInteger(id)) return 0;
+    const [result] = await pool.execute(
+      'DELETE FROM webhook_logs WHERE strategy_id = ?',
+      [id]
+    );
+    return (result as any).affectedRows || 0;
+  }
 }
 

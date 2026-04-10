@@ -241,6 +241,7 @@ app.get('/api/admin/users', authenticate, requireAdmin, AdminController.getUsers
 app.post('/api/admin/users/:id/gift-subscription', authenticate, requireAdmin, AdminController.giftSubscription);
 app.get('/api/admin/webhook-logs', authenticate, requireAdmin, AdminController.getWebhookLogs);
 app.get('/api/admin/webhook-logs/symbols', authenticate, requireAdmin, AdminController.getWebhookLogSymbols);
+app.delete('/api/admin/webhook-logs/strategy', authenticate, requireAdmin, AdminController.deleteWebhookLogByStrategy);
 app.delete('/api/admin/webhook-logs/symbol-group', authenticate, requireAdmin, AdminController.deleteWebhookLogSymbolGroup);
 app.delete('/api/admin/webhook-logs/group', authenticate, requireAdmin, AdminController.deleteWebhookLogGroup);
 app.delete('/api/admin/webhook-logs/:id', authenticate, requireAdmin, AdminController.deleteWebhookLog);

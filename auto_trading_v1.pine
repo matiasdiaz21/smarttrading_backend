@@ -389,7 +389,7 @@ if longcondicion and not isTradeOpen and not pendingLong and not pendingShort
         pendingStop := stop
         pendingTp := tp
         pendingBreakeven := math.round_to_mintick(limit + (tp - limit) * breakeven_ratio)
-        pendingTradeId := trade_id + 1
+        pendingTradeId := int(time / 1000)
         pendingBarIndex := bar_index
         label.new(bar_index, limit, text="Señal Long\nEsperando retorno a " + str.tostring(limit, "#.####"), style=label.style_label_up, color=color.blue, textcolor=color.white, size=textSize)
 
@@ -406,7 +406,7 @@ if shortcondicion and not isTradeOpen and not pendingLong and not pendingShort
         pendingStop := stop
         pendingTp := tp
         pendingBreakeven := math.round_to_mintick(limit - (limit - tp) * breakeven_ratio)
-        pendingTradeId := trade_id + 1
+        pendingTradeId := int(time / 1000)
         pendingBarIndex := bar_index
         label.new(bar_index, limit, text="Señal Short\nEsperando retorno a " + str.tostring(limit, "#.####"), style=label.style_label_down, color=color.blue, textcolor=color.white, size=textSize)
 

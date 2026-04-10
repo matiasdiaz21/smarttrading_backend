@@ -183,6 +183,25 @@ export class AdminController {
     }
   }
 
+  /** Elimina todos los logs de una estrategia completa (por strategy_id). */
+  static async deleteWebhookLogByStrategy(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user || req.user.role !== 'admin') {
+        res.status(403).json({ error: 'Forbidden: Admin access required' });
+        return;
+      }
+      const strategyId = parseInt(String(req.body.strategy_id ?? req.query.strategy_id ?? ''), 10);
+      if (!Number.isInteger(strategyId) || strategyId <= 0) {
+        res.status(400).json({ error: 'strategy_id is required' });
+        return;
+      }
+      const deleted = await WebhookLogModel.deleteByStrategy(strategyId);
+      res.json({ message: 'Strategy logs deleted', deleted });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   /** Elimina todos los logs de un trade (grupo por strategy_id + symbol + trade_id). */
   static async deleteWebhookLogGroup(req: AuthRequest, res: Response): Promise<void> {
     try {
