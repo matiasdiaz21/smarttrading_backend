@@ -92,5 +92,9 @@ export class UserModel {
       [passwordHash, userId]
     );
   }
+
+  static async deleteById(userId: number): Promise<void> {
+    await pool.execute('DELETE FROM users WHERE id = ?', [userId]);
+  }
 }
 

@@ -212,6 +212,14 @@ export class TradeModel {
     return null;
   }
 
+  static async deleteByUserId(userId: number): Promise<number> {
+    const [result] = await pool.execute(
+      'DELETE FROM trades WHERE user_id = ?',
+      [userId]
+    );
+    return (result as any).affectedRows ?? 0;
+  }
+
   /**
    * Busca múltiples trades por bitget_order_ids (batch lookup)
    * Retorna un Map con orderId -> trade info

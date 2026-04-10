@@ -10,6 +10,7 @@ import { RiskAcceptanceModel } from '../models/RiskAcceptance';
 import { isStrategyFreeAndActive } from '../utils/strategyUtils';
 import { AppSettingsModel } from '../models/AppSettings';
 import { userHasActiveFreeTrial } from '../utils/freeTrialUtils';
+import { comparePassword } from '../utils/password';
 
 export class UserController {
   static async getStrategies(req: AuthRequest, res: Response): Promise<void> {
@@ -1327,6 +1328,52 @@ export class UserController {
         has_accepted: hasAccepted,
         accepted_at: user?.trading_terms_accepted_at || null,
       });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async deleteTrades(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const deleted = await TradeModel.deleteByUserId(req.user.userId);
+      res.json({ deleted, message: `${deleted} trade(s) eliminado(s)` });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  static async deleteAccount(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const { password } = req.body;
+      if (!password || typeof password !== 'string') {
+        res.status(400).json({ error: 'Se requiere la contraseña para confirmar' });
+        return;
+      }
+
+      const user = await UserModel.findById(req.user.userId);
+      if (!user) {
+        res.status(404).json({ error: 'Usuario no encontrado' });
+        return;
+      }
+
+      const isValid = await comparePassword(password, user.password_hash);
+      if (!isValid) {
+        res.status(400).json({ error: 'Contraseña incorrecta' });
+        return;
+      }
+
+      await UserModel.deleteById(req.user.userId);
+      res.json({ message: 'Cuenta eliminada correctamente' });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

@@ -199,6 +199,8 @@ app.get('/api/user/subscription', authenticate, UserController.getSubscriptionSt
 app.get('/api/user/pending-payment', authenticate, UserController.getPendingPayment);
 app.post('/api/user/trading-terms/accept', authenticate, UserController.acceptTradingTerms);
 app.get('/api/user/trading-terms/status', authenticate, UserController.getTradingTermsStatus);
+app.delete('/api/user/trades', authenticate, UserController.deleteTrades);
+app.delete('/api/user/account', authenticate, UserController.deleteAccount);
 
 // Notifications routes
 app.get('/api/notifications', authenticate, NotificationsController.getNotifications);

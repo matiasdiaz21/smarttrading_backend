@@ -255,7 +255,7 @@ if longCondition and not isTradeOpen
         entry_bar_index := bar_index
         isTradeOpen := true
         tradeTakenThisSession := true
-        trade_id += 1
+        trade_id := time
         float qty = math.max((perdida_ * normalBalance / 100) / risk, 0.001)
         currentQty := qty
         strategy.entry("Long", strategy.long)
@@ -293,7 +293,7 @@ if shortCondition and not isTradeOpen
         entry_bar_index := bar_index
         isTradeOpen := true
         tradeTakenThisSession := true
-        trade_id += 1
+        trade_id := time
         float qty = math.max((perdida_ * normalBalance / 100) / risk, 0.001)
         currentQty := qty
         strategy.entry("Short", strategy.short)
