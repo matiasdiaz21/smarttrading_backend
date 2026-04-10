@@ -46,6 +46,7 @@ import { SettingsController } from '../src/controllers/settings.controller';
 import { AiController } from '../src/controllers/ai.controller';
 
 import { NotificationsController } from '../src/controllers/notifications.controller';
+import { SupportController } from '../src/controllers/support.controller';
 import { MassTradeController } from '../src/controllers/massTrade.controller';
 import { TradingTestController } from '../src/controllers/tradingTest.controller';
 import { authenticate, requireAdmin } from '../src/middleware/auth';
@@ -207,6 +208,22 @@ app.get('/api/notifications', authenticate, NotificationsController.getNotificat
 app.get('/api/notifications/unread-count', authenticate, NotificationsController.getUnreadCount);
 app.post('/api/notifications/:id/read', authenticate, NotificationsController.markAsRead);
 app.post('/api/notifications/read-all', authenticate, NotificationsController.markAllAsRead);
+
+// Support tickets routes (usuario)
+app.get('/api/support/tickets', authenticate, SupportController.getMyTickets);
+app.get('/api/support/tickets/active', authenticate, SupportController.getActiveTicket);
+app.post('/api/support/tickets', authenticate, SupportController.createTicket);
+app.get('/api/support/tickets/:id', authenticate, SupportController.getTicketMessages);
+app.post('/api/support/tickets/:id/messages', authenticate, SupportController.addUserMessage);
+app.post('/api/support/tickets/:id/close', authenticate, SupportController.closeTicketByUser);
+
+// Support tickets routes (admin)
+app.get('/api/admin/support/tickets', authenticate, requireAdmin, SupportController.adminListTickets);
+app.get('/api/admin/support/tickets/:id', authenticate, requireAdmin, SupportController.adminGetTicket);
+app.post('/api/admin/support/tickets/:id/reply', authenticate, requireAdmin, SupportController.adminReply);
+app.post('/api/admin/support/tickets/:id/close', authenticate, requireAdmin, SupportController.adminCloseTicket);
+app.post('/api/admin/support/tickets/:id/reopen', authenticate, requireAdmin, SupportController.adminReopenTicket);
+app.post('/api/admin/support/tickets/:id/flag', authenticate, requireAdmin, SupportController.adminFlagConflictive);
 
 // Mass Trade routes
 app.get('/api/mass-trade/configs', authenticate, MassTradeController.listConfigs);
