@@ -1,0 +1,30 @@
+//@version=5
+// Script mínimo para validar alertas → webhook SmartTrading.
+// 1) Crea en BD una fila en `strategies` con nombre EXACTO: SmartTrading Webhook Smoke Test
+// 2) En TradingView: Alertas → Crear → Condición: tu estrategia → "Cualquier llamada a alert()"
+// 3) Mensaje: {{strategy.order.alert_message}} NO aplica aquí; el JSON va en el código (alert()).
+//    Deja "Webhook URL" con tu API: .../api/webhooks/tradingview
+strategy("SmartTrading Webhook Smoke Test", overlay=true, initial_capital=10000, default_qty_type=strategy.fixed, default_qty_value=1)
+
+emaFast = ta.ema(close, 9)
+emaSlow = ta.ema(close, 21)
+longSignal = ta.crossover(emaFast, emaSlow)
+shortSignal = ta.crossunder(emaFast, emaSlow)
+
+// Solo en barra confirmada: alert() y freq_once_per_bar_close van alineados (misma idea que Gold V1.pine).
+if longSignal and barstate.isconfirmed
+    float sl = low
+    float tp = close + math.max(ta.atr(14), syminfo.mintick * 10) * 2
+    string msg = '{"symbol":"' + syminfo.ticker + '","side":"LONG","entryPrice":' + str.tostring(close) + ',"stopLoss":' + str.tostring(sl) + ',"takeProfit":' + str.tostring(tp) + ',"breakeven":0,"alertType":"ENTRY","strategy":"SmartTrading Webhook Smoke Test","timeframe":"' + timeframe.period + '","alertData":{"id":' + str.tostring(time) + ',"currentPrice":' + str.tostring(close) + '}}'
+    alert(msg, alert.freq_once_per_bar_close)
+    strategy.entry("L", strategy.long)
+
+if shortSignal and barstate.isconfirmed
+    float sl = high
+    float tp = close - math.max(ta.atr(14), syminfo.mintick * 10) * 2
+    string msg = '{"symbol":"' + syminfo.ticker + '","side":"SHORT","entryPrice":' + str.tostring(close) + ',"stopLoss":' + str.tostring(sl) + ',"takeProfit":' + str.tostring(tp) + ',"breakeven":0,"alertType":"ENTRY","strategy":"SmartTrading Webhook Smoke Test","timeframe":"' + timeframe.period + '","alertData":{"id":' + str.tostring(time) + ',"currentPrice":' + str.tostring(close) + '}}'
+    alert(msg, alert.freq_once_per_bar_close)
+    strategy.entry("S", strategy.short)
+
+plot(emaFast, "EMA 9", color=color.new(color.blue, 0))
+plot(emaSlow, "EMA 21", color=color.new(color.orange, 0))

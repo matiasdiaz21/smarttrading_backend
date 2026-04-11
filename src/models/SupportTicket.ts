@@ -37,6 +37,19 @@ export class SupportTicketModel {
     return tickets[0] || null;
   }
 
+  /** Ticket con email del usuario (para panel admin) */
+  static async findByIdWithUser(ticketId: number): Promise<SupportTicketWithUser | null> {
+    const [rows] = await pool.execute(
+      `SELECT st.*, u.email AS user_email, u.uuid AS user_uuid
+       FROM support_tickets st
+       INNER JOIN users u ON u.id = st.user_id
+       WHERE st.id = ?`,
+      [ticketId]
+    );
+    const tickets = rows as SupportTicketWithUser[];
+    return tickets[0] || null;
+  }
+
   static async findByUserId(userId: number): Promise<SupportTicket[]> {
     const [rows] = await pool.execute(
       'SELECT * FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC',

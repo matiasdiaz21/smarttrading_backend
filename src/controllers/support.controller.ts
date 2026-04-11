@@ -26,13 +26,19 @@ export class SupportController {
       const ticket = await SupportTicketModel.findActiveByUserId(req.user.userId);
 
       if (!ticket) {
-        // Verificar cooldown de 24h post-cierre admin
+        // Verificar cooldown de 24h post-cierre admin (incluye historial del último ticket para que el usuario vea el cierre)
         const recentClose = await SupportTicketModel.findRecentAdminClose(req.user.userId);
         if (recentClose && recentClose.closed_at) {
           const closedAt = new Date(recentClose.closed_at).getTime();
           const cooldownEndsAt = closedAt + 24 * 60 * 60 * 1000;
-          const remainingMs = cooldownEndsAt - Date.now();
-          res.json({ ticket: null, cooldown: true, cooldown_ends_at: new Date(cooldownEndsAt) });
+          const lastMessages = await SupportMessageModel.findByTicketId(recentClose.id);
+          res.json({
+            ticket: null,
+            cooldown: true,
+            cooldown_ends_at: new Date(cooldownEndsAt),
+            last_closed_ticket: recentClose,
+            last_ticket_messages: lastMessages,
+          });
           return;
         }
         res.json({ ticket: null, cooldown: false });
@@ -186,7 +192,7 @@ export class SupportController {
       if (!req.user) { res.status(401).json({ error: 'Unauthorized' }); return; }
 
       const ticketId = parseInt(req.params.id);
-      const ticket = await SupportTicketModel.findById(ticketId);
+      const ticket = await SupportTicketModel.findByIdWithUser(ticketId);
       if (!ticket) { res.status(404).json({ error: 'Ticket no encontrado' }); return; }
 
       const messages = await SupportMessageModel.findByTicketId(ticketId);
@@ -227,7 +233,7 @@ export class SupportController {
       );
 
       const messages = await SupportMessageModel.findByTicketId(ticketId);
-      const updatedTicket = await SupportTicketModel.findById(ticketId);
+      const updatedTicket = await SupportTicketModel.findByIdWithUser(ticketId);
 
       console.log(`[SupportController] ✅ Admin respondió ticket #${ticketId}`);
       res.json({ ticket: updatedTicket, messages });

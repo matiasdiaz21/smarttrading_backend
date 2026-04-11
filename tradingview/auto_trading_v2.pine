@@ -1,5 +1,5 @@
 //@version=5
-strategy("Auto Trading Improved V2 1.0.5", overlay=true, precision=4, max_bars_back=1440, max_lines_count=500, max_labels_count=500, pyramiding=0, default_qty_type=strategy.fixed, initial_capital=100, commission_value=0.08, commission_type=strategy.commission.percent, calc_on_every_tick=true, margin_long=0, margin_short=0)
+strategy("Auto Trading Improved V2", overlay=true, precision=4, max_bars_back=1440, max_lines_count=500, max_labels_count=500, pyramiding=0, default_qty_type=strategy.fixed, initial_capital=100, commission_value=0.08, commission_type=strategy.commission.percent, calc_on_every_tick=true, margin_long=0, margin_short=0)
 
 // ═══════════════════════════════════════════════════════════════
 // 📂 CONFIGURACIÓN ORGANIZADA PARA MODIFICACIÓN FÁCIL
@@ -397,7 +397,7 @@ if touchBackLong and not touchBackShort
         pendingLong := false
         pendingShort := false
         string multi_tf_json = buildMultiTimeframeJSON()
-        alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry_) + ', "stopLoss": ' + str.tostring(stop_) + ', "takeProfit": ' + str.tostring(tp_) + ', "breakeven": ' + str.tostring(be_) + ', "alertType": "ENTRY", "strategy": "Auto Trading Improved V2 1.0.5", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(entry_) + ', "stopLoss": ' + str.tostring(stop_) + ', "takeProfit": ' + str.tostring(tp_) + ', "breakeven": ' + str.tostring(be_) + ', "alertType": "ENTRY", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
         label.new(bar_index, entry_, text="Long Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(be_, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
     else
         pendingLong := false
@@ -441,7 +441,7 @@ if touchBackShort and not touchBackLong
         pendingLong := false
         pendingShort := false
         string multi_tf_json = buildMultiTimeframeJSON()
-        alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry_) + ', "stopLoss": ' + str.tostring(stop_) + ', "takeProfit": ' + str.tostring(tp_) + ', "breakeven": ' + str.tostring(be_) + ', "alertType": "ENTRY", "strategy": "Auto Trading Improved V2 1.0.5", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(entry_) + ', "stopLoss": ' + str.tostring(stop_) + ', "takeProfit": ' + str.tostring(tp_) + ', "breakeven": ' + str.tostring(be_) + ', "alertType": "ENTRY", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
         label.new(bar_index, entry_, text="Short Entry\nID: " + str.tostring(trade_id) + "\nBE: " + str.tostring(math.round(be_, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
     else
         pendingLong := false
@@ -536,7 +536,7 @@ if activeTradeType == "LONG" and high >= breakeven and not alert_breakeven_trigg
     be_bar_index := bar_index  // Guardar la barra donde se alcanzó BE
     // Enviar alert y crear label inmediatamente en tiempo real
     string multi_tf_json_be = buildMultiTimeframeJSON()
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Improved V2 1.0.5", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_be + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_be + '}}', alert.freq_once_per_bar)
     label.new(bar_index, breakeven, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
     alert_breakeven_triggered := true
     totalBreakevens += 1  // Incrementar contador de breakevens
@@ -552,7 +552,7 @@ if activeTradeType == "SHORT" and low <= breakeven and not alert_breakeven_trigg
     be_bar_index := bar_index  // Guardar la barra donde se alcanzó BE
     // Enviar alert y crear label inmediatamente en tiempo real
     string multi_tf_json_be = buildMultiTimeframeJSON()
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Improved V2 1.0.5", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_be + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_be + '}}', alert.freq_once_per_bar)
     label.new(bar_index, breakeven, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
     alert_breakeven_triggered := true
     totalBreakevens += 1  // Incrementar contador de breakevens
@@ -564,7 +564,7 @@ if low <= activeTp and activeTradeType == "SHORT" and not alert_take_profit_trig
     tp_hit := true
     // Enviar alert y crear label inmediatamente en tiempo real
     string multi_tf_json_tp = buildMultiTimeframeJSON()
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Improved V2 1.0.5", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a take profit", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_tp + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a take profit", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_tp + '}}', alert.freq_once_per_bar)
     label.new(bar_index, low, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.green, textcolor=color.white, size=textSize)
     alert_take_profit_triggered := true
     alert_stop_loss_triggered := true
@@ -600,7 +600,7 @@ if high >= activeTp and activeTradeType == "LONG" and not alert_take_profit_trig
     tp_hit := true
     // Enviar alert y crear label inmediatamente en tiempo real
     string multi_tf_json_tp = buildMultiTimeframeJSON()
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Improved V2 1.0.5", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a take profit", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_tp + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a take profit", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_tp + '}}', alert.freq_once_per_bar)
     label.new(bar_index, high, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
     alert_take_profit_triggered := true
     alert_stop_loss_triggered := true
@@ -638,7 +638,7 @@ if high >= activeStop and activeTradeType == "SHORT" and not alert_stop_loss_tri
     sl_hit := true
     // Enviar alert y crear label inmediatamente en tiempo real
     string multi_tf_json_sl = buildMultiTimeframeJSON()
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Improved V2 1.0.5", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a stop loss", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_sl + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a stop loss", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_sl + '}}', alert.freq_once_per_bar)
     label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
     alert_stop_loss_triggered := true
     alert_take_profit_triggered := true
@@ -687,7 +687,7 @@ if low <= activeStop and activeTradeType == "LONG" and not alert_stop_loss_trigg
     sl_hit := true
     // Enviar alert y crear label inmediatamente en tiempo real
     string multi_tf_json_sl = buildMultiTimeframeJSON()
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Improved V2 1.0.5", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a stop loss", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_sl + '}}', alert.freq_once_per_bar)
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Improved V2", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "El trade llego a stop loss", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json_sl + '}}', alert.freq_once_per_bar)
     label.new(bar_index, activeStop, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.red, textcolor=color.white, size=textSize)
     alert_stop_loss_triggered := true
     alert_take_profit_triggered := true
