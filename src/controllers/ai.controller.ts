@@ -415,7 +415,7 @@ export class AiController {
 
   /**
    * GET/POST /api/cron/ai-check-results
-   * Solo verificación de TP/SL con velas Bitget + expiración por tiempo. Programar en Vercel cada ~3 h.
+   * Solo verificación de TP/SL con velas Bitget + expiración por tiempo. En producción suele invocarse desde el cron único del frontend (`/api/cron/ai-daily`).
    * No requiere auto_run_enabled (solo is_enabled).
    */
   static async cronCheckResults(req: Request, res: Response): Promise<void> {
@@ -470,7 +470,7 @@ export class AiController {
    * Llamado por Vercel Cron (GET) o servicio externo (POST).
    * Autenticación: header Authorization Bearer CRON_SECRET (Vercel lo envía automáticamente) o x-cron-secret = CRON_SECRET.
    * Solo ejecuta análisis Groq (nuevas predicciones) si auto_run_enabled e is_enabled están activos y ha pasado el intervalo desde last_auto_run_at.
-   * La verificación TP/SL debe ir en /api/cron/ai-check-results (otro cron, p. ej. cada 3 h).
+   * La verificación TP/SL va en /api/cron/ai-check-results (en Vercel Hobby el frontend las encadena en `/api/cron/ai-daily` una vez al día).
    * Cada llamada se registra en ai_cron_run_log (historial en /admin/ai-config).
    */
   static async cronAutoRun(req: Request, res: Response): Promise<void> {
