@@ -35,6 +35,8 @@ export interface AiPredictionStats {
   winrate: number;
   avg_confidence: number;
   avg_pnl_percent: number;
+  /** Suma de `result_pnl_percent` en operaciones resueltas (won + lost). */
+  total_pnl_percent: number;
 }
 
 export class AiPredictionModel {
@@ -167,7 +169,8 @@ export class AiPredictionModel {
         SUM(CASE WHEN status = 'lost' THEN 1 ELSE 0 END) as lost,
         SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END) as expired,
         AVG(confidence) as avg_confidence,
-        AVG(CASE WHEN status IN ('won', 'lost') THEN result_pnl_percent ELSE NULL END) as avg_pnl_percent
+        AVG(CASE WHEN status IN ('won', 'lost') THEN result_pnl_percent ELSE NULL END) as avg_pnl_percent,
+        COALESCE(SUM(CASE WHEN status IN ('won', 'lost') AND result_pnl_percent IS NOT NULL THEN result_pnl_percent ELSE 0 END), 0) as total_pnl_percent
       FROM ai_predictions
     `;
     const values: any[] = [];
@@ -191,6 +194,7 @@ export class AiPredictionModel {
       winrate: resolved > 0 ? Math.round((won / resolved) * 10000) / 100 : 0,
       avg_confidence: Math.round(parseFloat(r.avg_confidence) || 0),
       avg_pnl_percent: Math.round((parseFloat(r.avg_pnl_percent) || 0) * 100) / 100,
+      total_pnl_percent: Math.round((parseFloat(r.total_pnl_percent) || 0) * 100) / 100,
     };
   }
 

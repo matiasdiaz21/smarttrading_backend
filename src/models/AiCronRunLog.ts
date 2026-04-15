@@ -40,9 +40,10 @@ export class AiCronRunLogModel {
   }
 
   static async getRecent(limit: number = 50): Promise<AiCronRunLogRow[]> {
-    const [rows] = await pool.execute(
-      'SELECT * FROM ai_cron_run_log ORDER BY ran_at DESC LIMIT ?',
-      [Math.min(limit, 100)]
+    // LIMIT con placeholder falla en algunos servidores MySQL ("Incorrect arguments to mysqld_stmt_execute").
+    const safeLimit = Math.min(Math.max(1, Math.floor(Number(limit)) || 50), 100);
+    const [rows] = await pool.query(
+      `SELECT * FROM ai_cron_run_log ORDER BY ran_at DESC LIMIT ${safeLimit}`
     );
     return (rows as any[]).map((r: any) => ({
       ...r,

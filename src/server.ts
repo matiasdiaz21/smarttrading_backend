@@ -304,7 +304,10 @@ app.put('/api/admin/ai/predictions/:id/resolve', authenticate, requireAdmin, AiC
 app.post('/api/admin/ai/check-results', authenticate, requireAdmin, AiController.forceCheckResults);
 app.get('/api/admin/ai/cron-history', authenticate, requireAdmin, AiController.getCronHistory);
 
-// Cron: auto-run IA
+// Cron: verificación TP/SL + expiración
+app.get('/api/cron/ai-check-results', AiController.cronCheckResults);
+app.post('/api/cron/ai-check-results', AiController.cronCheckResults);
+// Cron: auto-run IA (nuevas predicciones)
 app.get('/api/cron/ai-auto-run', AiController.cronAutoRun);
 app.post('/api/cron/ai-auto-run', AiController.cronAutoRun);
 

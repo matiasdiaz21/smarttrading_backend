@@ -112,6 +112,7 @@ export class AiController {
         analysis_prompt_template_forex,
         analysis_prompt_template_commodities,
         is_enabled,
+        show_ia_trading_in_menu,
         auto_run_enabled,
         auto_run_interval_hours,
         max_predictions_per_run,
@@ -130,6 +131,9 @@ export class AiController {
       if (analysis_prompt_template_forex !== undefined) updateData.analysis_prompt_template_forex = analysis_prompt_template_forex;
       if (analysis_prompt_template_commodities !== undefined) updateData.analysis_prompt_template_commodities = analysis_prompt_template_commodities;
       if (is_enabled !== undefined) updateData.is_enabled = !!is_enabled;
+      if (show_ia_trading_in_menu !== undefined) {
+        updateData.show_ia_trading_in_menu = !!show_ia_trading_in_menu;
+      }
       if (auto_run_enabled !== undefined) updateData.auto_run_enabled = !!auto_run_enabled;
       if (auto_run_interval_hours !== undefined) updateData.auto_run_interval_hours = parseInt(auto_run_interval_hours);
       if (max_predictions_per_run !== undefined) updateData.max_predictions_per_run = parseInt(max_predictions_per_run);
@@ -410,10 +414,63 @@ export class AiController {
   }
 
   /**
+   * GET/POST /api/cron/ai-check-results
+   * Solo verificación de TP/SL con velas Bitget + expiración por tiempo. Programar en Vercel cada ~3 h.
+   * No requiere auto_run_enabled (solo is_enabled).
+   */
+  static async cronCheckResults(req: Request, res: Response): Promise<void> {
+    try {
+      const expected = process.env.CRON_SECRET;
+      const headerSecret = req.headers['x-cron-secret'] as string | undefined;
+      const authHeader = req.headers.authorization;
+      const bearerSecret = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
+      const valid = expected && (headerSecret === expected || bearerSecret === expected);
+      if (!valid) {
+        await AiCronRunLogModel.create({ status: 'skipped', skip_reason: 'unauthorized' });
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const config = await AiConfigModel.get();
+      if (!config.is_enabled) {
+        await AiCronRunLogModel.create({ status: 'skipped', skip_reason: 'IA disabled' });
+        res.status(200).json({ skipped: true, reason: 'IA disabled' });
+        return;
+      }
+
+      const result = await checkPredictionResults();
+      await AiCronRunLogModel.create({
+        status: 'ran',
+        success: true,
+        analyzed: null,
+        predictions_count: result.checked,
+        errors_count: result.resolved,
+        skip_reason: 'check_results',
+      });
+      res.status(200).json({
+        ok: true,
+        job: 'check_results',
+        checked: result.checked,
+        resolved: result.resolved,
+      });
+    } catch (error: any) {
+      console.error('[AI Controller] ❌ Cron check-results error:', error.message);
+      await AiCronRunLogModel.create({
+        status: 'ran',
+        success: false,
+        error_message: error.message || String(error),
+        skip_reason: 'check_results',
+      }).catch(() => {});
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  /**
    * GET/POST /api/cron/ai-auto-run
    * Llamado por Vercel Cron (GET) o servicio externo (POST).
    * Autenticación: header Authorization Bearer CRON_SECRET (Vercel lo envía automáticamente) o x-cron-secret = CRON_SECRET.
-   * Solo ejecuta si auto_run_enabled e is_enabled están activos y ha pasado el intervalo desde last_auto_run_at.
+   * Solo ejecuta análisis Groq (nuevas predicciones) si auto_run_enabled e is_enabled están activos y ha pasado el intervalo desde last_auto_run_at.
+   * La verificación TP/SL debe ir en /api/cron/ai-check-results (otro cron, p. ej. cada 3 h).
    * Cada llamada se registra en ai_cron_run_log (historial en /admin/ai-config).
    */
   static async cronAutoRun(req: Request, res: Response): Promise<void> {
@@ -453,8 +510,7 @@ export class AiController {
         return;
       }
 
-      console.log('[AI Controller] 🤖 Cron: ejecutando auto-run (check-results + analyze)');
-      await checkPredictionResults();
+      console.log('[AI Controller] 🤖 Cron: ejecutando solo análisis (nuevas predicciones). La verificación TP/SL va en /api/cron/ai-check-results.');
       const result = await runFullAnalysis();
       await AiCronRunLogModel.create({
         status: 'ran',

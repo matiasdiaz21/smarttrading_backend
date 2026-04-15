@@ -14,7 +14,7 @@ DEC = input.int(5, title="Decimales", minval=0, step=1, group=group_general)
 num_ops = input.int(20, title="Número de operaciones para winrate", minval=1, group=group_general)
 tpc = input.bool(true, title="Mostrar zona de profit", group=group_general)
 SML_Channel_TF_mins_D_W_M = input.string("400", title="Minutos SML", group=group_general)
-valid_entry_bars = input.int(10, title="Velas máx. esperando retorno a entrada", minval=1, maxval=150, tooltip="Cuántas velas esperamos a que el precio vuelva a tocar el nivel de entrada. Si no vuelve en ese tiempo, la señal se descarta y no se abre el trade.", group=group_general)
+valid_entry_bars = input.int(3, title="Velas máx. esperando retorno a entrada", minval=1, maxval=150, tooltip="Cuántas velas esperamos a que el precio vuelva a tocar el nivel de entrada. Si no vuelve en ese tiempo, la señal se descarta y no se abre el trade.", group=group_general)
 
 // Grupo: Configuración de Cuenta / Riesgo
 group_cuenta = 'Configuración de Cuenta / Riesgo'
@@ -292,6 +292,7 @@ var float pendingBreakeven = 0.0
 var int pendingTradeId = 0
 var int pendingBarIndex = 0
 var int tradeEntryBar = 0
+var label entryLabel = label(na)
 
 // Pre-calcular JSON multi-timeframe en cada barra (request.security debe ejecutarse en el scope global, no dentro de if)
 string multi_tf_json = buildMultiTimeframeJSON()
@@ -330,7 +331,7 @@ if pendingLong and low <= pendingEntry
         alert(entry_msg_long, alert.freq_once_per_bar)
         strategy.entry("Long", strategy.long, qty=qty, limit=pendingEntry)
         strategy.exit("Exit Long", "Long", stop=pendingStop, limit=pendingTp)
-        label.new(bar_index, pendingEntry, text="Long Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+        entryLabel := label.new(bar_index, pendingEntry, text="Long Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
     else
         pendingLong := false
         label.new(bar_index, pendingEntry, text="Long invalidado\nSL/TP muy cerca de entrada", style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
@@ -373,7 +374,7 @@ if pendingShort and high >= pendingEntry
         alert(entry_msg_short, alert.freq_once_per_bar)
         strategy.entry("Short", strategy.short, qty=qty, limit=pendingEntry)
         strategy.exit("Exit Short", "Short", stop=pendingStop, limit=pendingTp)
-        label.new(bar_index, pendingEntry, text="Short Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+        entryLabel := label.new(bar_index, pendingEntry, text="Short Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
     else
         pendingShort := false
         label.new(bar_index, pendingEntry, text="Short invalidado\nSL/TP muy cerca de entrada", style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
@@ -436,7 +437,7 @@ LOTE = POSICION / limit
 COMI = (comision * POSICION / 100) * -1
 
 // Alertas de Breakeven
-if activeTradeType == "LONG" and high >= breakeven and not alert_breakeven_triggered and isTradeOpen
+if activeTradeType == "LONG" and high >= breakeven and not alert_breakeven_triggered and isTradeOpen and bar_index > tradeEntryBar
     activeStop := activeEntry
     stopl := activeEntry
     string be_tp_long = '{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}'
@@ -446,7 +447,7 @@ if activeTradeType == "LONG" and high >= breakeven and not alert_breakeven_trigg
     alert_breakeven_triggered := true
     label.new(bar_index, close, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
 
-if activeTradeType == "SHORT" and low <= breakeven and not alert_breakeven_triggered and isTradeOpen
+if activeTradeType == "SHORT" and low <= breakeven and not alert_breakeven_triggered and isTradeOpen and bar_index > tradeEntryBar
     activeStop := activeEntry
     stops := activeEntry
     string be_tp_short = '{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}'
@@ -458,12 +459,12 @@ if activeTradeType == "SHORT" and low <= breakeven and not alert_breakeven_trigg
 
 // Track TP/SL for manual winrate (since strategy handles exits)
 // Cuando en la misma vela se tocan TP y SL, priorizar STOP_LOSS (el exchange suele ejecutar el stop primero en barras volátiles; evita incoherencia con Bitget)
-bool long_tp_hit = high >= activeTp and activeTradeType == "LONG"
-bool long_sl_hit = low <= activeStop and activeTradeType == "LONG"
+bool long_tp_hit = high >= activeTp and activeTradeType == "LONG" and bar_index > tradeEntryBar
+bool long_sl_hit = low <= activeStop and activeTradeType == "LONG" and bar_index > tradeEntryBar
 bool long_both = long_tp_hit and long_sl_hit
 bool long_sl_first = long_both
-bool short_tp_hit = low <= activeTp and activeTradeType == "SHORT"
-bool short_sl_hit = high >= activeStop and activeTradeType == "SHORT"
+bool short_tp_hit = low <= activeTp and activeTradeType == "SHORT" and bar_index > tradeEntryBar
+bool short_sl_hit = high >= activeStop and activeTradeType == "SHORT" and bar_index > tradeEntryBar
 bool short_both = short_tp_hit and short_sl_hit
 bool short_sl_first = short_both
 
@@ -614,8 +615,23 @@ else if long_sl_hit and not alert_stop_loss_triggered
 
 // Sincronización con el motor de estrategia: si strategy.exit cerró la posición
 // pero nuestro tracking manual no lo detectó (timing de calc_on_every_tick),
-// forzar reset de variables de visualización para que el pintado no se extienda.
-if isTradeOpen and strategy.position_size == 0 and bar_index > tradeEntryBar
+// forzar reset de variables de visualización y enviar alerta correcta.
+if isTradeOpen and strategy.position_size == 0 and bar_index > (tradeEntryBar + 1)
+    bool sync_was_tp = (activeTradeType == "LONG" and high >= activeTp) or (activeTradeType == "SHORT" and low <= activeTp)
+    string sync_alert_type = sync_was_tp ? "TAKE_PROFIT" : "STOP_LOSS"
+    if not alert_take_profit_triggered and not alert_stop_loss_triggered
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "' + activeTradeType + '", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "' + sync_alert_type + '", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Sync cierre por motor estrategia", "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
+        if sync_was_tp
+            array.push(outcomes, 1.0)
+        else
+            if alert_breakeven_triggered
+                array.push(outcomes, 1.0)
+            else
+                array.push(outcomes, 0.0)
+        if array.size(outcomes) > num_ops
+            array.shift(outcomes)
+    label.delete(entryLabel)
+    entryLabel := label(na)
     isTradeOpen := false
     activeTradeType := "na"
     op := "na"

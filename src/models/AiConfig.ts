@@ -14,6 +14,8 @@ export interface AiConfigRow {
   analysis_prompt_template_forex: string | null;
   analysis_prompt_template_commodities: string | null;
   is_enabled: boolean;
+  /** Mostrar entrada "IA Trading" en el menú lateral (usuarios no admin). */
+  show_ia_trading_in_menu: boolean;
   auto_run_enabled: boolean;
   auto_run_interval_hours: number;
   last_auto_run_at: Date | null;
@@ -41,11 +43,12 @@ export class AiConfigModel {
         analysis_prompt_template_forex: null,
         analysis_prompt_template_commodities: null,
         is_enabled: false,
+        show_ia_trading_in_menu: true,
         auto_run_enabled: false,
         auto_run_interval_hours: 4,
         last_auto_run_at: null,
         max_predictions_per_run: 5,
-        default_expiry_hours: 24,
+        default_expiry_hours: 168,
         created_at: new Date(),
         updated_at: new Date(),
       };
@@ -55,6 +58,10 @@ export class AiConfigModel {
       ...row,
       groq_api_key: row.groq_api_key ? decrypt(row.groq_api_key) : null,
       is_enabled: !!row.is_enabled,
+      show_ia_trading_in_menu:
+        row.show_ia_trading_in_menu !== undefined && row.show_ia_trading_in_menu !== null
+          ? !!row.show_ia_trading_in_menu
+          : true,
       auto_run_enabled: !!row.auto_run_enabled,
     };
   }
@@ -78,6 +85,7 @@ export class AiConfigModel {
     analysis_prompt_template_forex: string | null;
     analysis_prompt_template_commodities: string | null;
     is_enabled: boolean;
+    show_ia_trading_in_menu: boolean;
     auto_run_enabled: boolean;
     auto_run_interval_hours: number;
     max_predictions_per_run: number;
@@ -129,6 +137,10 @@ export class AiConfigModel {
     if (data.is_enabled !== undefined) {
       updates.push('is_enabled = ?');
       values.push(data.is_enabled ? 1 : 0);
+    }
+    if (data.show_ia_trading_in_menu !== undefined) {
+      updates.push('show_ia_trading_in_menu = ?');
+      values.push(data.show_ia_trading_in_menu ? 1 : 0);
     }
     if (data.auto_run_enabled !== undefined) {
       updates.push('auto_run_enabled = ?');

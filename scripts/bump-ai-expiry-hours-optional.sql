@@ -1,0 +1,3 @@
+-- Opcional: subir ventana de expiración en BD si seguía en 24 h (evita predicciones "Expirada" antes de tocar TP/SL).
+-- Ejecutar manualmente en MySQL si aplica.
+-- UPDATE ai_config SET default_expiry_hours = 168 WHERE id = 1 AND default_expiry_hours <= 24;

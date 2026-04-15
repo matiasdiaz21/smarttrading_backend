@@ -315,7 +315,10 @@ app.put('/api/admin/ai/predictions/:id/resolve', authenticate, requireAdmin, AiC
 app.post('/api/admin/ai/check-results', authenticate, requireAdmin, AiController.forceCheckResults);
 app.get('/api/admin/ai/cron-history', authenticate, requireAdmin, AiController.getCronHistory);
 
-// Cron: auto-run IA. Vercel Cron llama GET con Authorization Bearer CRON_SECRET; también aceptamos POST con x-cron-secret
+// Cron: verificación TP/SL + expiración (p. ej. cada 3 h en Vercel)
+app.get('/api/cron/ai-check-results', AiController.cronCheckResults);
+app.post('/api/cron/ai-check-results', AiController.cronCheckResults);
+// Cron: auto-run IA (nuevas predicciones; p. ej. cada 4 h en Vercel)
 app.get('/api/cron/ai-auto-run', AiController.cronAutoRun);
 app.post('/api/cron/ai-auto-run', AiController.cronAutoRun);
 
