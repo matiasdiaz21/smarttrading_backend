@@ -1030,9 +1030,8 @@ export async function analyzeAsset(
 
   console.log(`[AI Service] ✅ Predicción: ${response.side} ${symbol} @ ${response.entry_price} | SL: ${response.stop_loss} | TP: ${response.take_profit} | Confidence: ${response.confidence}%`);
 
-  // 5. Save prediction to DB
-  const expiresAt = new Date();
-  expiresAt.setHours(expiresAt.getHours() + config.default_expiry_hours);
+  // 5. Save prediction to DB (expires_at solo informativo; ya no hay cierre automático por tiempo)
+  const expiresAt = new Date('2099-12-31T23:59:59.999Z');
 
   const predictionId = await AiPredictionModel.create({
     asset_id: asset.id,
@@ -1086,12 +1085,6 @@ export async function runFullAnalysis(): Promise<{
 
   const predictions: Array<{ symbol: string; side: string; confidence: number; id: number }> = [];
   const errors: Array<{ symbol: string; error: string }> = [];
-
-  // Expire old predictions first
-  const expired = await AiPredictionModel.expireOld();
-  if (expired > 0) {
-    console.log(`[AI Service] ⏰ ${expired} predicciones expiradas automáticamente`);
-  }
 
   // Analyze each asset sequentially (to avoid Groq rate limits)
   for (const asset of assetsToAnalyze) {
@@ -1250,9 +1243,6 @@ export async function checkPredictionResults(): Promise<{
   resolved: number;
   results: Array<{ id: number; symbol: string; status: string; pnl: number }>;
 }> {
-  // Expire old ones first
-  await AiPredictionModel.expireOld();
-
   const activePredictions = await AiPredictionModel.findActive();
 
   if (activePredictions.length === 0) {
@@ -1266,17 +1256,6 @@ export async function checkPredictionResults(): Promise<{
 
   for (const prediction of activePredictions) {
     try {
-      // Check if expired first
-      if (new Date(prediction.expires_at) < new Date()) {
-        let currentPrice: number | undefined;
-        try { currentPrice = await fetchCurrentPrice(prediction.symbol); } catch {}
-        await AiPredictionModel.updateStatus(prediction.id, 'expired', 'auto', currentPrice);
-        resolved++;
-        results.push({ id: prediction.id, symbol: prediction.symbol, status: 'expired', pnl: 0 });
-        console.log(`[AI Service] ⏰ Predicción #${prediction.id} ${prediction.symbol}: expirada`);
-        continue;
-      }
-
       // Fetch 5min candles from prediction creation time to now
       const startMs = new Date(prediction.created_at).getTime();
       console.log(`[AI Service] 📊 #${prediction.id} ${prediction.symbol} ${prediction.side}: obteniendo velas 5min desde ${new Date(startMs).toISOString()}...`);

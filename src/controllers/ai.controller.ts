@@ -415,7 +415,7 @@ export class AiController {
 
   /**
    * GET/POST /api/cron/ai-check-results
-   * Solo verificación de TP/SL con velas Bitget + expiración por tiempo. En producción suele invocarse desde el cron único del frontend (`/api/cron/ai-daily`).
+   * Verificación de TP/SL con velas Bitget (sin cierre automático por tiempo). Cron del frontend: `/api/cron/ai-daily`.
    * No requiere auto_run_enabled (solo is_enabled).
    */
   static async cronCheckResults(req: Request, res: Response): Promise<void> {

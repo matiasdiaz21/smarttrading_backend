@@ -40,7 +40,8 @@ Referencia principal: `auto_trading_v1.pine` — todas las `alert()` comparten l
 - **`alertType`**: `ENTRY` | `BREAKEVEN` | `STOP_LOSS` | `TAKE_PROFIT`.
 - **`entryPrice`, `stopLoss`, `takeProfit`, `breakeven`**: numéricos según el caso.
 - **`timeframe`**: `timeframe.period`.
-- **`alertData`**: objeto con al menos **`id`** (trade_id estable para agrupar ENTRY → cierres). ENTRY suele usar `currentPrice`; cierres suelen usar `precio_actual` y `mensaje`.
+- **`time`**: milisegundos Unix del cierre de vela (`time_close`) en que se dispara la alerta; correlaciona con webhooks y `alertData.id`.
+- **`alertData`**: objeto con al menos **`id`** (trade_id estable para agrupar ENTRY → cierres). ENTRY suele usar `currentPrice` y opcionalmente `mensaje`; cierres suelen usar `precio_actual` y `mensaje`.
 
 Sin `symbol` el webhook responde 400. ENTRY exige además `side`, `entryPrice`, `stopLoss`, `takeProfit`.
 
