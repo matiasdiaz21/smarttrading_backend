@@ -211,6 +211,22 @@ export class WebhookController {
           res.status(400).json({ error: 'Missing required field for BREAKEVEN: symbol is required' });
           return;
         }
+        const strategyIgnoresBreakeven =
+          strategy.ignore_breakeven === true || strategy.ignore_breakeven === 1;
+        if (strategyIgnoresBreakeven) {
+          console.log(
+            `[Webhook] ⏭️ BREAKEVEN ignorado: estrategia ${strategy.id} tiene ignore_breakeven (sin llamadas al exchange)`
+          );
+          res.status(200).json({
+            message: 'Breakeven alert ignored per strategy configuration',
+            ignored: true,
+            reason: 'strategy_ignore_breakeven',
+            processed: 0,
+            successful: 0,
+            failed: 0,
+          });
+          return;
+        }
         result = await tradingService.processBreakevenAlert(strategy.id, alert);
         console.log(`[Webhook] ✅ Resultado BREAKEVEN:`, JSON.stringify(result, null, 2));
       } else if (

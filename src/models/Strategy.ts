@@ -57,15 +57,16 @@ export class StrategyModel {
     allowedSymbols: string[] | null = null,
     category: string | null = 'crypto',
     isFree: boolean = false,
-    freeUntil: Date | string | null = null
+    freeUntil: Date | string | null = null,
+    ignoreBreakeven: boolean = false
   ): Promise<number> {
     const allowedSymbolsJson = allowedSymbols?.length
       ? JSON.stringify(allowedSymbols)
       : null;
     const freeUntilVal = freeUntil == null ? null : (typeof freeUntil === 'string' ? freeUntil : freeUntil.toISOString().slice(0, 10));
     const [result] = await pool.execute(
-      'INSERT INTO strategies (name, description, warnings, tradingview_webhook_secret, is_active, leverage, allowed_symbols, category, is_free, free_until, created_by) VALUES (?, ?, ?, ?, true, ?, ?, ?, ?, ?, ?)',
-      [name, description, warnings, webhookSecret, leverage, allowedSymbolsJson, category || 'crypto', !!isFree, freeUntilVal, createdBy]
+      'INSERT INTO strategies (name, description, warnings, tradingview_webhook_secret, is_active, leverage, allowed_symbols, category, is_free, free_until, ignore_breakeven, created_by) VALUES (?, ?, ?, ?, true, ?, ?, ?, ?, ?, ?, ?)',
+      [name, description, warnings, webhookSecret, leverage, allowedSymbolsJson, category || 'crypto', !!isFree, freeUntilVal, !!ignoreBreakeven, createdBy]
     );
     return (result as any).insertId;
   }
@@ -80,7 +81,8 @@ export class StrategyModel {
     allowedSymbols?: string[] | null,
     category?: string | null,
     isFree?: boolean,
-    freeUntil?: Date | string | null
+    freeUntil?: Date | string | null,
+    ignoreBreakeven?: boolean
   ): Promise<void> {
     const updates: string[] = [];
     const values: any[] = [];
@@ -120,6 +122,10 @@ export class StrategyModel {
     if (freeUntil !== undefined) {
       updates.push('free_until = ?');
       values.push(freeUntil == null ? null : (typeof freeUntil === 'string' ? freeUntil : freeUntil.toISOString().slice(0, 10)));
+    }
+    if (ignoreBreakeven !== undefined) {
+      updates.push('ignore_breakeven = ?');
+      values.push(!!ignoreBreakeven);
     }
 
     if (updates.length === 0) return;

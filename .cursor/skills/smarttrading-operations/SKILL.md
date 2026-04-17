@@ -30,6 +30,8 @@ Al **añadir o cambiar rutas** del backend, seguir el skill **vercel-route-parit
 
 4. **Identificación**: hoy la estrategia se resuelve por **nombre en el JSON**, no por verificación HMAC activa en código (la firma puede guardarse en logs).
 
+5. **`strategies.ignore_breakeven`** (boolean, admin `/admin/strategies`): si es **true**, (a) las alertas **`BREAKEVEN`** no ejecutan `processBreakevenAlert` (respuesta 200 con `ignored: true`, `reason: 'strategy_ignore_breakeven'`); (b) en **ENTRY**, no se usa el precio `breakeven` para triggers parciales en Bitget (`hasBreakeven` forzado a falso), **aunque** el usuario tenga `use_partial_tp` en `user_strategy_subscriptions`. Cambiar el flag con posiciones abiertas no revierte triggers ya colocados; aplica a señales posteriores.
+
 ## Contrato JSON (alineado con Pine)
 
 Referencia principal: `auto_trading_v1.pine` — todas las `alert()` comparten la misma forma.
@@ -50,7 +52,7 @@ Sin `symbol` el webhook responde 400. ENTRY exige además `side`, `entryPrice`, 
 | `alertType` | Rol típico |
 |-------------|------------|
 | `ENTRY` | Ejecuta lógica real: `TradingService.processStrategyAlert`. Tras fill, puede mergear en el payload del log `actual_entry_price` y `actual_notional`. |
-| `BREAKEVEN` | `processBreakevenAlert` — ajustes de gestión. |
+| `BREAKEVEN` | `processBreakevenAlert` — ajustes de gestión, salvo si la estrategia tiene `ignore_breakeven` (sin llamadas al exchange). |
 | `STOP_LOSS`, `TAKE_PROFIT`, `CLOSE` | Tratadas como alertas informativas vía `processInfoAlert` (sin llamadas Bitget en el bloque dedicado del controlador); se crean logs con el resultado. |
 
 Los logs viven en **`webhook_logs`** (`WebhookLogModel`). La UI admin **`/admin/webhook-logs`** agrupa por `symbol` + `alertData.id`, calcula win/loss/pending y simulación; debe mantenerse coherente con los mismos campos del JSON.
@@ -79,4 +81,5 @@ Los logs viven en **`webhook_logs`** (`WebhookLogModel`). La UI admin **`/admin/
 ## Archivos clave (frontend)
 
 - `app/(dashboard)/admin/webhook-logs/page.tsx` — vista de operaciones, stats, simulación.
+- `components/admin/StrategyManager.tsx` — CRUD estrategias; incluye `ignore_breakeven`.
 - `lib/config.ts` — `getWebhookUrl()` / `getApiUrl()`.

@@ -539,7 +539,13 @@ export class TradingService {
           console.log(`[TradeService]   SL: ${alert.stopLoss} | BE: ${alert.breakeven || 'N/A'} | TP: ${alert.takeProfit} | Size: ${actualPositionSize}`);
           
           const usePartialTp = strategySubscription.use_partial_tp !== false;
-          const hasBreakeven = alert.breakeven && parseFloat(alert.breakeven.toString()) > 0 && usePartialTp;
+          const strategyIgnoresBreakeven =
+            strategy?.ignore_breakeven === true || (strategy as { ignore_breakeven?: number })?.ignore_breakeven === 1;
+          const hasBreakeven =
+            !strategyIgnoresBreakeven &&
+            alert.breakeven &&
+            parseFloat(alert.breakeven.toString()) > 0 &&
+            usePartialTp;
           const fallbackLogContext = {
             userId,
             strategyId,
@@ -811,11 +817,19 @@ export class TradingService {
   async processBreakevenAlert(
     strategyId: number,
     alert: TradingViewAlert
-  ): Promise<{ processed: number; successful: number; failed: number }> {
+  ): Promise<{ processed: number; successful: number; failed: number; skipped?: boolean }> {
     // NUEVO FLUJO (alineado con /admin/test-orders):
     // Los TPs parciales (50% BE + 50% final) ya se colocaron como triggers normal_plan al abrir la posición.
     // Cuando llega la señal BREAKEVEN, solo hay que MOVER EL SL al precio de entrada.
     // NO cerrar 50%, NO cancelar TPs — los triggers parciales ya manejan eso automáticamente.
+
+    const strategyConfig = await StrategyModel.findById(strategyId);
+    const strategyIgnoresBreakeven =
+      strategyConfig?.ignore_breakeven === true || (strategyConfig as { ignore_breakeven?: number })?.ignore_breakeven === 1;
+    if (strategyIgnoresBreakeven) {
+      console.log(`[BREAKEVEN] Estrategia ${strategyId} tiene ignore_breakeven: sin ejecución en exchange.`);
+      return { processed: 0, successful: 0, failed: 0, skipped: true };
+    }
 
     const subscriptions = await SubscriptionModel.findByStrategyId(
       strategyId,

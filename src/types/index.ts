@@ -26,6 +26,11 @@ export interface Strategy {
   is_free: boolean;
   /** Hasta cuándo es gratuita; null = indefinido. Solo aplica si is_free es true. */
   free_until: Date | null;
+  /**
+   * Si true: no ejecutar gestión en exchange al recibir alertType BREAKEVEN y no configurar triggers parciales al nivel BE en ENTRY.
+   * Tiene prioridad sobre use_partial_tp de la suscripción del usuario.
+   */
+  ignore_breakeven?: boolean;
   created_by: number;
   created_at: Date;
 }
