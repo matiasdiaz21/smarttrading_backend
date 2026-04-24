@@ -14,7 +14,7 @@ DEC = input.int(5, title="Decimales", minval=0, step=1, group=group_general)
 num_ops = input.int(20, title="Número de operaciones para winrate", minval=1, group=group_general)
 tpc = input.bool(true, title="Mostrar zona de profit", group=group_general)
 SML_Channel_TF_mins_D_W_M = input.string("400", title="Minutos SML", group=group_general)
-valid_entry_bars = input.int(3, title="Velas máx. esperando retorno a entrada", minval=1, maxval=150, tooltip="Cuántas velas esperamos a que el precio vuelva a tocar el nivel de entrada. Si no vuelve en ese tiempo, la señal se descarta y no se abre el trade.", group=group_general)
+valid_entry_bars = input.int(10, title="Velas máx. esperando retorno a entrada", minval=1, maxval=150, tooltip="Cuántas velas esperamos a que el precio vuelva a tocar el nivel de entrada. Si no vuelve en ese tiempo, la señal se descarta y no se abre el trade.", group=group_general)
 
 // Grupo: Configuración de Cuenta / Riesgo
 group_cuenta = 'Configuración de Cuenta / Riesgo'
@@ -111,12 +111,12 @@ string htf3 = "1D"  // Diario
 
 // Función helper para obtener valores MACD individuales (para usar en request.security)
 getMACDLine() =>
-    [ml, _, _] = ta.macd(close, macd_fast, macd_slow, macd_signal)
-    ml
+    [macd_line, _, _] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+    macd_line
 
 getMACDSignal() =>
-    [_, sl, _] = ta.macd(close, macd_fast, macd_slow, macd_signal)
-    sl
+    [_, signal_line, _] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+    signal_line
 
 getMACDHist() =>
     [_, _, hist_line] = ta.macd(close, macd_fast, macd_slow, macd_signal)
@@ -280,6 +280,10 @@ var bool alert_breakeven_triggered = false
 var bool isTradeOpen = false
 var string activeTradeType = "na"
 var int trade_id = 0
+/** Contadores de cierres por tipo (alertas enviadas) — TP / Breakeven / Stop loss */
+var int cnt_tp = 0
+var int cnt_bv = 0
+var int cnt_sl = 0
 var float[] outcomes = array.new_float(0)
 var tp = 0.0
 // Pendiente: solo enviamos ENTRY cuando el precio vuelve a tocar la entrada en las barras siguientes (operación válida)
@@ -291,11 +295,6 @@ var float pendingTp = 0.0
 var float pendingBreakeven = 0.0
 var int pendingTradeId = 0
 var int pendingBarIndex = 0
-var int tradeEntryBar = 0
-var label entryLabel = label(na)
-
-// Pre-calcular JSON multi-timeframe en cada barra (request.security debe ejecutarse en el scope global, no dentro de if)
-string multi_tf_json = buildMultiTimeframeJSON()
 
 // 1) Entrada pendiente LONG: precio volvió a entrada → ejecutar ENTRY solo si SL y TP están suficientemente lejos (evita setPlaceOrder por órdenes demasiado ajustadas)
 if pendingLong and low <= pendingEntry
@@ -321,17 +320,14 @@ if pendingLong and low <= pendingEntry
         alert_stop_loss_triggered := false
         alert_breakeven_triggered := false
         isTradeOpen := true
-        tradeEntryBar := bar_index
         trade_id := pendingTradeId
         pendingLong := false
         qty = (perdida_ * capital / 100) / math.abs(pendingEntry - pendingStop)
-        string entry_msg_long = '{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(pendingEntry) + ', "stopLoss": ' + str.tostring(pendingStop) + ', "takeProfit": ' + str.tostring(pendingTp) + ', "breakeven": ' + str.tostring(pendingBreakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(pendingTradeId) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}'
-        // freq_once_per_bar: con calc_on_every_tick, si se usa freq_once_per_bar_close la alerta puede no dispararse
-        // al cierre porque pendingLong ya quedó en false en el último cálculo de la vela.
-        alert(entry_msg_long, alert.freq_once_per_bar)
         strategy.entry("Long", strategy.long, qty=qty, limit=pendingEntry)
         strategy.exit("Exit Long", "Long", stop=pendingStop, limit=pendingTp)
-        entryLabel := label.new(bar_index, pendingEntry, text="Long Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
+        string multi_tf_json = buildMultiTimeframeJSON()
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(pendingEntry) + ', "stopLoss": ' + str.tostring(pendingStop) + ', "takeProfit": ' + str.tostring(pendingTp) + ', "breakeven": ' + str.tostring(pendingBreakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(pendingTradeId) + ', "mensaje": "[V1] Entrada LONG: retorno a precio límite", "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        label.new(bar_index, pendingEntry, text="Long Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
     else
         pendingLong := false
         label.new(bar_index, pendingEntry, text="Long invalidado\nSL/TP muy cerca de entrada", style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
@@ -366,15 +362,14 @@ if pendingShort and high >= pendingEntry
         alert_stop_loss_triggered := false
         alert_breakeven_triggered := false
         isTradeOpen := true
-        tradeEntryBar := bar_index
         trade_id := pendingTradeId
         pendingShort := false
         qty = (perdida_ * capital / 100) / math.abs(pendingStop - pendingEntry)
-        string entry_msg_short = '{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(pendingEntry) + ', "stopLoss": ' + str.tostring(pendingStop) + ', "takeProfit": ' + str.tostring(pendingTp) + ', "breakeven": ' + str.tostring(pendingBreakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(pendingTradeId) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}'
-        alert(entry_msg_short, alert.freq_once_per_bar)
         strategy.entry("Short", strategy.short, qty=qty, limit=pendingEntry)
         strategy.exit("Exit Short", "Short", stop=pendingStop, limit=pendingTp)
-        entryLabel := label.new(bar_index, pendingEntry, text="Short Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
+        string multi_tf_json = buildMultiTimeframeJSON()
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(pendingEntry) + ', "stopLoss": ' + str.tostring(pendingStop) + ', "takeProfit": ' + str.tostring(pendingTp) + ', "breakeven": ' + str.tostring(pendingBreakeven) + ', "alertType": "ENTRY", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(pendingTradeId) + ', "mensaje": "[V1] Entrada SHORT: retorno a precio límite", "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        label.new(bar_index, pendingEntry, text="Short Entry\nID: " + str.tostring(pendingTradeId) + "\nBE: " + str.tostring(math.round(pendingBreakeven, 2)), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
     else
         pendingShort := false
         label.new(bar_index, pendingEntry, text="Short invalidado\nSL/TP muy cerca de entrada", style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
@@ -437,40 +432,43 @@ LOTE = POSICION / limit
 COMI = (comision * POSICION / 100) * -1
 
 // Alertas de Breakeven
-if activeTradeType == "LONG" and high >= breakeven and not alert_breakeven_triggered and isTradeOpen and bar_index > tradeEntryBar
+if activeTradeType == "LONG" and high >= breakeven and not alert_breakeven_triggered and isTradeOpen
     activeStop := activeEntry
     stopl := activeEntry
-    string be_tp_long = '{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}'
-    string be_sl_long = '{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "SL en breakeven", "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}'
-    strategy.exit("Exit Long", "Long", stop=activeEntry, limit=activeTp, alert_profit=be_tp_long, alert_loss=be_sl_long)
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
+    strategy.exit("Exit Long", "Long", stop=activeEntry, limit=activeTp)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "[V1] Breakeven: SL movido a entrada (' + str.tostring(math.round(breakeven_ratio * 100)) + '% hacia TP)", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
+    cnt_bv += 1
     alert_breakeven_triggered := true
     label.new(bar_index, close, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.orange, textcolor=color.white, size=textSize)
 
-if activeTradeType == "SHORT" and low <= breakeven and not alert_breakeven_triggered and isTradeOpen and bar_index > tradeEntryBar
+if activeTradeType == "SHORT" and low <= breakeven and not alert_breakeven_triggered and isTradeOpen
     activeStop := activeEntry
     stops := activeEntry
-    string be_tp_short = '{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}'
-    string be_sl_short = '{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "SL en breakeven", "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}'
-    strategy.exit("Exit Short", "Short", stop=activeEntry, limit=activeTp, alert_profit=be_tp_short, alert_loss=be_sl_short)
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Breakeven alcanzado - ' + str.tostring(math.round(breakeven_ratio * 100)) + '% profit, SL movido a entrada", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
+    strategy.exit("Exit Short", "Short", stop=activeEntry, limit=activeTp)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeEntry) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "BREAKEVEN", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "[V1] Breakeven: SL movido a entrada (' + str.tostring(math.round(breakeven_ratio * 100)) + '% hacia TP)", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
+    cnt_bv += 1
     alert_breakeven_triggered := true
     label.new(bar_index, close, text="Breakeven\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.orange, textcolor=color.white, size=textSize)
 
 // Track TP/SL for manual winrate (since strategy handles exits)
 // Cuando en la misma vela se tocan TP y SL, priorizar STOP_LOSS (el exchange suele ejecutar el stop primero en barras volátiles; evita incoherencia con Bitget)
-bool long_tp_hit = high >= activeTp and activeTradeType == "LONG" and bar_index > tradeEntryBar
-bool long_sl_hit = low <= activeStop and activeTradeType == "LONG" and bar_index > tradeEntryBar
+bool long_tp_hit = high >= activeTp and activeTradeType == "LONG"
+bool long_sl_hit = low <= activeStop and activeTradeType == "LONG"
 bool long_both = long_tp_hit and long_sl_hit
 bool long_sl_first = long_both
-bool short_tp_hit = low <= activeTp and activeTradeType == "SHORT" and bar_index > tradeEntryBar
-bool short_sl_hit = high >= activeStop and activeTradeType == "SHORT" and bar_index > tradeEntryBar
+bool short_tp_hit = low <= activeTp and activeTradeType == "SHORT"
+bool short_sl_hit = high >= activeStop and activeTradeType == "SHORT"
 bool short_both = short_tp_hit and short_sl_hit
 bool short_sl_first = short_both
 
 // SHORT: ambos en misma vela -> priorizar según open; si no, TP o SL por separado
 if short_both
     if short_sl_first and not alert_stop_loss_triggered
+        string multi_tf_json = buildMultiTimeframeJSON()
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "[V1] Stop loss alcanzado", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        cnt_sl += 1
         alert_stop_loss_triggered := true
         alert_take_profit_triggered := true
         if alert_breakeven_triggered
@@ -487,9 +485,11 @@ if short_both
         tps := 0.0
         stops := 0.0
         alert_breakeven_triggered := false
-        alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
         label.new(bar_index, high, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.red, textcolor=color.white, size=textSize)
     else if not short_sl_first and not alert_take_profit_triggered
+        string multi_tf_json = buildMultiTimeframeJSON()
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "[V1] Take profit alcanzado", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        cnt_tp += 1
         alert_take_profit_triggered := true
         alert_stop_loss_triggered := true
         op := "na"
@@ -503,10 +503,11 @@ if short_both
         if array.size(outcomes) > num_ops
             array.shift(outcomes)
         alert_breakeven_triggered := false
-        alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
         label.new(bar_index, low, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.green, textcolor=color.white, size=textSize)
 else if short_tp_hit and not alert_take_profit_triggered
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "[V1] Take profit alcanzado", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+    cnt_tp += 1
     alert_take_profit_triggered := true
     alert_stop_loss_triggered := true
     op := "na"
@@ -522,7 +523,9 @@ else if short_tp_hit and not alert_take_profit_triggered
     alert_breakeven_triggered := false
     label.new(bar_index, low, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_down, color=color.green, textcolor=color.white, size=textSize)
 else if short_sl_hit and not alert_stop_loss_triggered
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "SHORT", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "[V1] Stop loss alcanzado", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+    cnt_sl += 1
     alert_stop_loss_triggered := true
     alert_take_profit_triggered := true
     if alert_breakeven_triggered
@@ -544,6 +547,9 @@ else if short_sl_hit and not alert_stop_loss_triggered
 // LONG: ambos en misma vela -> priorizar SL si open <= mid (precio bajó primero), sino TP
 if long_both
     if long_sl_first and not alert_stop_loss_triggered
+        string multi_tf_json = buildMultiTimeframeJSON()
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "[V1] Stop loss alcanzado", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        cnt_sl += 1
         alert_stop_loss_triggered := true
         alert_take_profit_triggered := true
         if alert_breakeven_triggered
@@ -560,9 +566,11 @@ if long_both
         tpl := 0.0
         stopl := 0.0
         alert_breakeven_triggered := false
-        alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
         label.new(bar_index, low, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.red, textcolor=color.white, size=textSize)
     else if not long_sl_first and not alert_take_profit_triggered
+        string multi_tf_json = buildMultiTimeframeJSON()
+        alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "[V1] Take profit alcanzado", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+        cnt_tp += 1
         alert_take_profit_triggered := true
         alert_stop_loss_triggered := true
         op := "na"
@@ -578,7 +586,9 @@ if long_both
         alert_breakeven_triggered := false
         label.new(bar_index, high, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
 else if long_tp_hit and not alert_take_profit_triggered
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "TAKE_PROFIT", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "[V1] Take profit alcanzado", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+    cnt_tp += 1
     alert_take_profit_triggered := true
     alert_stop_loss_triggered := true
     op := "na"
@@ -594,7 +604,9 @@ else if long_tp_hit and not alert_take_profit_triggered
     alert_breakeven_triggered := false
     label.new(bar_index, high, text="Take Profit\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.green, textcolor=color.white, size=textSize)
 else if long_sl_hit and not alert_stop_loss_triggered
-    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
+    string multi_tf_json = buildMultiTimeframeJSON()
+    alert('{"symbol": "' + syminfo.ticker + '", "side": "LONG", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "STOP_LOSS", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "time": ' + str.tostring(time_close) + ', "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "[V1] Stop loss alcanzado", "precio_actual": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar_close)
+    cnt_sl += 1
     alert_stop_loss_triggered := true
     alert_take_profit_triggered := true
     if alert_breakeven_triggered
@@ -612,39 +624,6 @@ else if long_sl_hit and not alert_stop_loss_triggered
     stopl := 0.0
     alert_breakeven_triggered := false
     label.new(bar_index, low, text="Stop Loss\nID: " + str.tostring(trade_id), style=label.style_label_up, color=color.red, textcolor=color.white, size=textSize)
-
-// Sincronización con el motor de estrategia: si strategy.exit cerró la posición
-// pero nuestro tracking manual no lo detectó (timing de calc_on_every_tick),
-// forzar reset de variables de visualización y enviar alerta correcta.
-if isTradeOpen and strategy.position_size == 0 and bar_index > (tradeEntryBar + 1)
-    bool sync_was_tp = (activeTradeType == "LONG" and high >= activeTp) or (activeTradeType == "SHORT" and low <= activeTp)
-    string sync_alert_type = sync_was_tp ? "TAKE_PROFIT" : "STOP_LOSS"
-    if not alert_take_profit_triggered and not alert_stop_loss_triggered
-        alert('{"symbol": "' + syminfo.ticker + '", "side": "' + activeTradeType + '", "entryPrice": ' + str.tostring(activeEntry) + ', "stopLoss": ' + str.tostring(activeStop) + ', "takeProfit": ' + str.tostring(activeTp) + ', "breakeven": ' + str.tostring(breakeven) + ', "alertType": "' + sync_alert_type + '", "strategy": "Auto Trading Estrategy V1", "timeframe": "' + timeframe.period + '", "alertData": {"id": ' + str.tostring(trade_id) + ', "mensaje": "Sync cierre por motor estrategia", "currentPrice": ' + str.tostring(close) + ', ' + multi_tf_json + '}}', alert.freq_once_per_bar)
-        if sync_was_tp
-            array.push(outcomes, 1.0)
-        else
-            if alert_breakeven_triggered
-                array.push(outcomes, 1.0)
-            else
-                array.push(outcomes, 0.0)
-        if array.size(outcomes) > num_ops
-            array.shift(outcomes)
-    label.delete(entryLabel)
-    entryLabel := label(na)
-    isTradeOpen := false
-    activeTradeType := "na"
-    op := "na"
-    breakeven := 0.0
-    limitl := 0.0
-    tpl := 0.0
-    stopl := 0.0
-    limits := 0.0
-    tps := 0.0
-    stops := 0.0
-    alert_breakeven_triggered := false
-    alert_take_profit_triggered := false
-    alert_stop_loss_triggered := false
 
 // ═══════════════════════════════════════════════════════════════
 // 📊 VISUALIZACIÓN (MANTENIENDO EL DISEÑO ORIGINAL)
@@ -671,8 +650,8 @@ fill(mediol, ganancial, color=color.rgb(17, 84, 64, 65))
 fill(mediol, perdidal, color=color.rgb(224, 42, 42, 85))
 
 // Tabla de información
-mysite = "AutoTrading Improved"
-var infoTable = table.new(position=position.bottom_right, columns=1, rows=11, bgcolor=color.rgb(208, 207, 198), border_width=2)
+mysite = "Auto Trading V1 · S/R + EMA + MACD"
+var infoTable = table.new(position=position.bottom_right, columns=1, rows=12, bgcolor=color.rgb(208, 207, 198), border_width=2)
 table.cell(infoTable, 0, 0, text=mysite, text_halign=text.align_center, text_size=textSize, text_color=chart.bg_color, bgcolor=chart.fg_color)
 table.cell(infoTable, 0, 1, text=op + " " + syminfo.ticker + "▐ RR 1:" + str.tostring(take_profit) + "▐ " + str.tostring(SML_Channel_TF_mins_D_W_M), text_size=textSize, text_halign=text.align_left, text_color=color.fuchsia, bgcolor=chart.bg_color)
 table.cell(infoTable, 0, 2, text="ENTRADA : " + str.tostring(math.round(limit, DEC)), text_size=textSize, text_halign=text.align_left, text_color=color.yellow, bgcolor=chart.bg_color)
@@ -681,15 +660,16 @@ table.cell(infoTable, 0, 4, text="TP-1 : " + str.tostring(math.round(tp, DEC)), 
 table.cell(infoTable, 0, 5, text="LOTE : " + str.tostring(math.round(LOTE, 5)) + "▐ $ " + str.tostring(math.round(POSICION, 2)), text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
 table.cell(infoTable, 0, 6, text="COMISIÓN: ▐ " + str.tostring(math.round(COMI, 4)) + " ▐ ", text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
 table.cell(infoTable, 0, 7, text="Trade ID: " + str.tostring(trade_id), text_size=textSize, text_halign=text.align_left, text_color=color.blue, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 8, text="Cierres alertas ▐ TP: " + str.tostring(cnt_tp) + " ▐ BV: " + str.tostring(cnt_bv) + " ▐ SL: " + str.tostring(cnt_sl), text_size=textSize, text_halign=text.align_left, text_color=tema == "Oscuro" ? color.rgb(250, 250, 250) : color.rgb(0, 0, 0), bgcolor=chart.bg_color)
 
 // Winrate (usando built-in de strategy)
 winrate = strategy.closedtrades > 0 ? (strategy.wintrades / strategy.closedtrades) * 100 : 0.0
-table.cell(infoTable, 0, 8, text="Winrate : " + str.tostring(math.round(winrate, 2)) + "%", text_size=textSize, text_halign=text.align_left, text_color=winrate >= 50 ? color.green : color.red, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 9, text="Winrate : " + str.tostring(math.round(winrate, 2)) + "%", text_size=textSize, text_halign=text.align_left, text_color=winrate >= 50 ? color.green : color.red, bgcolor=chart.bg_color)
 
 // Adjusted Winrate
 adjusted_winrate = array.size(outcomes) > 0 ? (array.sum(outcomes) / array.size(outcomes)) * 100 : 0.0
-table.cell(infoTable, 0, 9, text="Winrate Adjusted (incl. BE): " + str.tostring(math.round(adjusted_winrate, 2)) + "%", text_size=textSize, text_halign=text.align_left, text_color=adjusted_winrate >= 50 ? color.green : color.red, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 10, text="Winrate Adjusted (incl. BE): " + str.tostring(math.round(adjusted_winrate, 2)) + "%", text_size=textSize, text_halign=text.align_left, text_color=adjusted_winrate >= 50 ? color.green : color.red, bgcolor=chart.bg_color)
 
 // Sentimiento
 var sentimiento = rsi_alcista ? "ALCISTA" : rsi_bajista ? "BAJISTA" : "NEUTRAL"
-table.cell(infoTable, 0, 10, text="SENTIMIENTO: " + sentimiento, text_size=textSize, text_halign=text.align_left, text_color=sentimiento == "ALCISTA" ? color.green : sentimiento == "BAJISTA" ? color.red : color.gray, bgcolor=chart.bg_color)
+table.cell(infoTable, 0, 11, text="SENTIMIENTO: " + sentimiento, text_size=textSize, text_halign=text.align_left, text_color=sentimiento == "ALCISTA" ? color.green : sentimiento == "BAJISTA" ? color.red : color.gray, bgcolor=chart.bg_color)
